@@ -444,28 +444,32 @@ elif menu == "📊 Fluxo e Prioridades":
         st.divider()
 
         # =========================================================
-        # MÓDULO DO WHATSAPP (NOVO)
+        # MÓDULO DO WHATSAPP (ATUALIZADO PARA CONTAS PAGAS/PENDENTES)
         # =========================================================
         st.subheader("📱 Compartilhar no WhatsApp")
-        st.markdown("Gere um resumo rápido das contas que ainda **faltam pagar** neste mês para copiar e enviar.")
+        st.markdown("Gere um resumo rápido das contas do mês para copiar e enviar (inclui as pagas e as pendentes).")
         
         if st.button("Gerar Lista para WhatsApp", type="secondary"):
-            # Filtra apenas despesas que ainda não foram pagas
-            df_pendentes = df_view[(df_view['tipo'] == 'Despesa') & (df_view['Pago'] == False)].copy()
-            df_pendentes = df_pendentes.sort_values('data_vencimento')
+            df_despesas_wpp = df_view[df_view['tipo'] == 'Despesa'].copy()
+            df_despesas_wpp = df_despesas_wpp.sort_values('data_vencimento')
             
-            if df_pendentes.empty:
-                st.success("Tudo pago neste mês! Nada para compartilhar. 🎉")
+            if df_despesas_wpp.empty:
+                st.success("Nenhuma despesa registrada para este mês! 🎉")
             else:
-                texto_wpp = f"*Contas Pendentes - {meses[mes_selecionado-1]}/{ano_selecionado}*\n\n"
+                texto_wpp = f"*Resumo de Contas - {meses[mes_selecionado-1]}/{ano_selecionado}*\n\n"
                 total_wpp = 0.0
                 
-                for _, row in df_pendentes.iterrows():
+                for _, row in df_despesas_wpp.iterrows():
                     data_str = pd.to_datetime(row['data_vencimento']).strftime('%d/%m')
-                    texto_wpp += f"🗓️ {data_str} - {row['descricao']}: R$ {format_brl(row['valor'])}\n"
-                    total_wpp += float(row['valor'])
+                    if row['Pago']:
+                        # Adiciona o OK e formata com ~ para riscar a palavra no WhatsApp
+                        texto_wpp += f"✅ ~{data_str} - {row['descricao']}: R$ {format_brl(row['valor'])}~\n"
+                    else:
+                        # Adiciona a ampulheta e soma no total restante
+                        texto_wpp += f"⏳ {data_str} - {row['descricao']}: R$ {format_brl(row['valor'])}\n"
+                        total_wpp += float(row['valor'])
                 
-                texto_wpp += f"\n*Total Restante:* R$ {format_brl(total_wpp)}"
+                texto_wpp += f"\n*Total Restante a Pagar:* R$ {format_brl(total_wpp)}"
                 
                 st.info("Copie o texto abaixo clicando no botão no canto superior direito da caixa:")
                 st.code(texto_wpp, language="markdown")
@@ -795,7 +799,7 @@ elif menu == "🏥 Escala de Plantões":
         locais_disp = df_mes_cal['subgrupo'].unique().tolist()
         
         with c_filt_esc1:
-            sel_locais = st.multiselect("Filtrar por Hospital", locais_disp, placeholder="Todos os Hospitais")
+            sel_locais = st.multiselect("Filtrar por Hospital", locais_disp, placeholder="Todos Hospitais")
             
         locais_filtro = sel_locais if sel_locais else locais_disp
         df_gerenciar = df_mes_cal[df_mes_cal['subgrupo'].isin(locais_filtro)].copy()
