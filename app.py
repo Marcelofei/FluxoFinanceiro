@@ -153,7 +153,7 @@ VALORES_PLANTAO = {
     "Trauma": 1160.00, "Trauma FDS": 1305.00, "USG HT": 942.50,
     "HuniCG Not": 1008.00, "HuniCG Diu": 840.00, "HELP": 1260.00,
     "HC": 471.25, "Radioclim": 1200.00, "Humana": 800.00, "HECI": 25.00,
-    "Wanderley": 504.00
+    "Wanderley": 1000.00
 }
 
 REGRAS_PAGAMENTO = {
@@ -167,7 +167,7 @@ REGRAS_PAGAMENTO = {
     "HELP": {"meses": 1, "dia": 15},
     "Humana": {"meses": 1, "dia": 10},
     "Radioclim": {"meses": 1, "dia": 10},
-    "Wanderley": {"meses": 2, "dia": 20} 
+    "Wanderley": {"meses": 1, "dia": 10}
 }
 
 def get_estrutura_dinamica():
@@ -442,6 +442,35 @@ elif menu == "📊 Fluxo e Prioridades":
             st.rerun()
 
         st.divider()
+
+        # =========================================================
+        # MÓDULO DO WHATSAPP (NOVO)
+        # =========================================================
+        st.subheader("📱 Compartilhar no WhatsApp")
+        st.markdown("Gere um resumo rápido das contas que ainda **faltam pagar** neste mês para copiar e enviar.")
+        
+        if st.button("Gerar Lista para WhatsApp", type="secondary"):
+            # Filtra apenas despesas que ainda não foram pagas
+            df_pendentes = df_view[(df_view['tipo'] == 'Despesa') & (df_view['Pago'] == False)].copy()
+            df_pendentes = df_pendentes.sort_values('data_vencimento')
+            
+            if df_pendentes.empty:
+                st.success("Tudo pago neste mês! Nada para compartilhar. 🎉")
+            else:
+                texto_wpp = f"*Contas Pendentes - {meses[mes_selecionado-1]}/{ano_selecionado}*\n\n"
+                total_wpp = 0.0
+                
+                for _, row in df_pendentes.iterrows():
+                    data_str = pd.to_datetime(row['data_vencimento']).strftime('%d/%m')
+                    texto_wpp += f"🗓️ {data_str} - {row['descricao']}: R$ {format_brl(row['valor'])}\n"
+                    total_wpp += float(row['valor'])
+                
+                texto_wpp += f"\n*Total Restante:* R$ {format_brl(total_wpp)}"
+                
+                st.info("Copie o texto abaixo clicando no botão no canto superior direito da caixa:")
+                st.code(texto_wpp, language="markdown")
+                
+        st.divider()
         
         st.subheader("✏️ Edição Estrutural Avançada")
         st.markdown("Selecione um lançamento abaixo para alterar suas propriedades essenciais. *(Faturas consolidadas e Pacotes de Plantões não aparecem aqui; edite os itens individuais)*")
@@ -602,7 +631,7 @@ elif menu == "🔀 Otimização de Pagamentos":
                     'tipo': 'Entrada', 
                     'categoria': grupo.iloc[0]['categoria'], 
                     'subgrupo': subg_nome,
-                    'descricao': f'🏥 Plantões {subg_nome}', # Nome limpo e unificado
+                    'descricao': f'🏥 Plantões {subg_nome}',
                     'valor': soma_valor,
                     'data_vencimento': dt_venc,
                     'pago': 0,
