@@ -580,9 +580,9 @@ elif menu == "🏥 Escala de Plantões":
         locais_disp = df_m_cal['subgrupo'].unique().tolist()
         sel_locais = st.multiselect("Filtrar por Hospital", locais_disp, placeholder="Todos os Hospitais")
         df_geren = df_m_cal[df_m_cal['subgrupo'].isin(sel_locais)] if sel_locais else df_m_cal
-        df_geren = df_geren.sort_values('data_plantao').reset_index(drop=True)
+        df_geren = df_geren.sort_values('d_p').reset_index(drop=True)
         df_geren.insert(0, '🗑️ Apagar', False)
-        df_geren['Data do Plantão'] = pd.to_datetime(df_geren['data_plantao']).dt.strftime('%d/%m/%Y')
+        df_geren['Data do Plantão'] = pd.to_datetime(df_geren['d_p']).dt.strftime('%d/%m/%Y')
         edit_esc = st.data_editor(df_geren[['🗑️ Apagar', 'Data do Plantão', 'subgrupo', 'valor']], use_container_width=True, hide_index=True)
         c_b1, c_b2 = st.columns(2)
         with c_b1:
