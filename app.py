@@ -462,10 +462,8 @@ elif menu == "📊 Fluxo e Prioridades":
                 for _, row in df_despesas_wpp.iterrows():
                     data_str = pd.to_datetime(row['data_vencimento']).strftime('%d/%m')
                     if row['Pago']:
-                        # Adiciona o OK e formata com ~ para riscar a palavra no WhatsApp
                         texto_wpp += f"✅ ~{data_str} - {row['descricao']}: R$ {format_brl(row['valor'])}~\n"
                     else:
-                        # Adiciona a ampulheta e soma no total restante
                         texto_wpp += f"⏳ {data_str} - {row['descricao']}: R$ {format_brl(row['valor'])}\n"
                         total_wpp += float(row['valor'])
                 
@@ -607,6 +605,40 @@ elif menu == "📑 Demonstrativo":
                             df_s['Status'] = df_s['pago'].apply(lambda x: '✅' if x == 1 else '⏳')
                             st.markdown(f"**{sub}** (R$ {format_brl(df_s['valor'].sum())})")
                             st.dataframe(df_s[['Data BR', 'descricao', 'valor', 'forma_pagamento', 'Status']], hide_index=True)
+
+        st.divider()
+        st.subheader("💳 Detalhamento e Edição de Faturas (Crédito)")
+        df_credito = df[df['forma_pagamento'] == 'Crédito'].copy()
+        if not df_credito.empty:
+            df_credito = df_credito.sort_values('data_vencimento').reset_index(drop=True)
+            df_credito['Data'] = pd.to_datetime(df_credito['data_vencimento']).dt.date
+            df_credito['Pago'] = df_credito['pago'].astype(bool)
+            df_credito.insert(0, '🗑️ Apagar', False)
+            
+            edit_credito = st.data_editor(
+                df_credito[['🗑️ Apagar', 'Data', 'categoria', 'subgrupo', 'descricao', 'valor', 'Pago']],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                    "valor": st.column_config.NumberColumn("Valor", format="%.2f"),
+                    "categoria": st.column_config.Column("Categoria", disabled=True),
+                    "subgrupo": st.column_config.Column("Subgrupo", disabled=True)
+                }
+            )
+            
+            if st.button("💾 Salvar Alterações do Cartão", type="primary"):
+                for i, row in edit_credito.iterrows():
+                    id_s = int(df_credito.loc[i, 'id'])
+                    if row['🗑️ Apagar']:
+                        execute_query("DELETE FROM lancamentos WHERE id = %s", (id_s,))
+                    else:
+                        novo_pago = 1 if row['Pago'] else 0
+                        execute_query("UPDATE lancamentos SET pago=%s, descricao=%s, valor=%s, data_vencimento=%s WHERE id=%s", 
+                                      (novo_pago, row['descricao'], float(row['valor']), row['Data'], id_s))
+                st.rerun()
+        else:
+            st.info("Nenhum lançamento no crédito encontrado para este período.")
 
 # =================================================================
 # 9. MÓDULO 4: OTIMIZAÇÃO DE PAGAMENTOS
@@ -799,7 +831,7 @@ elif menu == "🏥 Escala de Plantões":
         locais_disp = df_mes_cal['subgrupo'].unique().tolist()
         
         with c_filt_esc1:
-            sel_locais = st.multiselect("Filtrar por Hospital", locais_disp, placeholder="Todos Hospitais")
+            sel_locais = st.multiselect("Filtrar por Hospital", locais_disp, placeholder="Todos os Hospitais")
             
         locais_filtro = sel_locais if sel_locais else locais_disp
         df_gerenciar = df_mes_cal[df_mes_cal['subgrupo'].isin(locais_filtro)].copy()
