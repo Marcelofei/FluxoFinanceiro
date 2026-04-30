@@ -533,3 +533,10 @@ elif menu == "🏥 Escala de Plantões":
                 execute_values_query('''INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade) VALUES %s''', regs)
                 st.success("Matriz processada.")
                 st.rerun()
+
+st.sidebar.divider()
+if st.sidebar.button("🚨 Purgar Banco de Dados Inteiro", type="primary"):
+    execute_query("TRUNCATE TABLE lancamentos RESTART IDENTITY;")
+    execute_query("TRUNCATE TABLE categorias_personalizadas RESTART IDENTITY;")
+    st.sidebar.success("Banco de dados purgado com sucesso.")
+    st.rerun()
