@@ -291,7 +291,19 @@ elif menu == "📊 Fluxo e Prioridades":
     if df.empty: st.warning("Sem dados.")
     else:
         df['valor'] = df['valor'].astype(float)
-        df_view = df.copy()
+        
+        st.subheader("🔍 Filtros")
+        c_filt1, c_filt2 = st.columns(2)
+        tipos_disp = df['tipo'].unique().tolist()
+        with c_filt1:
+            sel_tipo = st.multiselect("Filtrar por Tipo", tipos_disp, placeholder="Todos os Tipos")
+        tipos_filtro = sel_tipo if sel_tipo else tipos_disp
+        cat_disp = df[df['tipo'].isin(tipos_filtro)]['categoria'].unique().tolist()
+        with c_filt2:
+            sel_cat = st.multiselect("Filtrar por Categoria", cat_disp, placeholder="Todas as Categorias")
+        cat_filtro = sel_cat if sel_cat else cat_disp
+
+        df_view = df[(df['tipo'].isin(tipos_filtro)) & (df['categoria'].isin(cat_filtro))].copy()
         
         mask_cred = df_view['forma_pagamento'] == 'Crédito'
         if mask_cred.any():
@@ -372,6 +384,52 @@ elif menu == "📊 Fluxo e Prioridades":
                 texto_wpp += f"\n*Total Restante a Pagar:* R$ {format_brl(t_wpp)}"
                 st.code(texto_wpp, language="markdown")
 
+        st.divider()
+        st.subheader("✏️ Edição Estrutural Avançada")
+        st.markdown("Selecione um lançamento abaixo para alterar suas propriedades essenciais. *(Faturas consolidadas e Pacotes de Plantões não aparecem aqui; edite os itens individuais)*")
+        
+        mask_individuais = (~df['forma_pagamento'].isin(['Crédito'])) & (~(df['tipo'] == 'Entrada') & ~df['descricao'].str.contains('Plantão', na=False))
+        df_edit = df[mask_individuais].copy() if not df.empty else df
+        
+        opcoes = {r['id']: f"{pd.to_datetime(r['data_vencimento']).strftime('%d/%m/%Y')} | {r['descricao']} (R$ {format_brl(r['valor'])})" for _, r in df_edit.iterrows()}
+        
+        sel_id = st.selectbox("Lançamento:", options=[None] + list(opcoes.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes[x])
+        
+        if sel_id:
+            r_sel = df[df['id'] == sel_id].iloc[0]
+            
+            with st.container(border=True):
+                c_ed1, c_ed2 = st.columns(2)
+                with c_ed1:
+                    e_tipo = st.radio("Tipo", ["Despesa", "Entrada"], index=0 if r_sel['tipo'] == 'Despesa' else 1, horizontal=True)
+                    e_desc = st.text_input("Descrição", value=r_sel['descricao'])
+                    e_val = st.text_input("Novo Valor (R$)", value=str(r_sel['valor']).replace('.', ','))
+                    e_data = st.date_input("Nova Data de Vencimento", value=pd.to_datetime(r_sel['data_vencimento']).date(), format="DD/MM/YYYY")
+                    
+                    opcoes_forma = ["À vista", "Crédito", "Outros"]
+                    idx_forma = opcoes_forma.index(r_sel['forma_pagamento']) if r_sel['forma_pagamento'] in opcoes_forma else 2
+                    e_forma = st.selectbox("Forma de Pagamento", opcoes_forma, index=idx_forma)
+                with c_ed2:
+                    cat_options = list(ESTRUTURA[e_tipo].keys())
+                    idx_cat = cat_options.index(r_sel['categoria']) if r_sel['categoria'] in cat_options else 0
+                    e_cat = st.selectbox("Categoria", cat_options, index=idx_cat)
+                    subs_disp = ESTRUTURA[e_tipo][e_cat] if e_cat in ESTRUTURA[e_tipo] else []
+                    idx_sub = subs_disp.index(r_sel['subgrupo']) if r_sel['subgrupo'] in subs_disp else 0
+                    e_sub = st.selectbox("Subgrupo", subs_disp, index=idx_sub)
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    e_escopo = st.radio("Aplicar alteração estrutural em:", ["Apenas neste lançamento", "Neste e em todos os futuros da mesma compra"])
+                    
+                if st.button("💾 Confirmar Mudança Estrutural", type="primary"):
+                    v_final = parse_valor(e_val)
+                    if e_escopo == "Apenas neste lançamento":
+                        execute_query("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, data_vencimento=%s, forma_pagamento=%s WHERE id=%s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_data, e_forma, int(sel_id)))
+                    else:
+                        execute_query("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, data_vencimento=%s, forma_pagamento=%s WHERE id=%s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_data, e_forma, int(sel_id)))
+                        execute_query("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, forma_pagamento=%s WHERE compra_id=%s AND data_vencimento > %s AND id != %s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_forma, r_sel['compra_id'], r_sel['data_vencimento'], int(sel_id)))
+                    st.success("Lançamento(s) atualizado(s) com sucesso!")
+                    st.rerun()
+
 # =================================================================
 # 8. MÓDULO 3: DEMONSTRATIVO
 # =================================================================
@@ -419,10 +477,23 @@ elif menu == "📑 Demonstrativo":
             df_credito.insert(0, '🗑️ Apagar', False)
             edit_c = st.data_editor(df_credito[['🗑️ Apagar', 'Data', 'categoria', 'subgrupo', 'descricao', 'valor']], use_container_width=True, hide_index=True)
             
-            if st.button("💾 Salvar Alterações do Cartão", type="primary"):
-                for i, r in edit_c.iterrows():
-                    if r['🗑️ Apagar']: execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_credito.loc[i, 'id']),))
-                st.rerun()
+            c_b1, c_b2 = st.columns(2)
+            with c_b1:
+                if st.button("💾 Salvar Alterações do Cartão", type="primary"):
+                    for i, r in edit_c.iterrows():
+                        if r['🗑️ Apagar']: execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_credito.loc[i, 'id']),))
+                    st.rerun()
+            with c_b2:
+                if st.button("🚨 Apagar TODOS os Lançamentos de Crédito Listados"):
+                    ids_cred = tuple(df_credito['id'].tolist())
+                    if ids_cred:
+                        if len(ids_cred) == 1:
+                            execute_query("DELETE FROM lancamentos WHERE id = %s", (ids_cred[0],))
+                        else:
+                            execute_query(f"DELETE FROM lancamentos WHERE id IN {ids_cred}")
+                        st.rerun()
+        else:
+            st.info("Nenhum lançamento no crédito encontrado para este período.")
 
 # =================================================================
 # 9. MÓDULO 4: OTIMIZAÇÃO DE PAGAMENTOS
@@ -453,7 +524,7 @@ elif menu == "🔀 Otimização de Pagamentos":
                 saldo = float(e['valor'])
                 st.markdown(f"### 📥 {pd.to_datetime(e['data_vencimento']).strftime('%d/%m')} | {e['descricao']} | R$ {format_brl(saldo)}")
                 
-                elg = sorted([s for s in f_saidas if s['v_rest'] > 0 and not s['is_prov']], key=lambda x: (prioridades_map.get(x['prioridade'], 2), x['data_vencimento']))
+                elg = sorted([s for s in f_saidas if s['v_rest'] > 0 and not s['is_prov']], key=lambda x: (prioridades_map.get(x.get('prioridade', 'Baixa 🟢'), 2), x['data_vencimento']))
                 aloc = []
                 s_abt = 0.0
                 for s in elg:
