@@ -420,18 +420,16 @@ elif menu == "📊 Fluxo e Prioridades":
 
         st.divider()
         st.subheader("✏️ Edição Estrutural Avançada")
-        st.markdown("Selecione um lançamento abaixo para alterar suas propriedades essenciais. *(Faturas consolidadas e Pacotes de Plantões não aparecem aqui; edite os itens individuais)*")
+        st.markdown("Selecione um lançamento abaixo para alterar suas propriedades essenciais.")
         
         mask_individuais = (~df['forma_pagamento'].isin(['Crédito'])) & (~(df['tipo'] == 'Entrada') & ~df['descricao'].str.contains('Plantão', na=False))
         df_edit = df[mask_individuais].copy() if not df.empty else df
         
         opcoes = {r['id']: f"{pd.to_datetime(r['data_vencimento']).strftime('%d/%m/%Y')} | {r['descricao']} (R$ {format_brl(r['valor'])})" for _, r in df_edit.iterrows()}
-        
         sel_id = st.selectbox("Lançamento:", options=[None] + list(opcoes.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes[x])
         
         if sel_id:
             r_sel = df[df['id'] == sel_id].iloc[0]
-            
             with st.container(border=True):
                 c_ed1, c_ed2 = st.columns(2)
                 with c_ed1:
@@ -439,7 +437,6 @@ elif menu == "📊 Fluxo e Prioridades":
                     e_desc = st.text_input("Descrição", value=r_sel['descricao'])
                     e_val = st.text_input("Novo Valor (R$)", value=str(r_sel['valor']).replace('.', ','))
                     e_data = st.date_input("Nova Data de Vencimento", value=pd.to_datetime(r_sel['data_vencimento']).date(), format="DD/MM/YYYY")
-                    
                     opcoes_forma = ["À vista", "Crédito", "Outros"]
                     idx_forma = opcoes_forma.index(r_sel['forma_pagamento']) if r_sel['forma_pagamento'] in opcoes_forma else 2
                     e_forma = st.selectbox("Forma de Pagamento", opcoes_forma, index=idx_forma)
@@ -450,8 +447,6 @@ elif menu == "📊 Fluxo e Prioridades":
                     subs_disp = ESTRUTURA[e_tipo][e_cat] if e_cat in ESTRUTURA[e_tipo] else []
                     idx_sub = subs_disp.index(r_sel['subgrupo']) if r_sel['subgrupo'] in subs_disp else 0
                     e_sub = st.selectbox("Subgrupo", subs_disp, index=idx_sub)
-                    
-                    st.markdown("<br>", unsafe_allow_html=True)
                     e_escopo = st.radio("Aplicar alteração estrutural em:", ["Apenas neste lançamento", "Neste e em todos os futuros da mesma compra"])
                     
                 if st.button("💾 Confirmar Mudança Estrutural", type="primary"):
@@ -491,7 +486,6 @@ elif menu == "📑 Demonstrativo":
         c_res2.metric("🚨 Restante a Pagar", f"R$ {format_brl(falta_pagar)}")
 
         st.divider()
-
         st.subheader("📊 Distribuição de Despesas")
         if not df_d.empty:
             df_grp = df_d.groupby('categoria')['valor'].sum().reset_index()
@@ -529,28 +523,17 @@ elif menu == "📑 Demonstrativo":
             df_credito.insert(0, '🗑️ Este', False)
             df_credito.insert(1, '🗑️ Futuros', False)
             edit_c = st.data_editor(df_credito[['🗑️ Este', '🗑️ Futuros', 'Data', 'categoria', 'subgrupo', 'descricao', 'valor']], use_container_width=True, hide_index=True)
-            
-            c_b1, c_b2 = st.columns(2)
-            with c_b1:
-                if st.button("💾 Salvar Alterações do Cartão", type="primary"):
-                    for i, r in edit_c.iterrows():
-                        if r['🗑️ Este'] or r['🗑️ Futuros']:
-                            if r['🗑️ Futuros']:
-                                execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s", (df_credito.loc[i, 'compra_id'], df_credito.loc[i, 'data_vencimento']))
-                            else:
-                                execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_credito.loc[i, 'id']),))
+            if st.button("💾 Salvar Alterações do Cartão", type="primary"):
+                for i, r in edit_c.iterrows():
+                    if r['🗑️ Este'] or r['🗑️ Futuros']:
+                        if r['🗑️ Futuros']: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s", (df_credito.loc[i, 'compra_id'], df_credito.loc[i, 'data_vencimento']))
+                        else: execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_credito.loc[i, 'id']),))
+                st.rerun()
+            if st.button("🚨 Apagar TODOS os Créditos Listados"):
+                ids_cred = tuple(df_credito['id'].tolist())
+                if ids_cred:
+                    execute_query("DELETE FROM lancamentos WHERE id = %s" if len(ids_cred)==1 else f"DELETE FROM lancamentos WHERE id IN {ids_cred}", (ids_cred[0],) if len(ids_cred)==1 else None)
                     st.rerun()
-            with c_b2:
-                if st.button("🚨 Apagar TODOS os Lançamentos de Crédito Listados"):
-                    ids_cred = tuple(df_credito['id'].tolist())
-                    if ids_cred:
-                        if len(ids_cred) == 1:
-                            execute_query("DELETE FROM lancamentos WHERE id = %s", (ids_cred[0],))
-                        else:
-                            execute_query(f"DELETE FROM lancamentos WHERE id IN {ids_cred}")
-                        st.rerun()
-        else:
-            st.info("Nenhum lançamento no crédito encontrado para este período.")
 
 # =================================================================
 # 9. MÓDULO 4: OTIMIZAÇÃO DE PAGAMENTOS
@@ -563,35 +546,40 @@ elif menu == "🔀 Otimização de Pagamentos":
     if not df_mes.empty:
         df_e, df_d = df_mes[df_mes['tipo'] == 'Entrada'].copy(), df_mes[df_mes['tipo'] == 'Despesa'].copy()
         
-        mask_plantoes = df_e['descricao'].str.contains('Plantão', na=False)
-        if mask_plantoes.any():
-            df_plantoes = df_e[mask_plantoes].copy()
-            df_e = df_e[~mask_plantoes].copy()
-            for nome_grupo, grupo in df_plantoes.groupby(['subgrupo', 'data_vencimento']):
-                subg_nome, dt_venc = nome_grupo
-                dummy_plantao = pd.DataFrame([{'id': f'plantao_{subg_nome}', 'tipo': 'Entrada', 'categoria': grupo.iloc[0]['categoria'], 'subgrupo': subg_nome, 'descricao': f'🏥 Plantões {subg_nome}', 'valor': grupo['valor'].sum(), 'data_vencimento': dt_venc, 'pago': 0, 'compra_id': 'plantao_dummy', 'forma_pagamento': 'Outros', 'prioridade': 'Baixa 🟢'}])
-                df_e = pd.concat([df_e, dummy_plantao], ignore_index=True)
+        # Aglutinação visual de plantões
+        mask_p = df_e['descricao'].str.contains('Plantão', na=False)
+        if mask_p.any():
+            df_plantoes = df_e[mask_p].copy()
+            df_e = df_e[~mask_p].copy()
+            for (sub, data), grupo in df_plantoes.groupby(['subgrupo', 'data_vencimento']):
+                df_e = pd.concat([df_e, pd.DataFrame([{'descricao': f'🏥 Plantões {sub}', 'valor': grupo['valor'].sum(), 'data_vencimento': data, 'subgrupo': sub, 'prioridade': 'Baixa 🟢'}])], ignore_index=True)
 
-        df_e['is_hr'] = df_e['descricao'].str.contains('Radioclim|Humana', case=False, na=False)
-        df_hr, df_outras = df_e[df_e['is_hr']].copy(), df_e[~df_e['is_hr']].copy()
-        
+        # Identificação Radioclim/Humana
+        # Buscamos tanto na descrição quanto no subgrupo para garantir que apareçam
+        mask_hr = (df_e['descricao'].str.contains('Radioclim|Humana', case=False, na=False)) | \
+                  (df_e['subgrupo'].str.contains('Radioclim|Humana', case=False, na=False))
+        df_hr, df_outras = df_e[mask_hr].copy(), df_e[~mask_hr].copy()
+
+        # Fatura Consolidada
         mask_c = df_d['forma_pagamento'] == 'Crédito'
         if mask_c.any():
             sum_c = df_d[mask_c]['valor'].sum()
             df_d = pd.concat([df_d[~mask_c], pd.DataFrame([{'id': -1, 'descricao': '💳 Cartão de Crédito', 'valor': sum_c, 'data_vencimento': datetime.date(ano_selecionado, mes_selecionado, 10), 'prioridade': 'Alta 🔴'}])], ignore_index=True)
             
+        # Classificação de Despesas: Normais vs Provisões
         df_d['is_prov'] = df_d['descricao'].str.contains(r'\(Provisão\)', case=False, na=False)
-        f_saidas = df_d.to_dict('records')
-        for s in f_saidas: s['v_rest'] = float(s['valor'])
+        fila_normais = df_d[~df_d['is_prov']].to_dict('records')
+        fila_provisoes = df_d[df_d['is_prov']].to_dict('records')
+        for s in fila_normais: s['v_rest'] = float(s['valor'])
+        for s in fila_provisoes: s['v_rest'] = float(s['valor'])
 
-        st.subheader("🗓️ Fluxo Geral Consolidado Diário")
+        st.subheader("🗓️ Fluxo Geral: Contas Prioritárias")
         if not df_outras.empty:
             ag_e = df_outras.groupby('data_vencimento').agg({'valor':'sum', 'descricao': lambda x: ' + '.join(pd.Series(x).unique().astype(str))}).reset_index().sort_values('data_vencimento')
             for _, e in ag_e.iterrows():
                 saldo = float(e['valor'])
                 st.markdown(f"### 📥 {pd.to_datetime(e['data_vencimento']).strftime('%d/%m')} | {e['descricao']} | R$ {format_brl(saldo)}")
-                
-                elg = sorted([s for s in f_saidas if s['v_rest'] > 0 and not s['is_prov']], key=lambda x: (prioridades_map.get(x.get('prioridade', 'Baixa 🟢'), 2), x['data_vencimento']))
+                elg = sorted([s for s in fila_normais if s['v_rest'] > 0], key=lambda x: (prioridades_map.get(x.get('prioridade', 'Baixa 🟢'), 2), x['data_vencimento']))
                 aloc = []
                 s_abt = 0.0
                 for s in elg:
@@ -602,12 +590,31 @@ elif menu == "🔀 Otimização de Pagamentos":
                 if aloc: 
                     st.dataframe(pd.DataFrame(aloc), use_container_width=True, hide_index=True)
                     c1, c2 = st.columns(2)
-                    c1.metric("Total Distribuído no Dia", f"R$ {format_brl(s_abt)}")
-                    c2.metric("Saldo Restante (Sobrante)", f"R$ {format_brl(saldo)}")
-                else:
-                    st.warning("Nenhuma despesa pendente pôde ser alocada a este saldo diário.")
-                    st.metric("Saldo Intacto", f"R$ {format_brl(saldo)}")
+                    c1.metric("Distribuído", f"R$ {format_brl(s_abt)}")
+                    c2.metric("Saldo Sobrante", f"R$ {format_brl(saldo)}")
                 st.divider()
+
+        st.subheader("🎯 Fundo de Provisões: Radioclim & Humana")
+        if not df_hr.empty:
+            for _, e in df_hr.iterrows():
+                saldo = float(e['valor'])
+                st.markdown(f"### 📥 {pd.to_datetime(e['data_vencimento']).strftime('%d/%m')} | {e['descricao']} | R$ {format_brl(saldo)}")
+                elg_p = sorted([s for s in fila_provisoes if s['v_rest'] > 0], key=lambda x: (prioridades_map.get(x.get('prioridade', 'Baixa 🟢'), 2), x['data_vencimento']))
+                aloc_p = []
+                s_abt_p = 0.0
+                for s in elg_p:
+                    if saldo > 0:
+                        pg = min(saldo, s['v_rest'])
+                        s['v_rest'] -= pg; saldo -= pg; s_abt_p += pg
+                        aloc_p.append({"Provisão": s['descricao'], "Abatido": f"R$ {format_brl(pg)}"})
+                if aloc_p: 
+                    st.dataframe(pd.DataFrame(aloc_p), use_container_width=True, hide_index=True)
+                    c1, c2 = st.columns(2)
+                    c1.metric("Distribuído", f"R$ {format_brl(s_abt_p)}")
+                    c2.metric("Saldo Sobrante", f"R$ {format_brl(saldo)}")
+                else: st.info("Sem provisões pendentes para este capital.")
+                st.divider()
+        else: st.warning("Radioclim ou Humana não encontradas nas entradas deste mês.")
 
 # =================================================================
 # 10. MÓDULO 5: ESCALA VISUAL DE PLANTÕES
@@ -669,43 +676,34 @@ elif menu == "🏥 Escala de Plantões":
     else: st.info("Você ainda não registrou nenhum plantão para este mês.")
 
     st.divider()
-    
-    st.subheader("🗑️ Purgar Todo o Histórico")
-    if st.button("🚨 Apagar TODO o Histórico Global de Plantões (Banco de Dados)", type="primary"):
+    if st.button("🚨 Apagar TODO o Histórico Global de Plantões", type="primary"):
         execute_query("DELETE FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE 'Plantão %'")
-        st.success("Histórico global de plantões purgado.")
-        st.rerun()
-        
-    st.divider()
+        st.success("Purgado."); st.rerun()
 
+    st.divider()
     st.subheader("➕ Adicionar à Escala")
-    modo = st.radio("Modo de Inserção", ["Dia Específico", "Plantões Fixos na Semana (Recorrente)"], horizontal=True)
-    
+    modo = st.radio("Modo", ["Dia Específico", "Plantões Fixos na Semana (Recorrente)"], horizontal=True)
     locais_dyn = list(set([item for sublist in ESTRUTURA["Entrada"].values() for item in sublist]))
-    
     with st.container(border=True):
         c1, c2 = st.columns(2)
         with c1:
-            loc_p = st.selectbox("🏥 Local do Plantão", locais_dyn if locais_dyn else ["Vazio (Crie na aba Lançamentos)"])
-            
-            # Buscar valores padrão se o hospital for selecionado
+            loc_p = st.selectbox("🏥 Local", locais_dyn if locais_dyn else ["Vazio"])
             default_vals = {"v": 1000.0, "m": 1, "d": 10}
-            if loc_p != "Vazio (Crie na aba Lançamentos)":
+            if loc_p != "Vazio":
                 res = fetch_dataframe("SELECT valor_padrao, atraso_meses, dia_pagamento FROM categorias_personalizadas WHERE subgrupo = %s AND tipo = 'Entrada' LIMIT 1", (loc_p,))
                 if not res.empty:
-                    if res.iloc[0]['valor_padrao']: default_vals["v"] = float(res.iloc[0]['valor_padrao'])
+                    if pd.notna(res.iloc[0]['valor_padrao']): default_vals["v"] = float(res.iloc[0]['valor_padrao'])
                     if pd.notna(res.iloc[0]['atraso_meses']): default_vals["m"] = int(res.iloc[0]['atraso_meses'])
                     if pd.notna(res.iloc[0]['dia_pagamento']): default_vals["d"] = int(res.iloc[0]['dia_pagamento'])
-
-            if modo == "Dia Específico": d_p = st.date_input("🗓️ Data do Plantão", value=hoje, format="DD/MM/YYYY")
-            else: dias_s = st.multiselect("🗓️ Dias da Semana", options=[0,1,2,3,4,5,6], format_func=lambda x: ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"][x])
+            if modo == "Dia Específico": d_p = st.date_input("Data", value=hoje, format="DD/MM/YYYY")
+            else: dias_s = st.multiselect("Dias", options=[0,1,2,3,4,5,6], format_func=lambda x: ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"][x])
         with c2:
-            v_t = st.number_input("Valor do Plantão (R$)", value=default_vals["v"], step=100.0)
+            v_t = st.number_input("Valor (R$)", value=default_vals["v"])
             reg_m = st.number_input("Atraso (Meses)", min_value=0, max_value=6, value=default_vals["m"])
-            reg_d = st.number_input("Dia do Pagamento", min_value=1, max_value=31, value=default_vals["d"])
-            if modo != "Dia Específico": m_rec = st.number_input("Repetir por quantos meses?", min_value=1, max_value=60, value=6)
+            reg_d = st.number_input("Dia Pagto", min_value=1, max_value=31, value=default_vals["d"])
+            if modo != "Dia Específico": m_rec = st.number_input("Repetir por meses", min_value=1, value=6)
 
-        if st.button("🚀 Registrar Plantão", type="primary") and loc_p != "Vazio (Crie na aba Lançamentos)":
+        if st.button("🚀 Registrar Plantão", type="primary") and loc_p != "Vazio":
             cat_escolhida = next((c for c, subs in ESTRUTURA.get("Entrada", {}).items() if loc_p in subs), "N/A")
             regs = []
             if modo == "Dia Específico":
@@ -719,8 +717,6 @@ elif menu == "🏥 Escala de Plantões":
                     for d in range(1, calendar.monthrange(a_a, m_a)[1] + 1):
                         curr = datetime.date(a_a, m_a, d)
                         if curr.weekday() in dias_s: regs.append(("Entrada", cat_escolhida, loc_p, f"Plantão {loc_p} ({curr.strftime('%d/%m/%Y')})", v_t, datetime.date(a_p, m_p, reg_d), 1, 1, 0, str(uuid.uuid4()), "Outros", "Baixa 🟢"))
-            
             if regs:
                 execute_values_query('''INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade) VALUES %s''', regs)
-                st.success("Salvo com sucesso!")
                 st.rerun()
