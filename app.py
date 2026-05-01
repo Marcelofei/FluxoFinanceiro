@@ -244,16 +244,16 @@ if menu == "📝 Lançamentos":
                     with c_ed_n1:
                         new_cat = st.text_input("Nova Categoria", value=nó['categoria'])
                     with c_ed_n2:
-                        new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if nó['subgrupo'] else "")
+                        new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if pd.notna(nó['subgrupo']) else "")
                     
                     # Edição de campos de plantão
                     if nó['tipo'] == "Entrada":
                         st.markdown("---")
                         st.markdown("##### 🏥 Dados Padrão de Plantão")
                         c_opt_e1, c_opt_e2, c_opt_e3 = st.columns(3)
-                        v_edit = c_opt_e1.number_input("Valor Padrão", value=float(nó['valor_padrao']) if nó['valor_padrao'] else 0.0)
-                        a_edit = c_opt_e2.number_input("Atraso (Meses)", value=int(nó['atraso_meses']) if nó['atraso_meses'] else 1)
-                        d_edit = c_opt_e3.number_input("Dia Pagamento", value=int(nó['dia_pagamento']) if nó['dia_pagamento'] else 10)
+                        v_edit = c_opt_e1.number_input("Valor Padrão", value=float(nó['valor_padrao']) if pd.notna(nó['valor_padrao']) else 0.0)
+                        a_edit = c_opt_e2.number_input("Atraso (Meses)", value=int(nó['atraso_meses']) if pd.notna(nó['atraso_meses']) else 1)
+                        d_edit = c_opt_e3.number_input("Dia Pagamento", value=int(nó['dia_pagamento']) if pd.notna(nó['dia_pagamento']) else 10)
 
                     if st.button("💾 Confirmar Edição", type="primary"):
                         if nó['tipo'] == "Entrada":
