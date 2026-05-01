@@ -71,9 +71,17 @@ def init_db():
             id SERIAL PRIMARY KEY,
             tipo TEXT,
             categoria TEXT,
-            subgrupo TEXT
+            subgrupo TEXT,
+            valor_padrao NUMERIC,
+            atraso_meses INTEGER,
+            dia_pagamento INTEGER
         );
     ''')
+    # Garantir que colunas novas existam caso a tabela já tenha sido criada anteriormente
+    execute_query("ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS valor_padrao NUMERIC;")
+    execute_query("ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS atraso_meses INTEGER;")
+    execute_query("ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS dia_pagamento INTEGER;")
+    
     execute_query('''
         CREATE TABLE IF NOT EXISTS lancamentos (
             id SERIAL PRIMARY KEY,
@@ -201,18 +209,32 @@ if menu == "📝 Lançamentos":
             c_add1, c_add2 = st.columns(2)
             with c_add1:
                 ntipo = st.radio("Para qual tipo?", ["Despesa", "Entrada"], horizontal=True, key="add_tipo")
-                ncat = st.text_input("Nome da Categoria (Nova ou Existente)", placeholder="Ex: Moradia")
+                ncat = st.text_input("Nome da Categoria (Nova ou Existente)", placeholder="Ex: Valores Fixos")
             with c_add2:
-                nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Aluguel")
+                nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Hospital Trauma")
+            
+            # Campos Opcionais de Plantão para Entrada
+            if ntipo == "Entrada":
+                st.markdown("---")
+                st.markdown("##### 🏥 Dados Padrão de Plantão (Opcional)")
+                c_opt1, c_opt2, c_opt3 = st.columns(3)
+                v_opt = c_opt1.number_input("Valor Padrão", min_value=0.0, step=50.0, value=0.0)
+                a_opt = c_opt2.number_input("Atraso (Meses)", min_value=0, max_value=6, value=1)
+                d_opt = c_opt3.number_input("Dia Pagamento", min_value=1, max_value=31, value=10)
+
             if st.button("Salvar Nova Categoria/Subgrupo", type="primary"):
                 if not ncat.strip(): st.error("O nome da Categoria é obrigatório.")
                 else:
-                    execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo) VALUES (%s, %s, %s)", (ntipo, ncat.strip(), nsub.strip()))
+                    if ntipo == "Entrada":
+                        execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento) VALUES (%s, %s, %s, %s, %s, %s)", 
+                                      (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt))
+                    else:
+                        execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo) VALUES (%s, %s, %s)", (ntipo, ncat.strip(), nsub.strip()))
                     st.success("Adicionado com sucesso!")
                     st.rerun()
                     
         with tab_edit:
-            df_custom = fetch_dataframe("SELECT id, tipo, categoria, subgrupo FROM categorias_personalizadas")
+            df_custom = fetch_dataframe("SELECT * FROM categorias_personalizadas")
             if not df_custom.empty:
                 opcoes_edit = {r['id']: f"{r['tipo']} ➔ {r['categoria']} ➔ {r['subgrupo']}" for _, r in df_custom.iterrows()}
                 sel_edit = st.selectbox("Selecione o item para editar:", options=[None] + list(opcoes_edit.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_edit[x])
@@ -223,8 +245,23 @@ if menu == "📝 Lançamentos":
                         new_cat = st.text_input("Nova Categoria", value=nó['categoria'])
                     with c_ed_n2:
                         new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if nó['subgrupo'] else "")
+                    
+                    # Edição de campos de plantão
+                    if nó['tipo'] == "Entrada":
+                        st.markdown("---")
+                        st.markdown("##### 🏥 Dados Padrão de Plantão")
+                        c_opt_e1, c_opt_e2, c_opt_e3 = st.columns(3)
+                        v_edit = c_opt_e1.number_input("Valor Padrão", value=float(nó['valor_padrao']) if nó['valor_padrao'] else 0.0)
+                        a_edit = c_opt_e2.number_input("Atraso (Meses)", value=int(nó['atraso_meses']) if nó['atraso_meses'] else 1)
+                        d_edit = c_opt_e3.number_input("Dia Pagamento", value=int(nó['dia_pagamento']) if nó['dia_pagamento'] else 10)
+
                     if st.button("💾 Confirmar Edição", type="primary"):
-                        execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s WHERE id=%s", (new_cat, new_sub, sel_edit))
+                        if nó['tipo'] == "Entrada":
+                            execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s WHERE id=%s", 
+                                          (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, sel_edit))
+                        else:
+                            execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s WHERE id=%s", (new_cat, new_sub, sel_edit))
+                        
                         execute_query("UPDATE lancamentos SET categoria=%s, subgrupo=%s WHERE tipo=%s AND categoria=%s AND subgrupo=%s", (new_cat, new_sub, nó['tipo'], nó['categoria'], nó['subgrupo']))
                         st.success("Atualizado com sucesso.")
                         st.rerun()
@@ -623,16 +660,27 @@ elif menu == "🏥 Escala de Plantões":
     modo = st.radio("Modo de Inserção", ["Dia Específico", "Plantões Fixos na Semana (Recorrente)"], horizontal=True)
     
     locais_dyn = list(set([item for sublist in ESTRUTURA["Entrada"].values() for item in sublist]))
+    
     with st.container(border=True):
         c1, c2 = st.columns(2)
         with c1:
             loc_p = st.selectbox("🏥 Local do Plantão", locais_dyn if locais_dyn else ["Vazio (Crie na aba Lançamentos)"])
+            
+            # Buscar valores padrão se o hospital for selecionado
+            default_vals = {"v": 1000.0, "m": 1, "d": 10}
+            if loc_p != "Vazio (Crie na aba Lançamentos)":
+                res = fetch_dataframe("SELECT valor_padrao, atraso_meses, dia_pagamento FROM categorias_personalizadas WHERE subgrupo = %s AND tipo = 'Entrada' LIMIT 1", (loc_p,))
+                if not res.empty:
+                    if res.iloc[0]['valor_padrao']: default_vals["v"] = float(res.iloc[0]['valor_padrao'])
+                    if res.iloc[0]['atraso_meses'] is not None: default_vals["m"] = int(res.iloc[0]['atraso_meses'])
+                    if res.iloc[0]['dia_pagamento'] is not None: default_vals["d"] = int(res.iloc[0]['dia_pagamento'])
+
             if modo == "Dia Específico": d_p = st.date_input("🗓️ Data do Plantão", value=hoje, format="DD/MM/YYYY")
             else: dias_s = st.multiselect("🗓️ Dias da Semana", options=[0,1,2,3,4,5,6], format_func=lambda x: ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"][x])
         with c2:
-            v_t = st.number_input("Valor do Plantão (R$)", value=1000.0, step=100.0)
-            reg_m = st.number_input("Atraso (Meses)", min_value=0, max_value=6, value=1)
-            reg_d = st.number_input("Dia do Pagamento", min_value=1, max_value=31, value=10)
+            v_t = st.number_input("Valor do Plantão (R$)", value=default_vals["v"], step=100.0)
+            reg_m = st.number_input("Atraso (Meses)", min_value=0, max_value=6, value=default_vals["m"])
+            reg_d = st.number_input("Dia do Pagamento", min_value=1, max_value=31, value=default_vals["d"])
             if modo != "Dia Específico": m_rec = st.number_input("Repetir por quantos meses?", min_value=1, max_value=60, value=6)
 
         if st.button("🚀 Registrar Plantão", type="primary") and loc_p != "Vazio (Crie na aba Lançamentos)":
