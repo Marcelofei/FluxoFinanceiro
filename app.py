@@ -510,6 +510,16 @@ elif menu == "🔀 Otimização de Pagamentos":
     
     if not df_mes.empty:
         df_e, df_d = df_mes[df_mes['tipo'] == 'Entrada'].copy(), df_mes[df_mes['tipo'] == 'Despesa'].copy()
+        
+        mask_plantoes = df_e['descricao'].str.contains('Plantão', na=False)
+        if mask_plantoes.any():
+            df_plantoes = df_e[mask_plantoes].copy()
+            df_e = df_e[~mask_plantoes].copy()
+            for nome_grupo, grupo in df_plantoes.groupby(['subgrupo', 'data_vencimento']):
+                subg_nome, dt_venc = nome_grupo
+                dummy_plantao = pd.DataFrame([{'id': f'plantao_{subg_nome}', 'tipo': 'Entrada', 'categoria': grupo.iloc[0]['categoria'], 'subgrupo': subg_nome, 'descricao': f'🏥 Plantões {subg_nome}', 'valor': grupo['valor'].sum(), 'data_vencimento': dt_venc, 'pago': 0, 'compra_id': 'plantao_dummy', 'forma_pagamento': 'Outros', 'prioridade': 'Baixa 🟢'}])
+                df_e = pd.concat([df_e, dummy_plantao], ignore_index=True)
+
         df_e['is_hr'] = df_e['descricao'].str.contains('Radioclim|Humana', case=False, na=False)
         df_hr, df_outras = df_e[df_e['is_hr']].copy(), df_e[~df_e['is_hr']].copy()
         
@@ -598,6 +608,14 @@ elif menu == "🏥 Escala de Plantões":
                     else: execute_query(f"DELETE FROM lancamentos WHERE id IN {ids}")
                     st.rerun()
     else: st.info("Você ainda não registrou nenhum plantão para este mês.")
+
+    st.divider()
+    
+    st.subheader("🗑️ Purgar Todo o Histórico")
+    if st.button("🚨 Apagar TODO o Histórico Global de Plantões (Banco de Dados)", type="primary"):
+        execute_query("DELETE FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE 'Plantão %'")
+        st.success("Histórico global de plantões purgado.")
+        st.rerun()
         
     st.divider()
 
