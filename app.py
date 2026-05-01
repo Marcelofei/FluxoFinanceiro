@@ -77,7 +77,6 @@ def init_db():
             dia_pagamento INTEGER
         );
     ''')
-    # Garantir que colunas novas existam caso a tabela já tenha sido criada anteriormente
     execute_query("ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS valor_padrao NUMERIC;")
     execute_query("ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS atraso_meses INTEGER;")
     execute_query("ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS dia_pagamento INTEGER;")
@@ -213,7 +212,6 @@ if menu == "📝 Lançamentos":
             with c_add2:
                 nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Hospital Trauma")
             
-            # Campos Opcionais de Plantão para Entrada
             if ntipo == "Entrada":
                 st.markdown("---")
                 st.markdown("##### 🏥 Dados Padrão de Plantão (Opcional)")
@@ -246,7 +244,6 @@ if menu == "📝 Lançamentos":
                     with c_ed_n2:
                         new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if pd.notna(nó['subgrupo']) else "")
                     
-                    # Edição de campos de plantão
                     if nó['tipo'] == "Entrada":
                         st.markdown("---")
                         st.markdown("##### 🏥 Dados Padrão de Plantão")
@@ -484,6 +481,24 @@ elif menu == "📑 Demonstrativo":
         c_m2.metric("Despesa Total", f"R$ {format_brl(df_d['valor'].sum())}")
         c_m3.metric("Orçamento Base-Zero (ZBB)", f"R$ {format_brl(df_e['valor'].sum() - df_d['valor'].sum())}")
         
+        entradas_recebidas = df_e[df_e['pago'] == 1]['valor'].sum()
+        falta_receber = df_e['valor'].sum() - entradas_recebidas
+        despesas_pagas = df_d[df_d['pago'] == 1]['valor'].sum()
+        falta_pagar = df_d['valor'].sum() - despesas_pagas
+
+        c_res1, c_res2 = st.columns(2)
+        c_res1.metric("⏳ Restante a Receber", f"R$ {format_brl(falta_receber)}")
+        c_res2.metric("🚨 Restante a Pagar", f"R$ {format_brl(falta_pagar)}")
+
+        st.divider()
+
+        st.subheader("📊 Distribuição de Despesas")
+        if not df_d.empty:
+            df_grp = df_d.groupby('categoria')['valor'].sum().reset_index()
+            fig = px.pie(df_grp, values='valor', names='categoria', hole=0.4)
+            fig.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(fig, use_container_width=True)
+            
         st.divider()
         c1, c2 = st.columns(2)
         with c1:
@@ -584,7 +599,14 @@ elif menu == "🔀 Otimização de Pagamentos":
                         pg = min(saldo, s['v_rest'])
                         s['v_rest'] -= pg; saldo -= pg; s_abt += pg
                         aloc.append({"Conta": s['descricao'], "Venc.": pd.to_datetime(s['data_vencimento']).strftime('%d/%m'), "Abatido": f"R$ {format_brl(pg)}"})
-                if aloc: st.dataframe(pd.DataFrame(aloc), use_container_width=True, hide_index=True)
+                if aloc: 
+                    st.dataframe(pd.DataFrame(aloc), use_container_width=True, hide_index=True)
+                    c1, c2 = st.columns(2)
+                    c1.metric("Total Distribuído no Dia", f"R$ {format_brl(s_abt)}")
+                    c2.metric("Saldo Restante (Sobrante)", f"R$ {format_brl(saldo)}")
+                else:
+                    st.warning("Nenhuma despesa pendente pôde ser alocada a este saldo diário.")
+                    st.metric("Saldo Intacto", f"R$ {format_brl(saldo)}")
                 st.divider()
 
 # =================================================================
@@ -672,8 +694,8 @@ elif menu == "🏥 Escala de Plantões":
                 res = fetch_dataframe("SELECT valor_padrao, atraso_meses, dia_pagamento FROM categorias_personalizadas WHERE subgrupo = %s AND tipo = 'Entrada' LIMIT 1", (loc_p,))
                 if not res.empty:
                     if res.iloc[0]['valor_padrao']: default_vals["v"] = float(res.iloc[0]['valor_padrao'])
-                    if res.iloc[0]['atraso_meses'] is not None: default_vals["m"] = int(res.iloc[0]['atraso_meses'])
-                    if res.iloc[0]['dia_pagamento'] is not None: default_vals["d"] = int(res.iloc[0]['dia_pagamento'])
+                    if pd.notna(res.iloc[0]['atraso_meses']): default_vals["m"] = int(res.iloc[0]['atraso_meses'])
+                    if pd.notna(res.iloc[0]['dia_pagamento']): default_vals["d"] = int(res.iloc[0]['dia_pagamento'])
 
             if modo == "Dia Específico": d_p = st.date_input("🗓️ Data do Plantão", value=hoje, format="DD/MM/YYYY")
             else: dias_s = st.multiselect("🗓️ Dias da Semana", options=[0,1,2,3,4,5,6], format_func=lambda x: ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"][x])
