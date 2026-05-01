@@ -520,8 +520,10 @@ elif menu == "📑 Demonstrativo":
                         st.dataframe(df_s[['Data BR', 'descricao', 'valor', 'prioridade']], hide_index=True)
 
         st.divider()
-        st.subheader("💳 Detalhamento e Edição de Faturas (Crédito)")
         df_credito = df[df['forma_pagamento'] == 'Crédito'].copy()
+        total_credito = df_credito['valor'].sum() if not df_credito.empty else 0.0
+        st.subheader(f"💳 Detalhamento e Edição de Faturas (Crédito) - R$ {format_brl(total_credito)}")
+        
         if not df_credito.empty:
             df_credito = df_credito.sort_values('data_vencimento').reset_index(drop=True)
             df_credito['Data'] = pd.to_datetime(df_credito['data_vencimento']).dt.date
@@ -534,8 +536,10 @@ elif menu == "📑 Demonstrativo":
                 if st.button("💾 Salvar Alterações do Cartão", type="primary"):
                     for i, r in edit_c.iterrows():
                         if r['🗑️ Este'] or r['🗑️ Futuros']:
-                            if r['🗑️ Futuros']: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s", (df_credito.loc[i, 'compra_id'], df_credito.loc[i, 'data_vencimento']))
-                            else: execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_credito.loc[i, 'id']),))
+                            if r['🗑️ Futuros']:
+                                execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s", (df_credito.loc[i, 'compra_id'], df_credito.loc[i, 'data_vencimento']))
+                            else:
+                                execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_credito.loc[i, 'id']),))
                     st.rerun()
             with c_b2:
                 if st.button("🚨 Apagar TODOS os Lançamentos de Crédito Listados"):
