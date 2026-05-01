@@ -600,6 +600,15 @@ elif menu == "🏥 Escala de Plantões":
     else: st.info("Você ainda não registrou nenhum plantão para este mês.")
 
     st.divider()
+    
+    st.subheader("🗑️ Purgar Todo o Histórico")
+    if st.button("🚨 Apagar TODO o Histórico Global de Plantões (Banco de Dados)", type="primary"):
+        execute_query("DELETE FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE 'Plantão %'")
+        st.success("Histórico global de plantões purgado.")
+        st.rerun()
+        
+    st.divider()
+
     st.subheader("➕ Adicionar à Escala")
     modo = st.radio("Modo de Inserção", ["Dia Específico", "Plantões Fixos na Semana (Recorrente)"], horizontal=True)
     
