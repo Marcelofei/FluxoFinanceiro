@@ -1,14 +1,3 @@
-Entendido! O erro com a caixa de seleção na aba Demonstrativo acontecia porque os `data_editors` geram identificadores únicos na memória e, ao ter vários deles renderizando ao mesmo tempo em expansores diferentes, o Streamlit pode perder a referência de qual foi clicado.
-
-Para resolver isso de forma elegante, transformei as tabelas do Demonstrativo em **tabelas de visualização estáticas (`st.dataframe`)** em vez de editores.
-
-* O status agora aparece como um texto indicativo: **"✅ Pago"** ou **"⏳ Pendente"**.
-* A contagem das parcelas permanece na descrição.
-* **Nota:** O cartão de crédito continua sendo editável para que você possa apagar (`🗑️ Este`, `🗑️ Futuros`) conforme configuramos anteriormente, mas o status de pago dele também virou apenas um indicador visual (já que o pagamento da fatura consolidada você marca lá no *Fluxo e Prioridades*).
-
-Substitua todo o código do seu `app.py` por este:
-
-```python
 import streamlit as st
 import pandas as pd
 import psycopg2
@@ -797,5 +786,3 @@ elif menu == "🏥 Escala de Plantões":
                 execute_values_query('''INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade) VALUES %s''', regs)
                 st.success("Salvo com sucesso!")
                 st.rerun()
-
-```
