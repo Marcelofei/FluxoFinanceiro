@@ -1,3 +1,14 @@
+Entendido! O erro com a caixa de seleção na aba Demonstrativo acontecia porque os `data_editors` geram identificadores únicos na memória e, ao ter vários deles renderizando ao mesmo tempo em expansores diferentes, o Streamlit pode perder a referência de qual foi clicado.
+
+Para resolver isso de forma elegante, transformei as tabelas do Demonstrativo em **tabelas de visualização estáticas (`st.dataframe`)** em vez de editores.
+
+* O status agora aparece como um texto indicativo: **"✅ Pago"** ou **"⏳ Pendente"**.
+* A contagem das parcelas permanece na descrição.
+* **Nota:** O cartão de crédito continua sendo editável para que você possa apagar (`🗑️ Este`, `🗑️ Futuros`) conforme configuramos anteriormente, mas o status de pago dele também virou apenas um indicador visual (já que o pagamento da fatura consolidada você marca lá no *Fluxo e Prioridades*).
+
+Substitua todo o código do seu `app.py` por este:
+
+```python
 import streamlit as st
 import pandas as pd
 import psycopg2
@@ -373,7 +384,7 @@ elif menu == "📊 Fluxo e Prioridades":
         df_view.insert(0, '🗑️ Este', False)
         df_view.insert(1, '🗑️ Futuros', False)
 
-        st.markdown("*(Nota: Edições nos valores 'Consolidados' gerarão um novo registro de Ajuste).*")
+        st.markdown("*(Nota: Edições nos valores 'Consolidados' gerarão um novo registro de Ajuste para manter a integridade dos dados originais).*")
         edit_df = st.data_editor(
             df_view[['🗑️ Este', '🗑️ Futuros', 'Data', 'prioridade', 'Desc. Exibição', 'valor', 'Pago']], 
             use_container_width=True, 
@@ -394,11 +405,11 @@ elif menu == "📊 Fluxo e Prioridades":
                 novo_valor = float(row['valor'])
                 delta = novo_valor - velho_valor
                 
-                # Se o usuário editou a descrição, precisamos limpar o sufixo de parcelas se ele existir
+                # Se o usuário editou a descrição, limpar o sufixo de parcelas se ele existir
                 nova_desc = row['Desc. Exibição'].split(' (')[0]
                 
                 if row['🗑️ Este'] or row['🗑️ Futuros']:
-                    if id_s == '-1': st.warning("Cartões consolidados não podem ser apagados aqui. Vá em Demonstrativo.")
+                    if id_s == '-1': st.warning("Cartões consolidados não podem ser apagados aqui. Vá em Demonstrativo > Detalhamento de Faturas (Crédito).")
                     elif id_s.startswith('plantao_'): execute_query("DELETE FROM lancamentos WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%'", (id_s.replace('plantao_', ''), row['Data']))
                     else: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if row['🗑️ Futuros'] else "DELETE FROM lancamentos WHERE id = %s", (df_view.loc[i, 'compra_id'], df_view.loc[i, 'data_vencimento']) if row['🗑️ Futuros'] else (int(id_s),))
                 else:
@@ -501,9 +512,8 @@ elif menu == "📑 Demonstrativo":
             
         st.divider()
 
-        def editor_demonstrativo(dataframe, key_prefix):
+        def exibir_demonstrativo(dataframe):
             if dataframe.empty: return
-            dataframe['Pago'] = dataframe['pago'].astype(bool)
             
             # Formatar descrição com parcelas
             def format_desc(row):
@@ -512,19 +522,14 @@ elif menu == "📑 Demonstrativo":
                 return row['descricao']
             
             dataframe['Desc. Exibição'] = dataframe.apply(format_desc, axis=1)
+            # Definir o status como texto visual (✅ ou ⏳)
+            dataframe['Status'] = dataframe['pago'].apply(lambda x: '✅ Pago' if x == 1 else '⏳ Pendente')
             
-            edited = st.data_editor(
-                dataframe[['Data BR', 'Desc. Exibição', 'valor', 'prioridade', 'Pago']],
-                hide_index=True, use_container_width=True, key=f"editor_{key_prefix}",
-                column_config={"Pago": st.column_config.CheckboxColumn("Pago"), "valor": "R$", "Desc. Exibição": "Descrição"}
+            st.dataframe(
+                dataframe[['Data BR', 'Desc. Exibição', 'valor', 'prioridade', 'Status']],
+                hide_index=True, use_container_width=True,
+                column_config={"valor": st.column_config.NumberColumn("Valor", format="%.2f"), "Desc. Exibição": "Descrição"}
             )
-            
-            if st.button(f"Salvar Status - {key_prefix}", key=f"btn_{key_prefix}"):
-                for i, row in edited.iterrows():
-                    novo_pago = 1 if row['Pago'] else 0
-                    orig_id = dataframe.iloc[i]['id']
-                    execute_query("UPDATE lancamentos SET pago = %s WHERE id = %s", (novo_pago, int(orig_id)))
-                st.rerun()
 
         c1, c2 = st.columns(2)
         with c1:
@@ -535,7 +540,7 @@ elif menu == "📑 Demonstrativo":
                     for sub in df_c['subgrupo'].unique():
                         df_s = df_c[df_c['subgrupo'] == sub].copy()
                         st.markdown(f"**{sub}** (R$ {format_brl(df_s['valor'].sum())})")
-                        editor_demonstrativo(df_s, f"entrada_{cat}_{sub}")
+                        exibir_demonstrativo(df_s)
 
         with c2:
             st.subheader("🔴 Despesas Detalhadas")
@@ -545,19 +550,63 @@ elif menu == "📑 Demonstrativo":
                     for sub in df_c['subgrupo'].unique():
                         df_s = df_c[df_c['subgrupo'] == sub].copy()
                         st.markdown(f"**{sub}** (R$ {format_brl(df_s['valor'].sum())})")
-                        editor_demonstrativo(df_s, f"despesa_{cat}_{sub}")
+                        exibir_demonstrativo(df_s)
 
         st.divider()
         df_credito = df[df['forma_pagamento'] == 'Crédito'].copy()
         total_credito = df_credito['valor'].sum() if not df_credito.empty else 0.0
         st.subheader(f"💳 Detalhamento do Cartão de Crédito - R$ {format_brl(total_credito)}")
+        
         if not df_credito.empty:
-            editor_demonstrativo(df_credito, "cartao_geral")
-            if st.button("🚨 Apagar TODOS os Lançamentos de Crédito Listados"):
-                ids_cred = tuple(df_credito['id'].tolist())
-                if ids_cred:
-                    execute_query("DELETE FROM lancamentos WHERE id IN %s", (ids_cred,))
+            df_credito = df_credito.sort_values('data_vencimento').reset_index(drop=True)
+            df_credito['Data'] = pd.to_datetime(df_credito['data_vencimento']).dt.date
+            
+            # Formatar descrição com parcelas para o cartão de crédito
+            def format_desc_cred(row):
+                if pd.notna(row.get('total_parcelas')) and row['total_parcelas'] > 1 and row['total_parcelas'] != 999:
+                    return f"{row['descricao']} ({int(row['parcela_atual'])}/{int(row['total_parcelas'])})"
+                return row['descricao']
+            
+            df_credito['Desc. Exibição'] = df_credito.apply(format_desc_cred, axis=1)
+            # Definir o status como texto visual (✅ ou ⏳)
+            df_credito['Status'] = df_credito['pago'].apply(lambda x: '✅ Pago' if x == 1 else '⏳ Pendente')
+
+            df_credito.insert(0, '🗑️ Este', False)
+            df_credito.insert(1, '🗑️ Futuros', False)
+            
+            # No cartão, mantemos o data_editor APENAS para as lixeiras, não para o checkbox de pagamento.
+            edit_c = st.data_editor(
+                df_credito[['🗑️ Este', '🗑️ Futuros', 'Data', 'categoria', 'subgrupo', 'Desc. Exibição', 'valor', 'Status']], 
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                    "valor": st.column_config.NumberColumn("Valor", format="%.2f"),
+                    "Desc. Exibição": "Descrição",
+                    "Status": st.column_config.TextColumn("Status", disabled=True)
+                }
+            )
+            
+            c_b1, c_b2 = st.columns(2)
+            with c_b1:
+                if st.button("💾 Salvar Exclusões do Cartão", type="primary"):
+                    for i, r in edit_c.iterrows():
+                        if r['🗑️ Este'] or r['🗑️ Futuros']:
+                            if r['🗑️ Futuros']:
+                                execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s", (df_credito.loc[i, 'compra_id'], df_credito.loc[i, 'data_vencimento']))
+                            else:
+                                execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_credito.loc[i, 'id']),))
                     st.rerun()
+            with c_b2:
+                if st.button("🚨 Apagar TODOS os Lançamentos de Crédito Listados"):
+                    ids_cred = tuple(df_credito['id'].tolist())
+                    if ids_cred:
+                        if len(ids_cred) == 1:
+                            execute_query("DELETE FROM lancamentos WHERE id = %s", (ids_cred[0],))
+                        else:
+                            execute_query(f"DELETE FROM lancamentos WHERE id IN {ids_cred}")
+                        st.rerun()
+        else:
+            st.info("Nenhum lançamento no crédito encontrado para este período.")
 
 # =================================================================
 # 9. MÓDULO 4: OTIMIZAÇÃO DE PAGAMENTOS
@@ -566,6 +615,7 @@ elif menu == "📑 Demonstrativo":
 elif menu == "🔀 Otimização de Pagamentos":
     st.header("🔀 Otimização de Pagamentos")
     df_mes = fetch_dataframe("SELECT * FROM lancamentos WHERE EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s", (mes_selecionado, ano_selecionado))
+    
     if not df_mes.empty:
         df_e, df_d = df_mes[df_mes['tipo'] == 'Entrada'].copy(), df_mes[df_mes['tipo'] == 'Despesa'].copy()
         
@@ -642,6 +692,7 @@ elif menu == "🏥 Escala de Plantões":
     with c_m: cal_mes = st.selectbox("Mês do Calendário", range(1, 13), format_func=lambda x: meses[x-1], index=hoje.month-1)
     with c_a: cal_ano = st.selectbox("Ano do Calendário", range(hoje.year-1, hoje.year+2), index=1)
     st.divider()
+
     df_t = fetch_dataframe("SELECT * FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE 'Plantão %'")
     df_m_cal = pd.DataFrame()
     if not df_t.empty:
@@ -651,6 +702,7 @@ elif menu == "🏥 Escala de Plantões":
 
     cols = st.columns(7)
     for i, dia in enumerate(["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]): cols[i].markdown(f"<div style='text-align: center; font-weight: bold; padding: 5px; border-bottom: 2px solid #4CAF50;'>{dia}</div>", unsafe_allow_html=True)
+    
     for week in calendar.monthcalendar(cal_ano, cal_mes):
         w_cols = st.columns(7)
         for i, day in enumerate(week):
@@ -685,39 +737,48 @@ elif menu == "🏥 Escala de Plantões":
                 ids = tuple(df_geren['id'].tolist())
                 if ids:
                     if len(ids) == 1: execute_query("DELETE FROM lancamentos WHERE id = %s", (ids[0],))
-                    else: execute_query("DELETE FROM lancamentos WHERE id IN %s", (ids,))
+                    else: execute_query(f"DELETE FROM lancamentos WHERE id IN {ids}")
                     st.rerun()
-    else: st.info("Sem plantões registrados.")
+    else: st.info("Você ainda não registrou nenhum plantão para este mês.")
 
     st.divider()
-    if st.button("🚨 Apagar TODO o Histórico Global de Plantões", type="primary"):
+    
+    st.subheader("🗑️ Purgar Todo o Histórico")
+    if st.button("🚨 Apagar TODO o Histórico Global de Plantões (Banco de Dados)", type="primary"):
         execute_query("DELETE FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE 'Plantão %'")
-        st.success("Purgado."); st.rerun()
-
+        st.success("Histórico global de plantões purgado.")
+        st.rerun()
+        
     st.divider()
+
     st.subheader("➕ Adicionar à Escala")
-    modo = st.radio("Modo", ["Dia Específico", "Plantões Fixos na Semana"], horizontal=True)
+    modo = st.radio("Modo de Inserção", ["Dia Específico", "Plantões Fixos na Semana (Recorrente)"], horizontal=True)
+    
     locais_dyn = list(set([item for sublist in ESTRUTURA["Entrada"].values() for item in sublist]))
+    
     with st.container(border=True):
         c1, c2 = st.columns(2)
         with c1:
-            loc_p = st.selectbox("🏥 Local", locais_dyn if locais_dyn else ["Vazio"])
+            loc_p = st.selectbox("🏥 Local do Plantão", locais_dyn if locais_dyn else ["Vazio (Crie na aba Lançamentos)"])
+            
+            # Buscar valores padrão se o hospital for selecionado
             default_vals = {"v": 1000.0, "m": 1, "d": 10}
-            if loc_p != "Vazio":
+            if loc_p != "Vazio (Crie na aba Lançamentos)":
                 res = fetch_dataframe("SELECT valor_padrao, atraso_meses, dia_pagamento FROM categorias_personalizadas WHERE subgrupo = %s AND tipo = 'Entrada' LIMIT 1", (loc_p,))
                 if not res.empty:
-                    if pd.notna(res.iloc[0]['valor_padrao']): default_vals["v"] = float(res.iloc[0]['valor_padrao'])
+                    if res.iloc[0]['valor_padrao']: default_vals["v"] = float(res.iloc[0]['valor_padrao'])
                     if pd.notna(res.iloc[0]['atraso_meses']): default_vals["m"] = int(res.iloc[0]['atraso_meses'])
                     if pd.notna(res.iloc[0]['dia_pagamento']): default_vals["d"] = int(res.iloc[0]['dia_pagamento'])
-            if modo == "Dia Específico": d_p = st.date_input("Data", value=hoje, format="DD/MM/YYYY")
-            else: dias_s = st.multiselect("Dias", options=[0,1,2,3,4,5,6], format_func=lambda x: ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"][x])
-        with c2:
-            v_t = st.number_input("Valor (R$)", value=default_vals["v"])
-            reg_m = st.number_input("Atraso (Meses)", min_value=0, max_value=6, value=default_vals["m"])
-            reg_d = st.number_input("Dia Pagto", min_value=1, max_value=31, value=default_vals["d"])
-            if modo != "Dia Específico": m_rec = st.number_input("Repetir por meses", min_value=1, value=6)
 
-        if st.button("🚀 Registrar Plantão", type="primary") and loc_p != "Vazio":
+            if modo == "Dia Específico": d_p = st.date_input("🗓️ Data do Plantão", value=hoje, format="DD/MM/YYYY")
+            else: dias_s = st.multiselect("🗓️ Dias da Semana", options=[0,1,2,3,4,5,6], format_func=lambda x: ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"][x])
+        with c2:
+            v_t = st.number_input("Valor do Plantão (R$)", value=default_vals["v"], step=100.0)
+            reg_m = st.number_input("Atraso (Meses)", min_value=0, max_value=6, value=default_vals["m"])
+            reg_d = st.number_input("Dia do Pagamento", min_value=1, max_value=31, value=default_vals["d"])
+            if modo != "Dia Específico": m_rec = st.number_input("Repetir por quantos meses?", min_value=1, max_value=60, value=6)
+
+        if st.button("🚀 Registrar Plantão", type="primary") and loc_p != "Vazio (Crie na aba Lançamentos)":
             cat_escolhida = next((c for c, subs in ESTRUTURA.get("Entrada", {}).items() if loc_p in subs), "N/A")
             regs = []
             if modo == "Dia Específico":
@@ -731,6 +792,10 @@ elif menu == "🏥 Escala de Plantões":
                     for d in range(1, calendar.monthrange(a_a, m_a)[1] + 1):
                         curr = datetime.date(a_a, m_a, d)
                         if curr.weekday() in dias_s: regs.append(("Entrada", cat_escolhida, loc_p, f"Plantão {loc_p} ({curr.strftime('%d/%m/%Y')})", v_t, datetime.date(a_p, m_p, reg_d), 1, 1, 0, str(uuid.uuid4()), "Outros", "Baixa 🟢"))
+            
             if regs:
                 execute_values_query('''INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade) VALUES %s''', regs)
+                st.success("Salvo com sucesso!")
                 st.rerun()
+
+```
