@@ -8,7 +8,6 @@ import calendar
 import uuid
 import os
 import io
-import re
 
 # =================================================================
 # 1. INFRAESTRUTURA E CONEXÃO (SINGLETON ROBUSTO)
@@ -128,45 +127,6 @@ def format_brl(valor):
     if pd.isna(valor): return "0,00"
     return f"{float(valor):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
-# Leitor e extrator nativo de tags estruturadas de arquivos OFX bancários
-def parse_ofx_string(ofx_content):
-    transactions = []
-    blocks = re.findall(r'<STMTTRN>(.*?)</STMTTRN>', ofx_content, re.DOTALL | re.IGNORECASE)
-    for block in blocks:
-        trntype = re.search(r'<TRNTYPE>(.*?)(?:\n|<)', block, re.IGNORECASE)
-        dtposted = re.search(r'<DTPOSTED>(.*?)(?:\n|<)', block, re.IGNORECASE)
-        trnamt = re.search(r'<TRNAMT>(.*?)(?:\n|<)', block, re.IGNORECASE)
-        memo = re.search(r'<MEMO>(.*?)(?:\n|<)', block, re.IGNORECASE)
-        name = re.search(r'<NAME>(.*?)(?:\n|<)', block, re.IGNORECASE)
-        
-        t_date_str = dtposted.group(1).strip() if dtposted else ""
-        t_amt = trnamt.group(1).strip() if trnamt else "0"
-        t_memo = memo.group(1).strip() if memo else ""
-        t_name = name.group(1).strip() if name else ""
-        
-        desc = t_name if t_name else t_memo
-        if not desc: desc = "Transação de Extrato"
-        
-        try:
-            ano = int(t_date_str[0:4])
-            mes = int(t_date_str[4:6])
-            dia = int(t_date_str[6:8])
-            data_venc = datetime.date(ano, mes, dia)
-        except:
-            data_venc = datetime.date.today()
-            
-        valor = float(t_amt.replace(',', '.'))
-        tipo_mov = "Entrada" if valor > 0 else "Despesa"
-        valor = abs(valor)
-        
-        transactions.append({
-            "Data": data_venc,
-            "Descrição": desc,
-            "Valor": valor,
-            "Tipo": tipo_mov
-        })
-    return transactions
-
 # =================================================================
 # 3. CONFIGURAÇÃO DA PÁGINA
 # =================================================================
@@ -204,7 +164,6 @@ prioridades_map = {"Alta 🔴": 0, "Média 🟡": 1, "Baixa 🟢": 2}
 st.sidebar.title("Navegação")
 menu = st.sidebar.radio("Módulo:", [
     "📝 Lançamentos", 
-    "📥 Conciliação OFX",
     "📊 Fluxo e Prioridades", 
     "📑 Demonstrativo", 
     "📈 Balanço Anual",
@@ -363,105 +322,6 @@ if menu == "📝 Lançamentos":
             st.success("Salvo!"); st.rerun()
 
 # =================================================================
-# 6.2 MÓDULO AUXILIAR: CONCILIAÇÃO BANCÁRIA OFX
-# =================================================================
-
-elif menu == "📥 Conciliação OFX":
-    st.header("📥 Conciliação Bancária Automatizada (Extrato .OFX)")
-    st.markdown("Exporte o extrato em formato **.ofx** no app do seu banco e faça o upload aqui. O sistema usará seu histórico completo para auto-categorizar tudo.")
-    
-    arquivo_ofx = st.file_uploader("Selecione o arquivo de extrato (.ofx)", type=["ofx"])
-    if arquivo_ofx:
-        conteudo = arquivo_ofx.read().decode("utf-8", errors="ignore")
-        transacoes = parse_ofx_string(conteudo)
-        
-        if not transacoes:
-            st.warning("Nenhuma transação estruturada válida foi localizada neste arquivo OFX.")
-        else:
-            # Puxar inteligência histórica do banco de dados local para de-para automático
-            df_historico = fetch_dataframe("SELECT tipo, descricao, categoria, subgrupo, forma_pagamento, prioridade FROM lancamentos")
-            
-            # Puxar tabelas de apoio dinâmicas para o dropdown da planilha
-            todas_categorias = []
-            todos_subgrupos = [""]
-            df_cats = fetch_dataframe("SELECT DISTINCT categoria, subgrupo FROM categorias_personalizadas")
-            if not df_cats.empty:
-                todas_categorias = sorted(df_cats['categoria'].dropna().unique().tolist())
-                todos_subgrupos += sorted(df_cats['subgrupo'].dropna().unique().tolist())
-            
-            registros_mapeados = []
-            for t in transacoes:
-                cat_sugerida = ""
-                sub_sugerido = ""
-                forma_sugerida = "À vista" if t['Tipo'] == "Entrada" else "Outros"
-                prioridade_sugerida = "Baixa 🟢"
-                
-                # Regra de Aprendizado por Histórico Local (Substring Match)
-                if not df_historico.empty:
-                    df_match = df_historico[(df_historico['tipo'] == t['Tipo']) & (df_historico['descricao'].str.contains(re.escape(t['Descrição']), case=False, na=False))]
-                    if not df_match.empty:
-                        cat_sugerida = df_match.iloc[0]['categoria']
-                        sub_sugerido = df_match.iloc[0]['subgrupo']
-                        forma_sugerida = df_match.iloc[0]['forma_pagamento']
-                        prioridade_sugerida = df_match.iloc[0]['prioridade']
-                
-                registros_mapeados.append({
-                    "Importar": True,
-                    "Data": t['Data'],
-                    "Tipo": t['Tipo'],
-                    "Descrição": t['Descrição'],
-                    "Valor": t['Valor'],
-                    "Categoria": cat_sugerida,
-                    "Subgrupo": sub_sugerido if sub_sugerido else "",
-                    "Forma Pagamento": forma_sugerida,
-                    "Prioridade": prioridade_sugerida
-                })
-            
-            df_ofx_ed = pd.DataFrame(registros_mapeados)
-            st.markdown(f"📊 **{len(df_ofx_ed)} transações encontradas.** Ajuste ou valide os dados abaixo:")
-            
-            # Renderização de Planilha de Validação Interativa Humana
-            df_validado = st.data_editor(
-                df_ofx_ed,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Importar": st.column_config.CheckboxColumn("Importar?"),
-                    "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-                    "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Entrada", "Despesa"]),
-                    "Valor": st.column_config.NumberColumn("Valor (R$)", format="%.2f"),
-                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=todas_categorias),
-                    "Subgrupo": st.column_config.SelectboxColumn("Subgrupo", options=todos_subgrupos),
-                    "Forma Pagamento": st.column_config.SelectboxColumn("Forma Pagamento", options=["À vista", "Crédito", "Outros"]),
-                    "Prioridade": st.column_config.SelectboxColumn("Prioridade", options=["Alta 🔴", "Média 🟡", "Baixa 🟢"])
-                }
-            )
-            
-            if st.button("🚀 Confirmar e Importar Transações Selecionadas", type="primary"):
-                novos_lancamentos = []
-                comp_id_lote = str(uuid.uuid4())
-                
-                for idx, r in df_validado.iterrows():
-                    if r['Importar']:
-                        if not r['Categoria'] or str(r['Categoria']).strip() == "":
-                            st.error(f"Erro: A transação '{r['Descrição']}' na linha {idx+1} não possui uma Categoria atribuída.")
-                            st.stop()
-                        
-                        novos_lancamentos.append((
-                            r['Tipo'], r['Categoria'], r['Subgrupo'], r['Descrição'], 
-                            float(r['Valor']), r['Data'], 1, 1, 1, # Salva como Pago automáticos por ser extrato real
-                            comp_id_lote, r['Forma Pagamento'], r['Prioridade']
-                        ))
-                
-                if novos_lancamentos:
-                    execute_values_query('''
-                        INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade) 
-                        VALUES %s
-                    ''', novos_lancamentos)
-                    st.success(f"Sucesso! {len(novos_lancamentos)} lançamentos inseridos e conciliados de forma consolidada!")
-                    st.rerun()
-
-# =================================================================
 # 7. MÓDULO 2: FLUXO E PRIORIDADES
 # =================================================================
 
@@ -509,6 +369,7 @@ elif menu == "📊 Fluxo e Prioridades":
         df_view['Pago'] = df_view['pago'].astype(bool)
         df_view['Data'] = pd.to_datetime(df_view['data_vencimento']).dt.date
         
+        # Adicionar info de parcelas na descrição de exibição
         def format_desc(row):
             if pd.notna(row.get('total_parcelas')) and row['total_parcelas'] > 1 and row['total_parcelas'] != 999:
                 return f"{row['descricao']} ({int(row['parcela_atual'])}/{int(row['total_parcelas'])})"
