@@ -382,7 +382,7 @@ elif menu == "📝 Lançamentos":
             st.success("Salvo!"); st.rerun()
 
 # -----------------------------------------------------------------
-# MÓDULO 2: FLUXO E PRIORIDADES (GRID SINGLE-CELL MUTATION)
+# MÓDULO 2: FLUXO E PRIORIDADES
 # -----------------------------------------------------------------
 elif menu == "📊 Fluxo e Prioridades":
     st.header("📊 Fluxo e Prioridades")
@@ -416,7 +416,7 @@ elif menu == "📊 Fluxo e Prioridades":
                 else: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if del_futuros else "DELETE FROM lancamentos WHERE id = %s", (row['compra_id'], row['data_vencimento']) if del_futuros else (int(id_s),))
                 mudancas = True
             else:
-                if id_s == '-1': # Cartão Consolidado
+                if id_s == '-1': 
                     execute_query("UPDATE lancamentos SET pago=%s WHERE forma_pagamento='Crédito' AND EXTRACT(MONTH FROM data_vencimento)=%s AND EXTRACT(YEAR FROM data_vencimento)=%s", (novo_pago_int, mes_selecionado, ano_selecionado))
                     if novo_pago_int == 1: execute_query("UPDATE lancamentos SET valor_pago=valor WHERE forma_pagamento='Crédito' AND EXTRACT(MONTH FROM data_vencimento)=%s AND EXTRACT(YEAR FROM data_vencimento)=%s AND valor_pago=0", (mes_selecionado, ano_selecionado))
                     elif novo_pago_int == 0: execute_query("UPDATE lancamentos SET valor_pago=0 WHERE forma_pagamento='Crédito' AND EXTRACT(MONTH FROM data_vencimento)=%s AND EXTRACT(YEAR FROM data_vencimento)=%s", (mes_selecionado, ano_selecionado))
@@ -424,7 +424,7 @@ elif menu == "📊 Fluxo e Prioridades":
                     if delta != 0: 
                         v_pago_aj = delta if novo_pago_int == 1 else 0.0
                         execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, valor_pago, data_vencimento, pago, forma_pagamento, prioridade) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Despesa', 'Ajuste', '', '💳 Ajuste de Fatura Consolidada', delta, v_pago_aj, row['Data'], novo_pago_int, 'Outros', prioridade))
-                elif id_s.startswith('plantao_'): # Plantão Consolidado
+                elif id_s.startswith('plantao_'): 
                     subg = id_s.replace('plantao_', '')
                     execute_query("UPDATE lancamentos SET pago=%s WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%'", (novo_pago_int, subg, row['Data']))
                     if novo_pago_int == 1: execute_query("UPDATE lancamentos SET valor_pago=valor WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%' AND valor_pago=0", (subg, row['Data']))
@@ -433,7 +433,7 @@ elif menu == "📊 Fluxo e Prioridades":
                     if delta != 0: 
                         v_pago_aj = delta if novo_pago_int == 1 else 0.0
                         execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, valor_pago, data_vencimento, pago, forma_pagamento, prioridade) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Entrada', 'Ajuste', subg, f'🏥 Ajuste de Plantão {subg}', delta, v_pago_aj, row['Data'], novo_pago_int, 'Outros', prioridade))
-                else: # Linha Normal (Single-Cell sync)
+                else: 
                     novo_valor_pago = novo_valor if novo_pago_int == 1 else 0.0
                     execute_query("UPDATE lancamentos SET pago=%s, prioridade=%s, descricao=%s, valor=%s, valor_pago=%s WHERE id=%s", (novo_pago_int, prioridade, nova_desc, novo_valor, novo_valor_pago, int(id_s)))
                 mudancas = True
@@ -521,7 +521,6 @@ elif menu == "📊 Fluxo e Prioridades":
                 texto_wpp += f"\n*Total Restante a Pagar:* R$ {format_brl(t_wpp)}"
                 st.code(texto_wpp, language="markdown")
 
-        # Reintegração do formulário de Edição Estrutural com propagação futura
         st.divider()
         st.subheader("✏️ Edição Estrutural Avançada (Raiz)")
         mask_individuais = (~df['forma_pagamento'].isin(['Crédito'])) & (~(df['tipo'] == 'Entrada') & ~df['descricao'].str.contains('Plantão', na=False))
@@ -558,7 +557,7 @@ elif menu == "📊 Fluxo e Prioridades":
                     st.success("Estrutura atualizada com sucesso!"); st.rerun()
 
 # -----------------------------------------------------------------
-# MÓDULO 3: DEMONSTRATIVO (MANTÉM AUDITORIA PLANEJADO VS REAL)
+# MÓDULO 3: DEMONSTRATIVO
 # -----------------------------------------------------------------
 elif menu == "📑 Demonstrativo":
     st.header("📑 Demonstrativo Financeiro")
@@ -670,7 +669,7 @@ elif menu == "📑 Demonstrativo":
                 st.rerun()
 
 # -----------------------------------------------------------------
-# MÓDULO 4: BALANÇO ANUAL
+# MÓDULO 4: BALANÇO ANUAL (COM BLINDAGEM MATEMÁTICA)
 # -----------------------------------------------------------------
 elif menu == "📈 Balanço Anual":
     st.header("📈 Balanço Financeiro Anual")
@@ -680,7 +679,9 @@ elif menu == "📈 Balanço Anual":
         ano_balanco = st.selectbox("Ano de Referência", anos_disp['ano'].astype(int).tolist(), index=0, key="bal_ano")
         df_ano = fetch_dataframe("SELECT * FROM lancamentos WHERE EXTRACT(YEAR FROM data_vencimento) = %s", (ano_balanco,))
         df_ano['valor'] = df_ano['valor'].astype(float)
-        df_ano['valor_pago'] = df_ano['valor_pago'].fillna(0.0).astype(float)
+        
+        # Fallback de Blindagem: se a conta foi paga (1) mas a coluna valor_pago no BD era 0.0, herde o valor planejado!
+        df_ano['valor_pago'] = df_ano.apply(lambda r: float(r['valor']) if r['pago'] == 1 and (pd.isna(r['valor_pago']) or float(r['valor_pago']) == 0.0) else float(0.0 if pd.isna(r['valor_pago']) else r['valor_pago']), axis=1)
         df_ano['mes_num'] = pd.to_datetime(df_ano['data_vencimento']).dt.month
         
         mensal = df_ano.groupby(['mes_num', 'tipo'])['valor_pago'].sum().unstack(fill_value=0).reset_index()
@@ -694,27 +695,27 @@ elif menu == "📈 Balanço Anual":
         
         tot_ent, tot_des = mensal['Entrada'].sum(), mensal['Despesa'].sum()
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Faturamento", f"R$ {format_brl(tot_ent)}")
-        c2.metric("Despesa", f"R$ {format_brl(tot_des)}")
-        c3.metric("Resultado Liquido", f"R$ {format_brl(tot_ent - tot_des)}")
+        c1.metric("Faturamento Efetivo", f"R$ {format_brl(tot_ent)}")
+        c2.metric("Despesa Efetiva", f"R$ {format_brl(tot_des)}")
+        c3.metric("Resultado Líquido", f"R$ {format_brl(tot_ent - tot_des)}")
         c4.metric("Margem", f"{(tot_ent - tot_des)/tot_ent*100 if tot_ent>0 else 0:.1f}%")
         
         st.divider()
         tab_graf1, tab_graf2 = st.tabs(["📊 Evolução Mensal", "🗂️ Composição de Gastos"])
         with tab_graf1:
-            fig_evol = px.bar(mensal, x='Mes', y=['Entrada', 'Despesa'], barmode='group', title="Comparativo Realizado", color_discrete_map={'Entrada': '#4CAF50', 'Despesa': '#F44336'})
+            fig_evol = px.bar(mensal, x='Mes', y=['Entrada', 'Despesa'], barmode='group', title="Comparativo de Geração e Custo Reais", color_discrete_map={'Entrada': '#4CAF50', 'Despesa': '#F44336'})
             st.plotly_chart(fig_evol, use_container_width=True)
-            fig_acum = px.area(mensal, x='Mes', y='Acumulado', title="Fluxo de Caixa Acumulado", color_discrete_sequence=['#2196F3'], markers=True)
+            fig_acum = px.area(mensal, x='Mes', y='Acumulado', title="Patrimônio/Caixa Acumulado no Ano", color_discrete_sequence=['#2196F3'], markers=True)
             st.plotly_chart(fig_acum, use_container_width=True)
         with tab_graf2:
             col_d1, col_d2 = st.columns(2)
             with col_d1:
                 df_desp_ano = df_ano[df_ano['tipo'] == 'Despesa'].groupby('categoria')['valor_pago'].sum().reset_index()
-                fig_pie_d = px.pie(df_desp_ano, values='valor_pago', names='categoria', hole=0.5, title="Por Categoria")
+                fig_pie_d = px.pie(df_desp_ano, values='valor_pago', names='categoria', hole=0.5, title="Despesas Reais por Categoria")
                 st.plotly_chart(fig_pie_d, use_container_width=True)
             with col_d2:
                 df_sub_ano = df_ano[df_ano['tipo'] == 'Despesa'].groupby('subgrupo')['valor_pago'].sum().sort_values(ascending=False).head(12).reset_index()
-                fig_sub = px.bar(df_sub_ano, x='valor_pago', y='subgrupo', orientation='h', title="Top 12 Maiores Gastos Reais", color='valor_pago', color_continuous_scale='Reds')
+                fig_sub = px.bar(df_sub_ano, x='valor_pago', y='subgrupo', orientation='h', title="Top 12 Centros de Custo Reais do Ano", color='valor_pago', color_continuous_scale='Reds')
                 fig_sub.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_sub, use_container_width=True)
 
@@ -768,6 +769,28 @@ elif menu == "🔀 Otimização de Pagamentos":
                     c2.metric("Saldo Sobrante", f"R$ {format_brl(saldo)}")
                 st.divider()
 
+        st.subheader("🎯 Fundo de Provisões: Produção Radioclim & Humana")
+        if not df_hr.empty:
+            for _, e in df_hr.iterrows():
+                saldo = float(e['valor'])
+                st.markdown(f"### 📥 {pd.to_datetime(e['data_vencimento']).strftime('%d/%m')} | {e['descricao']} | R$ {format_brl(saldo)}")
+                elg_p = sorted([s for s in fila_provisoes if s['v_rest'] > 0], key=lambda x: (prioridades_map.get(x.get('prioridade', 'Baixa 🟢'), 2), x['data_vencimento']))
+                aloc_p = []
+                s_abt_p = 0.0
+                for s in elg_p:
+                    if saldo > 0:
+                        pg = min(saldo, s['v_rest'])
+                        s['v_rest'] -= pg; saldo -= pg; s_abt_p += pg
+                        aloc_p.append({"Provisão": s['descricao'], "Abatido": f"R$ {format_brl(pg)}"})
+                if aloc_p: 
+                    st.dataframe(pd.DataFrame(aloc_p), use_container_width=True, hide_index=True)
+                    c1, c2 = st.columns(2)
+                    c1.metric("Distribuído", f"R$ {format_brl(s_abt_p)}")
+                    c2.metric("Saldo Sobrante", f"R$ {format_brl(saldo)}")
+                else: st.info("Sem provisões pendentes.")
+                st.divider()
+        else: st.warning("Produção Radioclim ou Humana não encontradas nas entradas deste mês.")
+
 # -----------------------------------------------------------------
 # MÓDULO 6: ESCALA DE PLANTÕES
 # -----------------------------------------------------------------
@@ -809,10 +832,25 @@ elif menu == "🏥 Escala de Plantões":
         df_geren.insert(0, '🗑️ Apagar', False)
         df_geren['Data do Plantão'] = pd.to_datetime(df_geren['d_p']).dt.strftime('%d/%m/%Y')
         edit_esc = st.data_editor(df_geren[['🗑️ Apagar', 'Data do Plantão', 'subgrupo', 'valor']], use_container_width=True, hide_index=True)
-        if st.button("💾 Salvar Exclusões Selecionadas"):
-            for i, r in edit_esc.iterrows():
-                if r['🗑️ Apagar']: execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_geren.loc[i, 'id']),))
-            st.rerun()
+        c_b1, c_b2 = st.columns(2)
+        with c_b1:
+            if st.button("💾 Salvar Exclusões Selecionadas"):
+                for i, r in edit_esc.iterrows():
+                    if r['🗑️ Apagar']: execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_geren.loc[i, 'id']),))
+                st.rerun()
+        with c_b2:
+            if st.button("🚨 Apagar TUDO o que está listado acima"):
+                ids = tuple(df_geren['id'].tolist())
+                if ids:
+                    if len(ids) == 1: execute_query("DELETE FROM lancamentos WHERE id = %s", (ids[0],))
+                    else: execute_query("DELETE FROM lancamentos WHERE id IN %s", (ids,))
+                    st.rerun()
+    else: st.info("Sem plantões registrados.")
+
+    st.divider()
+    if st.button("🚨 Apagar TODO o Histórico Global de Plantões", type="primary"):
+        execute_query("DELETE FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE 'Plantão %%'")
+        st.success("Purgado."); st.rerun()
 
     st.divider()
     st.subheader("➕ Adicionar à Escala")
