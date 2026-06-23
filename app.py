@@ -219,15 +219,14 @@ with col_top1: mes_selecionado = st.selectbox("Mês", range(1, 13), format_func=
 with col_top2: ano_selecionado = st.selectbox("Ano", range(hoje.year-2, hoje.year+5), index=2)
 
 # =================================================================
-# 6. MÓDULO 1: LANÇAMENTOS E GESTÃO DE ESTRUTURA
+# 6. MÓDULO 1: LANÇAMENTOS (REFATORADO PARA ULTRA-LOW FRICTION)
 # =================================================================
 
 if menu == "📝 Lançamentos":
-    st.header("📝 Novo Lançamento")
+    st.header("📝 Lançamento de Caixa")
     
     with st.expander("⚙️ Gerenciar Categorias e Subgrupos Personalizados", expanded=not ESTRUTURA["Despesa"] and not ESTRUTURA["Entrada"]):
         tab_add, tab_edit, tab_del = st.tabs(["➕ Adicionar", "✏️ Editar", "🗑️ Excluir"])
-        
         with tab_add:
             c_add1, c_add2 = st.columns(2)
             with c_add1:
@@ -235,25 +234,18 @@ if menu == "📝 Lançamentos":
                 ncat = st.text_input("Nome da Categoria (Nova ou Existente)", placeholder="Ex: Valores Fixos")
             with c_add2:
                 nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Hospital Trauma")
-            
             if ntipo == "Entrada":
-                st.markdown("---")
-                st.markdown("##### 🏥 Dados Padrão de Plantão (Opcional)")
+                st.markdown("##### 🏥 Dados Padrão de Plantão")
                 c_opt1, c_opt2, c_opt3 = st.columns(3)
                 v_opt = c_opt1.number_input("Valor Padrão", min_value=0.0, step=50.0, value=0.0)
                 a_opt = c_opt2.number_input("Atraso (Meses)", min_value=0, max_value=6, value=1)
                 d_opt = c_opt3.number_input("Dia Pagamento", min_value=1, max_value=31, value=10)
-
             if st.button("Salvar Nova Categoria/Subgrupo", type="primary"):
                 if not ncat.strip(): st.error("O nome da Categoria é obrigatório.")
                 else:
-                    if ntipo == "Entrada":
-                        execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento) VALUES (%s, %s, %s, %s, %s, %s)", 
-                                      (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt))
-                    else:
-                        execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo) VALUES (%s, %s, %s)", (ntipo, ncat.strip(), nsub.strip()))
-                    st.success("Adicionado com sucesso!")
-                    st.rerun()
+                    if ntipo == "Entrada": execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento) VALUES (%s, %s, %s, %s, %s, %s)", (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt))
+                    else: execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo) VALUES (%s, %s, %s)", (ntipo, ncat.strip(), nsub.strip()))
+                    st.success("Adicionado!"); st.rerun()
                     
         with tab_edit:
             df_custom = fetch_dataframe("SELECT * FROM categorias_personalizadas")
@@ -263,29 +255,18 @@ if menu == "📝 Lançamentos":
                 if sel_edit:
                     nó = df_custom[df_custom['id'] == sel_edit].iloc[0]
                     c_ed_n1, c_ed_n2 = st.columns(2)
-                    with c_ed_n1:
-                        new_cat = st.text_input("Nova Categoria", value=nó['categoria'])
-                    with c_ed_n2:
-                        new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if pd.notna(nó['subgrupo']) else "")
-                    
+                    with c_ed_n1: new_cat = st.text_input("Nova Categoria", value=nó['categoria'])
+                    with c_ed_n2: new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if pd.notna(nó['subgrupo']) else "")
                     if nó['tipo'] == "Entrada":
-                        st.markdown("---")
-                        st.markdown("##### 🏥 Dados Padrão de Plantão")
                         c_opt_e1, c_opt_e2, c_opt_e3 = st.columns(3)
                         v_edit = c_opt_e1.number_input("Valor Padrão", value=float(nó['valor_padrao']) if pd.notna(nó['valor_padrao']) else 0.0)
                         a_edit = c_opt_e2.number_input("Atraso (Meses)", value=int(nó['atraso_meses']) if pd.notna(nó['atraso_meses']) else 1)
                         d_edit = c_opt_e3.number_input("Dia Pagamento", value=int(nó['dia_pagamento']) if pd.notna(nó['dia_pagamento']) else 10)
-
                     if st.button("💾 Confirmar Edição", type="primary"):
-                        if nó['tipo'] == "Entrada":
-                            execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s WHERE id=%s", 
-                                          (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, sel_edit))
-                        else:
-                            execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s WHERE id=%s", (new_cat, new_sub, sel_edit))
-                        
+                        if nó['tipo'] == "Entrada": execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s WHERE id=%s", (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, sel_edit))
+                        else: execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s WHERE id=%s", (new_cat, new_sub, sel_edit))
                         execute_query("UPDATE lancamentos SET categoria=%s, subgrupo=%s WHERE tipo=%s AND categoria=%s AND subgrupo=%s", (new_cat, new_sub, nó['tipo'], nó['categoria'], nó['subgrupo']))
-                        st.success("Atualizado com sucesso.")
-                        st.rerun()
+                        st.success("Atualizado."); st.rerun()
             else: st.info("Nenhuma categoria encontrada.")
 
         with tab_del:
@@ -293,58 +274,96 @@ if menu == "📝 Lançamentos":
                 sel_del = st.selectbox("Selecione o item para excluir:", options=[None] + list(opcoes_edit.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_edit[x])
                 if sel_del and st.button("🗑️ Excluir Selecionado", type="primary"):
                     execute_query("DELETE FROM categorias_personalizadas WHERE id = %s", (sel_del,))
-                    st.success("Excluído com sucesso!")
-                    st.rerun()
+                    st.success("Excluído!"); st.rerun()
 
     st.divider()
-    col1, col2 = st.columns(2)
-    with col1:
-        tipo = st.radio("Tipo", ["Despesa", "Entrada"], horizontal=True, key="lanc_tipo")
-        forma_pgto = st.selectbox("Forma de Pagamento", ["À vista", "Crédito", "Outros"], index=0 if tipo == "Entrada" else 1)
-        descricao = st.text_input("Descrição")
-        valor_input = st.text_input("Valor Previsto (R$)", value="0,00")
-        prioridade = st.radio("Prioridade", ["Baixa 🟢", "Média 🟡", "Alta 🔴"], index=0, horizontal=True)
-    with col2:
-        if not ESTRUTURA[tipo]:
-            st.error("Não há categorias ativas. Crie uma no menu acima.")
-            categoria, subgrupo = None, None
-        else:
-            categoria = st.selectbox("Categoria", list(ESTRUTURA[tipo].keys()))
-            subgrupos_disp = ESTRUTURA[tipo][categoria] if categoria in ESTRUTURA[tipo] else []
-            subgrupo = st.selectbox("Subgrupo", subgrupos_disp)
-        
-        gasto_continuo = st.checkbox("🗓️ Provisão (Mês todo)")
-        data_venc_base = st.date_input("Data Vencimento / Referência", value=hoje, format="DD/MM/YYYY")
-        data_competencia = st.date_input("Data de Competência (Mês de Realização)", value=data_venc_base, format="DD/MM/YYYY")
-        
-        parcelas = 1
-        tipo_rec = st.radio("Recorrência", ["Única", "Parcelada", "Fixa/Contínua"], horizontal=True)
-        if tipo_rec == "Parcelada": parcelas = st.number_input("Parcelas", min_value=2, value=2)
-        elif tipo_rec == "Fixa/Contínua": parcelas = 60
 
-    if st.button("Registrar Lançamento", type="primary") and categoria:
-        val_f = parse_valor(valor_input)
-        if val_f <= 0: st.error("O valor deve ser maior que zero.")
-        else:
-            comp_id = str(uuid.uuid4())
-            registros = []
-            tot_p = 999 if tipo_rec == "Fixa/Contínua" else parcelas
-            desc_final = f"{descricao} (Provisão)" if gasto_continuo else descricao
-            for i in range(parcelas):
-                m_f = data_venc_base.month - 1 + i
-                a_f = data_venc_base.year + m_f // 12
-                m_f = m_f % 12 + 1
-                d_p = datetime.date(a_f, m_f, calendar.monthrange(a_f, m_f)[1]) if gasto_continuo else datetime.date(a_f, m_f, min(data_venc_base.day, calendar.monthrange(a_f, m_f)[1]))
-                d_c = datetime.date(a_f, m_f, min(data_competencia.day, calendar.monthrange(a_f, m_f)[1])) if gasto_continuo else data_competencia
-                registros.append((tipo, categoria, subgrupo, desc_final, val_f, d_p, i+1, tot_p, 0, comp_id, forma_pgto, prioridade, d_c, 0.0))
-            execute_values_query('''
-                INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, data_competencia, valor_efetivo) 
-                VALUES %s
-            ''', registros)
-            st.success("Salvo com sucesso!"); st.rerun()
+    # --- NÍVEL 1: FLUXO EXPRESSO (DIRECIONADO AO MÉDICO OCUPADO) ---
+    st.subheader("⚡ Lançamento Expresso (3 Segundos)")
+    
+    opcoes_express = []
+    for c in ESTRUTURA.get("Entrada", {}): opcoes_express.append(f"📥 {c}")
+    for c in ESTRUTURA.get("Despesa", {}): opcoes_express.append(f"💸 {c}")
+
+    if not opcoes_express:
+        st.warning("Nenhuma categoria cadastrada. Utilize o menu acima para criar sua primeira categoria.")
+    else:
+        with st.container(border=True):
+            col_e1, col_e2, col_e3, col_e4 = st.columns([2, 3, 2, 1])
+            with col_e1: cat_selecionada = st.selectbox("1. O que foi?", opcoes_express)
+            with col_e2: desc_express = st.text_input("2. Descrição Rápida", placeholder="Ex: Almoço / Uber / Plantão extra")
+            with col_e3: val_express = st.text_input("3. Valor (R$)", value="0,00", key="val_exp_input")
+            
+            with col_e4:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("Gravar ⚡", type="primary", use_container_width=True):
+                    val_f_exp = parse_valor(val_express)
+                    if val_f_exp <= 0 or not desc_express.strip():
+                        st.error("Preencha Descrição e Valor.")
+                    else:
+                        tipo_inferido = "Entrada" if cat_selecionada.startswith("📥") else "Despesa"
+                        cat_real = cat_selecionada.split(" ", 1)[1]
+                        subs_da_cat = ESTRUTURA[tipo_inferido].get(cat_real, [])
+                        sub_padrao = subs_da_cat[0] if subs_da_cat else ""
+                        
+                        execute_query('''
+                            INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, data_competencia, valor_efetivo) 
+                            VALUES (%s,%s,%s,%s,%s,%s,1,1,0,%s,'Outros','Média 🟡',%s,0.0)
+                        ''', (tipo_inferido, cat_real, sub_padrao, desc_express.strip(), val_f_exp, hoje, str(uuid.uuid4()), hoje))
+                        st.success("Registrado instantaneamente!"); st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # --- NÍVEL 2: FLUXO RETROATIVO / COMPLEXO ---
+    with st.expander("➕ Alternar para Modo Detalhado / Parcelado / Provisões Futuras"):
+        col1, col2 = st.columns(2)
+        with col1:
+            tipo = st.radio("Tipo", ["Despesa", "Entrada"], horizontal=True, key="lanc_tipo")
+            forma_pgto = st.selectbox("Forma de Pagamento", ["À vista", "Crédito", "Outros"], index=0 if tipo == "Entrada" else 1)
+            descricao = st.text_input("Descrição Detalhada", key="desc_full")
+            valor_input = st.text_input("Valor Previsto (R$)", value="0,00", key="val_full")
+            prioridade = st.radio("Prioridade", ["Baixa 🟢", "Média 🟡", "Alta 🔴"], index=0, horizontal=True)
+        with col2:
+            if not ESTRUTURA[tipo]:
+                st.error("Não há categorias ativas para este tipo.")
+                categoria, subgrupo = None, None
+            else:
+                categoria = st.selectbox("Categoria", list(ESTRUTURA[tipo].keys()), key="cat_full")
+                subgrupos_disp = ESTRUTURA[tipo][categoria] if categoria in ESTRUTURA[tipo] else []
+                subgrupo = st.selectbox("Subgrupo", subgrupos_disp, key="sub_full")
+            
+            gasto_continuo = st.checkbox("🗓️ Provisão (Mês todo)")
+            data_venc_base = st.date_input("Data Vencimento / Referência", value=hoje, format="DD/MM/YYYY")
+            data_competencia = st.date_input("Data de Competência (Mês de Realização)", value=data_venc_base, format="DD/MM/YYYY")
+            
+            parcelas = 1
+            tipo_rec = st.radio("Recorrência", ["Única", "Parcelada", "Fixa/Contínua"], horizontal=True)
+            if tipo_rec == "Parcelada": parcelas = st.number_input("Parcelas", min_value=2, value=2)
+            elif tipo_rec == "Fixa/Contínua": parcelas = 60
+
+        if st.button("Registrar Lançamento Complexo", type="primary") and categoria:
+            val_f = parse_valor(valor_input)
+            if val_f <= 0: st.error("O valor deve ser maior que zero.")
+            else:
+                comp_id = str(uuid.uuid4())
+                registros = []
+                tot_p = 999 if tipo_rec == "Fixa/Contínua" else parcelas
+                desc_final = f"{descricao} (Provisão)" if gasto_continuo else descricao
+                for i in range(parcelas):
+                    m_f = data_venc_base.month - 1 + i
+                    a_f = data_venc_base.year + m_f // 12
+                    m_f = m_f % 12 + 1
+                    d_p = datetime.date(a_f, m_f, calendar.monthrange(a_f, m_f)[1]) if gasto_continuo else datetime.date(a_f, m_f, min(data_venc_base.day, calendar.monthrange(a_f, m_f)[1]))
+                    d_c = datetime.date(a_f, m_f, min(data_competencia.day, calendar.monthrange(a_f, m_f)[1])) if gasto_continuo else data_competencia
+                    registros.append((tipo, categoria, subgrupo, desc_final, val_f, d_p, i+1, tot_p, 0, comp_id, forma_pgto, prioridade, d_c, 0.0))
+                execute_values_query('''
+                    INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, data_competencia, valor_efetivo) 
+                    VALUES %s
+                ''', registros)
+                st.success("Salvo com sucesso!"); st.rerun()
 
 # =================================================================
-# 7. MÓDULO 2: FLUXO E PRIORIDADES
+# 7. MÓDULO 2: FLUXO E PRIORIDADES (LIQUIDAÇÃO COM AUTO-INFERÊNCIA)
 # =================================================================
 
 elif menu == "📊 Fluxo e Prioridades":
@@ -358,12 +377,10 @@ elif menu == "📊 Fluxo e Prioridades":
         st.subheader("🔍 Filtros")
         c_filt1, c_filt2 = st.columns(2)
         tipos_disp = df['tipo'].unique().tolist()
-        with c_filt1:
-            sel_tipo = st.multiselect("Filtrar por Tipo", tipos_disp, placeholder="Todos os Tipos")
+        with c_filt1: sel_tipo = st.multiselect("Filtrar por Tipo", tipos_disp, placeholder="Todos os Tipos")
         tipos_filtro = sel_tipo if sel_tipo else tipos_disp
         cat_disp = df[df['tipo'].isin(tipos_filtro)]['categoria'].unique().tolist()
-        with c_filt2:
-            sel_cat = st.multiselect("Filtrar por Categoria", cat_disp, placeholder="Todas as Categorias")
+        with c_filt2: sel_cat = st.multiselect("Filtrar por Categoria", cat_disp, placeholder="Todas as Categorias")
         cat_filtro = sel_cat if sel_cat else cat_disp
 
         df_view = df[(df['tipo'].isin(tipos_filtro)) & (df['categoria'].isin(cat_filtro))].copy()
@@ -399,15 +416,13 @@ elif menu == "📊 Fluxo e Prioridades":
             return row['descricao']
         
         df_view['Desc. Exibição'] = df_view.apply(format_desc, axis=1)
-
         df_view.insert(0, '🗑️ Este', False)
         df_view.insert(1, '🗑️ Futuros', False)
 
-        st.markdown("*(Nota: Marcar como 'Pago' exige informar o valor real na coluna 'Valor Real Recebido/Pago').*")
+        st.markdown("*(Dica de Agilidade: Marque 'Pago'. Se deixar o 'Valor Real' zerado, o sistema copia o valor previsto automaticamente).*")
         edit_df = st.data_editor(
             df_view[['🗑️ Este', '🗑️ Futuros', 'Data', 'prioridade', 'Desc. Exibição', 'valor', 'valor_efetivo', 'Pago']], 
-            use_container_width=True, 
-            hide_index=True, 
+            use_container_width=True, hide_index=True, 
             column_config={
                 "Data": st.column_config.DateColumn("Data Venc.", format="DD/MM/YYYY"), 
                 "valor": st.column_config.NumberColumn("Valor Previsto", format="%.2f"),
@@ -428,12 +443,10 @@ elif menu == "📊 Fluxo e Prioridades":
                 
                 nova_desc = row['Desc. Exibição'].split(' (')[0]
                 
-                # Validação Lógica de Repasse Real (Sugestão 2)
-                if id_s != '-1' and not id_s.startswith('plantao_'):
-                    if novo_pago == 1 and novo_valor_efetivo <= 0:
-                        st.error(f"Falha de Validação: O item '{row['Desc. Exibição']}' foi ativado como Pago. É obrigatório informar o montante real na coluna 'Valor Real Recebido/Pago'.")
-                        st.stop()
-                
+                # --- AUTO-INFERÊNCIA DE VALOR REAL (FIM DA DIGITAÇÃO DUPLA) ---
+                if novo_pago == 1 and novo_valor_efetivo == 0.0:
+                    novo_valor_efetivo = novo_valor
+
                 if row['🗑️ Este'] or row['🗑️ Futuros']:
                     if id_s == '-1': st.warning("Cartões consolidados não podem ser apagados aqui. Vá em Demonstrativo.")
                     elif id_s.startswith('plantao_'): execute_query("DELETE FROM lancamentos WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%'", (id_s.replace('plantao_', ''), row['Data']))
