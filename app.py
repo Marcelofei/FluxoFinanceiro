@@ -112,10 +112,6 @@ def init_db():
 # =================================================================
 
 def processar_recorrencias_lazy(mes, ano):
-    """
-    Garante que os contratos recorrentes marcados na configuração gerem as provisões
-    para o mês/ano solicitado se elas ainda não existirem no banco de dados.
-    """
     df_contratos = fetch_dataframe("SELECT * FROM categorias_personalizadas WHERE is_recorrente = 1")
     if df_contratos.empty:
         return
@@ -124,11 +120,9 @@ def processar_recorrencias_lazy(mes, ano):
         dt_inicio = pd.to_datetime(contrato['data_inicio']).date() if pd.notna(contrato['data_inicio']) else datetime.date(ano, mes, 1)
         dt_limite_alvo = datetime.date(ano, mes, min(int(contrato['dia_pagamento'] or 1), calendar.monthrange(ano, mes)[1]))
         
-        # Se o mês alvo for anterior ao início do contrato, ignora
         if dt_limite_alvo < dt_inicio:
             continue
             
-        # Verifica se já existe um lançamento para este contrato neste mês específico
         compra_id_contrato = f"rec_{contrato['id']}"
         check_exist = fetch_dataframe(
             "SELECT id FROM lancamentos WHERE compra_id = %s AND EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s LIMIT 1",
@@ -225,10 +219,20 @@ def importar_csv(arquivo):
         df_imp = pd.read_csv(arquivo)
         if 'forma_pagamento' not in df_imp.columns: df_imp['forma_pagamento'] = 'Outros'
         if 'prioridade' not in df_imp.columns: df_imp['prioridade'] = 'Baixa 🟢'
+        if 'data_competencia' not in df_imp.columns: df_imp['data_competencia'] = df_imp['data_vencimento']
         if 'valor_pago' not in df_imp.columns: df_imp['valor_pago'] = df_imp['valor']
+        
         execute_query("TRUNCATE TABLE lancamentos RESTART IDENTITY")
-        registros = [(r['tipo'], r['categoria'], r['subgrupo'], r['descricao'], r['valor'], r['data_vencimento'], r['parcela_atual'], r['total_parcelas'], r['pago'], r['compra_id'], r['forma_pagamento'], r['prioridade'], r['valor_pago']) for _, r in df_imp.iterrows()]
-        execute_values_query('''INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago) VALUES %s''', registros)
+        registros = [(
+            r['tipo'], r['categoria'], r['subgrupo'], r['descricao'], r['valor'], 
+            r['data_vencimento'], r['parcela_atual'], r['total_parcelas'], r['pago'], 
+            r['compra_id'], r['forma_pagamento'], r['prioridade'], r['valor_pago']
+        ) for _, r in df_imp.iterrows()]
+        
+        execute_values_query('''
+            INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago) 
+            VALUES %s
+        ''', registros)
         return True
     except Exception as e:
         st.error(f"Erro Crítico de Restauração: {e}")
@@ -245,21 +249,18 @@ col_top1, col_top2 = st.columns(2)
 with col_top1: mes_selecionado = st.selectbox("Mês", range(1, 13), format_func=lambda x: meses[x-1], index=hoje.month-1)
 with col_top2: ano_selecionado = st.selectbox("Ano", range(hoje.year-2, hoje.year+5), index=2)
 
-# Gatilho do Motor Lazy para o mês visualizado na barra global
 processar_recorrencias_lazy(mes_selecionado, ano_selecionado)
 
 # =================================================================
-# 7. NOVO MÓDULO: TELA INICIAL COMPLETA (SUGESTÃO 5 ENRIQUECIDA)
+# 7. MÓDULO: TELA INICIAL
 # =================================================================
 
 if menu == "🏠 Início":
     st.header("🏠 Painel Executivo Imediato")
     
-    # Próximos 7 dias
     dt_limite = hoje + datetime.timedelta(days=7)
     df_7d = fetch_dataframe("SELECT data_vencimento, tipo, descricao, valor, pago FROM lancamentos WHERE data_vencimento BETWEEN %s AND %s ORDER BY data_vencimento ASC", (hoje, dt_limite))
     
-    # Resumo de Fluxo do Mês Corrente (Sugestão 5)
     df_mes_atual = fetch_dataframe("SELECT tipo, valor, valor_pago, pago FROM lancamentos WHERE EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s", (hoje.month, hoje.year))
     
     c_inc1, c_inc2, c_inc3 = st.columns(3)
@@ -273,7 +274,7 @@ if menu == "🏠 Início":
         
         c_inc1.metric("📥 Entradas Confirmadas (Mês)", f"R$ {format_brl(ent_confirmadas)}")
         c_inc2.metric("⏳ Entradas a Receber (Projetado)", f"R$ {format_brl(ent_projetadas)}")
-        c_inc3.metric("⚖️ Sobra Projetada (Faturamento - Despesa)", f"R$ {format_brl((ent_confirmadas + ent_projetadas) - desp_totais)}")
+        c_inc3.metric("⚖️ Sobra Projetada", f"R$ {format_brl((ent_confirmadas + ent_projetadas) - desp_totais)}")
     else:
         c_inc1.metric("📥 Entradas Confirmadas (Mês)", "R$ 0,00")
         c_inc2.metric("⏳ Entradas a Receber (Projetado)", "R$ 0,00")
@@ -290,7 +291,7 @@ if menu == "🏠 Início":
         st.dataframe(df_7d[['Data', 'tipo', 'descricao', 'valor', 'Status']], use_container_width=True, hide_index=True)
 
 # =================================================================
-# 8. MÓDULO 1: LANÇAMENTOS E CONFIGURAÇÃO (BLINDAGEM ITEM 5)
+# 8. MÓDULO 1: LANÇAMENTOS E GESTÃO DE ESTRUTURA
 # =================================================================
 
 elif menu == "📝 Lançamentos":
@@ -333,7 +334,6 @@ elif menu == "📝 Lançamentos":
                     st.rerun()
                     
         with tab_edit:
-            # Resolvida a dependência implícita de variáveis vazadas (Crítica 5)
             if not df_custom_global.empty:
                 opcoes_edit_local = {r['id']: f"{r['tipo']} ➔ {r['categoria']} ➔ {r['subgrupo']}" for _, r in df_custom_global.iterrows()}
                 sel_edit = st.selectbox("Selecione o item para editar:", options=[None] + list(opcoes_edit_local.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_edit_local[x])
@@ -417,7 +417,7 @@ elif menu == "📝 Lançamentos":
             st.success("Salvo!"); st.rerun()
 
 # =================================================================
-# 9. MÓDULO 2: FLUXO E PRIORIDADES (BLINDAGEM ITEM 1 & SUGESTÃO DE ATRASO)
+# 9. MÓDULO 2: FLUXO E PRIORIDADES (SISTEMA DE IDS LOCK INTEGRADO)
 # =================================================================
 
 elif menu == "📊 Fluxo e Prioridades":
@@ -442,23 +442,43 @@ elif menu == "📊 Fluxo e Prioridades":
 
         df_view = df[(df['tipo'].isin(tipos_filtro)) & (df['categoria'].isin(cat_filtro))].copy()
         
+        # Mapeamento do Identificador Primário Absoluto para evitar flapping de estado
+        df_view['ids_alvo'] = df_view['id'].astype(str)
+        
         mask_cred = df_view['forma_pagamento'] == 'Crédito'
         if mask_cred.any():
             sum_cred = df_view[mask_cred]['valor'].sum()
             sum_pago_cred = df_view[mask_cred]['valor_pago'].sum()
             all_paid = (df_view[mask_cred]['pago'] == 1).all()
-            dummy_credito = pd.DataFrame([{'id': '-1', 'tipo': 'Despesa', 'categoria': 'N/A', 'subgrupo': '', 'descricao': '💳 Cartão de Crédito (Fatura Consolidada)', 'valor': sum_cred, 'valor_pago': sum_pago_cred, 'data_vencimento': datetime.date(ano_selecionado, mes_selecionado, 10), 'pago': 1 if all_paid else 0, 'compra_id': 'cartao_dummy', 'forma_pagamento': 'Crédito', 'prioridade': 'Alta 🔴'}])
+            ids_lote_credito = ','.join(df_view[mask_cred]['id'].astype(str))
+            
+            dummy_credito = pd.DataFrame([{
+                'id': '-1', 'tipo': 'Despesa', 'categoria': 'N/A', 'subgrupo': '', 
+                'descricao': '💳 Cartão de Crédito (Fatura Consolidada)', 'valor': sum_cred, 
+                'valor_pago': sum_pago_cred, 'data_vencimento': datetime.date(ano_selecionado, mes_selecionado, 10), 
+                'pago': 1 if all_paid else 0, 'compra_id': 'cartao_dummy', 
+                'forma_pagamento': 'Crédito', 'prioridade': 'Alta 🔴', 'ids_alvo': ids_lote_credito
+            }])
             df_view = df_view[~mask_cred].copy()
             df_view = pd.concat([df_view, dummy_credito], ignore_index=True)
             
-        mask_plantoes = (df_view['tipo'] == 'Entrada') & df_view['descricao'].str.contains('Plantão', na=False)
+        mask_plantoes = (df_view['tipo'] == 'Entrada') & df_view['descricao'].str.contains('plant', case=False, na=False)
         if mask_plantoes.any():
             df_plantoes = df_view[mask_plantoes].copy()
             df_view = df_view[~mask_plantoes].copy()
             for nome_grupo, grupo in df_plantoes.groupby(['subgrupo', 'data_vencimento']):
                 subg_nome, dt_venc = nome_grupo
                 sum_pago_plantao = grupo['valor_pago'].sum()
-                dummy_plantao = pd.DataFrame([{'id': f'plantao_{subg_nome}', 'tipo': 'Entrada', 'categoria': grupo.iloc[0]['categoria'], 'subgrupo': subg_nome, 'descricao': f'🏥 Plantões {subg_nome} (Consolidado do Mês)', 'valor': grupo['valor'].sum(), 'valor_pago': sum_pago_plantao, 'data_vencimento': dt_venc, 'pago': 1 if (grupo['pago'] == 1).all() else 0, 'compra_id': 'plantao_dummy', 'forma_pagamento': 'Outros', 'prioridade': 'Baixa 🟢'}])
+                status_lote = 1 if (grupo['pago'] == 1).all() else 0
+                ids_lote_plantao = ','.join(grupo['id'].astype(str))
+                
+                dummy_plantao = pd.DataFrame([{
+                    'id': f'plantao_{subg_nome}', 'tipo': 'Entrada', 'categoria': grupo.iloc[0]['categoria'], 
+                    'subgrupo': subg_nome, 'descricao': f'🏥 Plantões {subg_nome} (Consolidado do Mês)', 
+                    'valor': grupo['valor'].sum(), 'valor_pago': sum_pago_plantao, 
+                    'data_vencimento': dt_venc, 'pago': status_lote, 'compra_id': 'plantao_dummy', 
+                    'forma_pagamento': 'Outros', 'prioridade': 'Baixa 🟢', 'ids_alvo': ids_lote_plantao
+                }])
                 df_view = pd.concat([df_view, dummy_plantao], ignore_index=True)
         
         df_view['id'] = df_view['id'].astype(str)
@@ -467,7 +487,7 @@ elif menu == "📊 Fluxo e Prioridades":
         df_view['Pago'] = df_view['pago'].astype(bool)
         df_view['Data'] = pd.to_datetime(df_view['data_vencimento']).dt.date
         
-        # --- INDICADOR VISUAL DE ATRASOS DE HOSPITAIS / CONTAS ---
+        # Alerta visual de atrasos
         def calcular_alerta_atraso(row):
             if not row['Pago'] and row['Data'] < hoje:
                 dias = (hoje - row['Data']).days
@@ -479,78 +499,80 @@ elif menu == "📊 Fluxo e Prioridades":
             if pd.notna(row.get('total_parcelas')) and row['total_parcelas'] > 1 and row['total_parcelas'] != 999:
                 return f"{row['descricao']} ({int(row['parcela_atual'])}/{int(row['total_parcelas'])})"
             return row['descricao']
+        
         df_view['Desc. Exibição'] = df_view.apply(format_desc, axis=1)
 
         df_view.insert(0, '🗑️ Este', False)
         df_view.insert(1, '🗑️ Futuros', False)
 
-        st.markdown("*(Nota: Modificar o 'Valor Real' agora preserva 100% o seu planejamento na coluna anterior!)*")
-        
-        # Correção Crítica 1: Isolação de 'valor' vs 'valor_pago' no editor rápido
+        st.markdown("*(Dica de Agilidade: Modificar o 'Valor Pago' preserva 100% o seu planejamento na coluna anterior).*")
         edit_df = st.data_editor(
             df_view[['🗑️ Este', '🗑️ Futuros', 'Data', 'Alerta', 'prioridade', 'Desc. Exibição', 'valor', 'valor_pago', 'Pago']], 
             use_container_width=True, 
             hide_index=True, 
             column_config={
-                "Data": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"), 
-                "Alerta": st.column_config.TextColumn("Alerta", disabled=True),
-                "valor": st.column_config.NumberColumn("Valor Planejado", format="%.2f", disabled=False),
-                "valor_pago": st.column_config.NumberColumn("Valor Pago/Real", format="%.2f", disabled=False),
+                "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"), 
+                "Alerta": st.column_config.TextColumn("Status", disabled=True),
+                "valor": st.column_config.NumberColumn("Valor Previsto", format="%.2f"),
+                "valor_pago": st.column_config.NumberColumn("Valor Pago/Real", format="%.2f"),
                 "prioridade": st.column_config.SelectboxColumn("Prioridade", options=["Alta 🔴", "Média 🟡", "Baixa 🟢"]),
                 "Desc. Exibição": st.column_config.TextColumn("Descrição", disabled=False)
             }
         )
         
-        # Implementação da estrutura Try/Finally no On-change/Batch State para evitar corrupção (Crítica 4)
         if st.button("Salvar Alterações Rápidas", type="primary"):
-            try:
-                for i, row in edit_df.iterrows():
-                    id_s = str(df_view.loc[i, 'id'])
-                    novo_pago = 1 if row['Pago'] else 0
-                    
-                    # Correção da Crítica 1: Coleta independente de dados planejados vs realizados
-                    novo_valor_planejado = float(row['valor'])
-                    novo_valor_pago = float(row['valor_pago']) if pd.notna(row['valor_pago']) else 0.0
-                    
-                    orig_valor_planejado = float(df_view.loc[i, 'valor'])
-                    orig_valor_pago = float(df_view.loc[i, 'valor_pago'])
-                    
-                    delta_planejado = novo_valor_planejado - orig_valor_planejado
-                    delta_realizado = novo_valor_pago - orig_valor_pago
-                    
-                    # Logica amigável: se marcou pago e deixou real zerado, infere que foi o planejado
-                    if novo_pago == 1 and novo_valor_pago == 0.0:
-                        novo_valor_pago = novo_valor_planejado
-                        delta_realizado = novo_valor_planejado - orig_valor_pago
-                    elif novo_pago == 0:
-                        novo_valor_pago = 0.0
+            for i, row in edit_df.iterrows():
+                orig_row = df_view.loc[i]
+                id_s = str(orig_row['id'])
+                novo_pago = 1 if row['Pago'] else 0
+                
+                novo_valor = float(row['valor'])
+                novo_valor_pago = float(row['valor_pago']) if pd.notna(row['valor_pago']) else 0.0
+                
+                orig_valor = float(orig_row['valor'])
+                orig_valor_pago = float(orig_row['valor_pago'])
+                
+                delta = novo_valor - orig_valor
+                delta_pago = novo_valor_pago - orig_valor_pago
+                
+                if novo_pago == 1 and novo_valor_pago == 0.0:
+                    novo_valor_pago = novo_valor
+                    delta_pago = novo_valor - orig_valor_pago
+                elif novo_pago == 0 and novo_valor_pago == orig_valor:
+                    novo_valor_pago = 0.0
+                    delta_pago = 0.0 - orig_valor_pago
 
-                    nova_desc = row['Desc. Exibição'].split(' (')[0]
-                    
-                    if row['🗑️ Este'] or row['🗑️ Futuros']:
-                        if id_s == '-1': st.warning("Cartões consolidados não podem ser apagados aqui.")
-                        elif id_s.startswith('plantao_'): execute_query("DELETE FROM lancamentos WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%'", (id_s.replace('plantao_', ''), row['Data']))
-                        else: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if row['🗑️ Futuros'] else "DELETE FROM lancamentos WHERE id = %s", (df_view.loc[i, 'compra_id'], df_view.loc[i, 'data_vencimento']) if row['🗑️ Futuros'] else (int(id_s),))
+                nova_desc = row['Desc. Exibição'].split(' (')[0]
+                tupla_ids_reais = tuple(map(int, orig_row['ids_alvo'].split(',')))
+                
+                if row['🗑️ Este'] or row['🗑️ Futuros']:
+                    if id_s == '-1': 
+                        st.warning("Cartões consolidados não podem ser apagados aqui.")
+                    elif id_s.startswith('plantao_'): 
+                        execute_query("DELETE FROM lancamentos WHERE id IN %s", (tupla_ids_reais,))
+                    else: 
+                        execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if row['🗑️ Futuros'] else "DELETE FROM lancamentos WHERE id = %s", (orig_row['compra_id'], orig_row['data_vencimento']) if row['🗑️ Futuros'] else (tupla_ids_reais[0],))
+                else:
+                    if id_s == '-1':
+                        execute_query("UPDATE lancamentos SET pago=%s WHERE id IN %s", (novo_pago, tupla_ids_reais))
+                        if novo_pago == 1:
+                            execute_query("UPDATE lancamentos SET valor_pago=valor WHERE id IN %s AND valor_pago=0", (tupla_ids_reais,))
+                        elif novo_pago == 0:
+                            execute_query("UPDATE lancamentos SET valor_pago=0 WHERE id IN %s", (tupla_ids_reais,))
+                        if delta != 0 or delta_pago != 0: 
+                            execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, valor_pago, data_vencimento, pago, forma_pagamento, prioridade) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Despesa', 'Ajuste', '', '💳 Ajuste de Fatura Consolidada', delta, delta_pago, row['Data'], novo_pago, 'Outros', row['prioridade']))
+                    elif id_s.startswith('plantao_'):
+                        subg = id_s.replace('plantao_', '')
+                        execute_query("UPDATE lancamentos SET pago=%s WHERE id IN %s", (novo_pago, tupla_ids_reais))
+                        if novo_pago == 1:
+                            execute_query("UPDATE lancamentos SET valor_pago=valor WHERE id IN %s AND valor_pago=0", (tupla_ids_reais,))
+                        elif novo_pago == 0:
+                            execute_query("UPDATE lancamentos SET valor_pago=0 WHERE id IN %s", (tupla_ids_reais,))
+                        if delta != 0 or delta_pago != 0: 
+                            execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, valor_pago, data_vencimento, pago, forma_pagamento, prioridade) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Entrada', 'Ajuste', subg, f'🏥 Ajuste de Plantão {subg}', delta, delta_pago, row['Data'], novo_pago, 'Outros', row['prioridade']))
                     else:
-                        if id_s == '-1':
-                            execute_query("UPDATE lancamentos SET pago=%s WHERE forma_pagamento='Crédito' AND EXTRACT(MONTH FROM data_vencimento)=%s AND EXTRACT(YEAR FROM data_vencimento)=%s", (novo_pago, mes_selecionado, ano_selecionado))
-                            if novo_pago == 1:
-                                execute_query("UPDATE lancamentos SET valor_pago=valor WHERE forma_pagamento='Crédito' AND EXTRACT(MONTH FROM data_vencimento)=%s AND EXTRACT(YEAR FROM data_vencimento)=%s AND valor_pago=0", (mes_selecionado, ano_selecionado))
-                            if delta_planejado != 0 or delta_realizado != 0: 
-                                execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, valor_pago, data_vencimento, pago, forma_pagamento, prioridade) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Despesa', 'Ajuste', '', '💳 Ajuste de Fatura Consolidada', delta_planejado, delta_realizado, row['Data'], novo_pago, 'Outros', row['prioridade']))
-                        elif id_s.startswith('plantao_'):
-                            subg = id_s.replace('plantao_', '')
-                            execute_query("UPDATE lancamentos SET pago=%s WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%'", (novo_pago, subg, row['Data']))
-                            if novo_pago == 1:
-                                execute_query("UPDATE lancamentos SET valor_pago=valor WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%' AND valor_pago=0", (subg, row['Data']))
-                            if delta_planejado != 0 or delta_realizado != 0: 
-                                execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, valor_pago, data_vencimento, pago, forma_pagamento, prioridade) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Entrada', 'Ajuste', subg, f'🏥 Ajuste de Plantão {subg}', delta_planejado, delta_realizado, row['Data'], novo_pago, 'Outros', row['prioridade']))
-                        else:
-                            # CORREÇÃO DEFINITIVA: valor e valor_pago são atualizados independentemente
-                            execute_query("UPDATE lancamentos SET pago=%s, prioridade=%s, descricao=%s, valor=%s, valor_pago=%s, data_vencimento=%s WHERE id=%s", (novo_pago, row['prioridade'], nova_desc, novo_valor_planejado, novo_valor_pago, row['Data'], int(id_s)))
-                st.rerun()
-            finally:
-                st.session_state.pop("editor_fluxo_onchange", None)
+                        execute_query("UPDATE lancamentos SET pago=%s, prioridade=%s, descricao=%s, valor=%s, valor_pago=%s, data_vencimento=%s WHERE id=%s", (novo_pago, row['prioridade'], nova_desc, novo_valor, novo_valor_pago, row['Data'], tupla_ids_reais[0]))
+            st.rerun()
 
         st.divider()
         st.subheader("📱 Compartilhar no WhatsApp")
@@ -582,7 +604,7 @@ elif menu == "📊 Fluxo e Prioridades":
                 with c_ed1:
                     e_tipo = st.radio("Tipo", ["Despesa", "Entrada"], index=0 if r_sel['tipo'] == 'Despesa' else 1, horizontal=True)
                     e_desc = st.text_input("Descrição", value=r_sel['descricao'])
-                    e_val = st.text_input("Novo Valor Planejado (R$)", value=str(r_sel['valor']).replace('.', ','))
+                    e_val = st.text_input("Novo Valor (R$)", value=str(r_sel['valor']).replace('.', ','))
                     e_data = st.date_input("Nova Data de Vencimento", value=pd.to_datetime(r_sel['data_vencimento']).date(), format="DD/MM/YYYY")
                     opcoes_forma = ["À vista", "Crédito", "Outros"]
                     idx_forma = opcoes_forma.index(r_sel['forma_pagamento']) if r_sel['forma_pagamento'] in opcoes_forma else 2
@@ -618,8 +640,8 @@ elif menu == "📑 Demonstrativo":
         df_e, df_d = df[df['tipo'] == 'Entrada'], df[df['tipo'] == 'Despesa']
         
         c_m1, c_m2, c_m3 = st.columns(3)
-        c_m1.metric("Receita Total (Planejada)", f"R$ {format_brl(df_e['valor'].sum())}")
-        c_m2.metric("Despesa Total (Planejada)", f"R$ {format_brl(df_d['valor'].sum())}")
+        c_m1.metric("Receita Total (Prevista)", f"R$ {format_brl(df_e['valor'].sum())}")
+        c_m2.metric("Despesa Total (Prevista)", f"R$ {format_brl(df_d['valor'].sum())}")
         c_m3.metric("Orçamento Base-Zero (ZBB)", f"R$ {format_brl(df_e['valor'].sum() - df_d['valor'].sum())}")
         
         entradas_recebidas = df_e['valor_pago'].sum()
@@ -655,7 +677,11 @@ elif menu == "📑 Demonstrativo":
             st.dataframe(
                 dataframe[['Data BR', 'Desc. Exibição', 'valor', 'valor_pago', 'prioridade', 'Status']],
                 hide_index=True, use_container_width=True,
-                column_config={"valor": st.column_config.NumberColumn("Planejado", format="%.2f"), "valor_pago": st.column_config.NumberColumn("Realizado/Pago", format="%.2f"), "Desc. Exibição": "Descrição"}
+                column_config={
+                    "valor": st.column_config.NumberColumn("Planejado", format="%.2f"), 
+                    "valor_pago": st.column_config.NumberColumn("Pago/Real", format="%.2f"), 
+                    "Desc. Exibição": "Descrição"
+                }
             )
 
         c1, c2 = st.columns(2)
@@ -699,7 +725,11 @@ elif menu == "📑 Demonstrativo":
             edit_c = st.data_editor(
                 df_credito[['🗑️ Este', '🗑️ Futuros', 'Data', 'categoria', 'subgrupo', 'Desc. Exibição', 'valor', 'valor_pago', 'Status']], 
                 use_container_width=True, hide_index=True,
-                column_config={"Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"), "Status": st.column_config.TextColumn("Status", disabled=True)}
+                column_config={
+                    "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"), 
+                    "valor_pago": st.column_config.NumberColumn("Valor Pago", format="%.2f"), 
+                    "Status": st.column_config.TextColumn("Status", disabled=True)
+                }
             )
             
             if st.button("💾 Salvar Exclusões do Cartão", type="primary"):
@@ -707,10 +737,12 @@ elif menu == "📑 Demonstrativo":
                     if r['🗑️ Este'] or r['🗑️ Futuros']:
                         if r['🗑️ Futuros']: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s", (df_credito.loc[i, 'compra_id'], df_credito.loc[i, 'data_vencimento']))
                         else: execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_credito.loc[i, 'id']),))
+                    else:
+                        execute_query("UPDATE lancamentos SET valor_pago=%s WHERE id=%s", (float(r['valor_pago']), int(df_credito.loc[i, 'id'])))
                 st.rerun()
 
 # =================================================================
-# 11. MÓDULO: BALANÇO ANUAL (BLINDAGEM E BACKFILL AUTOMÁTICO ITEM 2)
+# 11. MÓDULO: BALANÇO ANUAL (BACKFILL INTEGRADO)
 # =================================================================
 
 elif menu == "📈 Balanço Anual":
@@ -721,8 +753,7 @@ elif menu == "📈 Balanço Anual":
     else:
         ano_balanco = st.selectbox("Ano de Referência", anos_disp['ano'].astype(int).tolist(), index=0)
         
-        # --- EXECUÇÃO CONCRETA DO BACKFILL (Correção Crítica 2) ---
-        # Garante a resolução e instanciamento de recorrências em lote de Jan a Dez antes do SELECT
+        # Backfill automático de Jan a Dez para contratos lazily-generated (Crítica 2)
         for m in range(1, 13):
             processar_recorrencias_lazy(m, ano_balanco)
             
@@ -731,7 +762,6 @@ elif menu == "📈 Balanço Anual":
         df_ano['valor_pago'] = df_ano['valor_pago'].fillna(0.0).astype(float)
         df_ano['mes_num'] = pd.to_datetime(df_ano['data_vencimento']).dt.month
         
-        # Gráficos consolidados baseados no valor real recebido/pago
         mensal = df_ano.groupby(['mes_num', 'tipo'])['valor_pago'].sum().unstack(fill_value=0).reset_index()
         for col in ['Entrada', 'Despesa']:
             if col not in mensal.columns: mensal[col] = 0.0
@@ -747,10 +777,10 @@ elif menu == "📈 Balanço Anual":
         margem = (lucro_ano / tot_ent * 100) if tot_ent > 0 else 0
         
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Faturamento Anual Reais", f"R$ {format_brl(tot_ent)}")
-        c2.metric("Despesa Anual Reais", f"R$ {format_brl(tot_des)}")
+        c1.metric("Faturamento Anual (Efetivo)", f"R$ {format_brl(tot_ent)}")
+        c2.metric("Despesa Anual (Efetiva)", f"R$ {format_brl(tot_des)}")
         c3.metric("Resultado Líquido Efetivo", f"R$ {format_brl(lucro_ano)}")
-        c4.metric("Margem de Lucro", f"{get_margem: .1f}%" if 'get_margem' in locals() else f"{margem:.1f}%")
+        c4.metric("Margem de Lucro", f"{margem:.1f}%")
         
         st.divider()
         tab_graf1, tab_graf2 = st.tabs(["📊 Evolução Mensal", "🗂️ Composição de Gastos"])
@@ -799,8 +829,8 @@ elif menu == "🔀 Otimização de Pagamentos":
         if mask_p.any():
             df_plantoes = df_e[mask_p].copy()
             df_e = df_e[~mask_p].copy()
-            for (sub, data), grupo in df_plantoes.groupby(['subgrupo', 'data_vencimento']):
-                df_e = pd.concat([df_e, pd.DataFrame([{'descricao': f'🏥 Plantões {sub}', 'valor': grupo['valor'].sum(), 'data_vencimento': data, 'subgrupo': sub, 'prioridade': 'Baixa 🟢'}])], ignore_index=True)
+            for (sub, data), group in df_plantoes.groupby(['subgrupo', 'data_vencimento']):
+                df_e = pd.concat([df_e, pd.DataFrame([{'descricao': f'🏥 Plantões {sub}', 'valor': group['valor'].sum(), 'data_vencimento': data, 'subgrupo': sub, 'prioridade': 'Baixa 🟢'}])], ignore_index=True)
 
         df_e['is_prov_hr'] = df_e['descricao'].str.contains(r'Produção\s+(?:Radioclim|Humana)|Producao\s+(?:Radioclim|Humana)', case=False, na=False)
         df_hr, df_outras = df_e[df_e['is_prov_hr']].copy(), df_e[~df_e['is_prov_hr']].copy()
@@ -860,7 +890,7 @@ elif menu == "🔀 Otimização de Pagamentos":
         else: st.warning("Produção Radioclim ou Humana não encontradas nas entradas deste mês.")
 
 # =================================================================
-# 13. MÓDULO 5: ESCALA VISUAL DE PLANTÕES (BLINDAGEM ITEM 3)
+# 13. MÓDULO 5: ESCALA VISUAL DE PLANTÕES (SAFETY LOCKS)
 # =================================================================
 
 elif menu == "🏥 Escala de Plantões":
@@ -902,7 +932,6 @@ elif menu == "🏥 Escala de Plantões":
         df_geren['Data do Plantão'] = pd.to_datetime(df_geren['d_p']).dt.strftime('%d/%m/%Y')
         edit_esc = st.data_editor(df_geren[['🗑️ Apagar', 'Data do Plantão', 'subgrupo', 'valor']], use_container_width=True, hide_index=True)
         
-        # --- TRAVA DE SEGURANÇA CONTRA DELEÇÃO ACIDENTAL (Correção Crítica 3) ---
         confirm_del_lote = st.checkbox("⚠️ Confirmo que quero apagar os plantões selecionados na planilha acima")
         c_b1, c_b2 = st.columns(2)
         with c_b1:
@@ -920,7 +949,6 @@ elif menu == "🏥 Escala de Plantões":
     else: st.info("Sem plantões registrados.")
 
     st.divider()
-    # --- TRAVA DE SEGURANÇA ADICIONAL CONTRA PURGA GLOBAL (Correção Crítica 3) ---
     st.subheader("🗑️ Limpeza de Histórico de Plantões")
     confirm_purgar_global = st.checkbox("🚨 Confirmo que quero APAGAR O HISTÓRICO GLOBAL e irreversível de plantões do banco de dados")
     if st.button("🚨 Purgar Histórico Global de Plantões", type="primary", disabled=not confirm_purgar_global):
