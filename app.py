@@ -309,7 +309,7 @@ if menu == "🏠 Início":
         st.dataframe(df_7d[['Data', 'tipo', 'descricao', 'valor', 'Status']], use_container_width=True, hide_index=True)
 
 # =================================================================
-# 8. MÓDULO: GERENCIAR CATEGORIAS
+# 8. MÓDULO: GERENCIAR CATEGORIAS E RECORRÊNCIAS
 # =================================================================
 
 elif menu == "⚙️ Gerenciar Categorias":
@@ -327,24 +327,23 @@ elif menu == "⚙️ Gerenciar Categorias":
             nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Hospital Trauma")
             if n_rec: n_dt_start = st.date_input("Data de Início do Contrato", value=data_contexto_ativo)
         
-        if ntipo == "Entrada":
+        if ntipo == "Entrada" or n_rec:
             st.markdown("---")
-            st.markdown("##### 🏥 Dados Padrão de Plantão (Opcional)")
+            st.markdown("##### ⚙️ Parâmetros de Padrão e Recorrência")
             c_opt1, c_opt2, c_opt3 = st.columns(3)
-            v_opt = c_opt1.number_input("Valor Padrão", min_value=0.0, step=50.0, value=0.0)
-            a_opt = c_opt2.number_input("Atraso (Meses)", min_value=0, max_value=6, value=1)
-            d_opt = c_opt3.number_input("Dia Pagamento", min_value=1, max_value=31, value=10)
+            v_opt = c_opt1.number_input("Valor Padrão (R$)", min_value=0.0, step=50.0, value=0.0)
+            a_opt = c_opt2.number_input("Atraso (Meses) - Útil p/ Plantões", min_value=0, max_value=6, value=1 if ntipo=="Entrada" else 0)
+            d_opt = c_opt3.number_input("Dia de Pagamento/Vencimento", min_value=1, max_value=31, value=10)
+        else:
+            v_opt, a_opt, d_opt = 0.0, 0, 10
 
         if st.button("Salvar Nova Categoria/Subgrupo", type="primary"):
             if not ncat.strip(): st.error("O nome da Categoria é obrigatório.")
             else:
                 is_rec_val = 1 if n_rec else 0
                 dt_start_val = n_dt_start if n_rec else None
-                if ntipo == "Entrada":
-                    execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, data_inicio) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", 
-                                  (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt, is_rec_val, dt_start_val))
-                else:
-                    execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, is_recorrente, data_inicio, dia_pagamento, valor_padrao) VALUES (%s, %s, %s, %s, %s, 5, 0.0)", (ntipo, ncat.strip(), nsub.strip(), is_rec_val, dt_start_val))
+                execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, data_inicio) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", 
+                              (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt, is_rec_val, dt_start_val))
                 st.success("Adicionado com sucesso!"); st.rerun()
                 
     with tab_edit:
@@ -357,17 +356,23 @@ elif menu == "⚙️ Gerenciar Categorias":
                 with c_ed_n1: new_cat = st.text_input("Nova Categoria", value=nó['categoria'])
                 with c_ed_n2: new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if pd.notna(nó['subgrupo']) else "")
                 
-                if nó['tipo'] == "Entrada":
+                e_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)", value=bool(nó['is_recorrente'] == 1))
+                
+                if nó['tipo'] == "Entrada" or e_rec:
+                    st.markdown("---")
+                    st.markdown("##### ⚙️ Parâmetros de Padrão e Recorrência")
                     c_opt_e1, c_opt_e2, c_opt_e3 = st.columns(3)
-                    v_edit = c_opt_e1.number_input("Valor Padrão", value=float(nó['valor_padrao']) if pd.notna(nó['valor_padrao']) else 0.0)
-                    a_edit = c_opt_e2.number_input("Atraso (Meses)", value=int(nó['atraso_meses']) if pd.notna(nó['atraso_meses']) else 1)
+                    v_edit = c_opt_e1.number_input("Valor Padrão (R$)", value=float(nó['valor_padrao']) if pd.notna(nó['valor_padrao']) else 0.0)
+                    a_edit = c_opt_e2.number_input("Atraso (Meses)", value=int(nó['atraso_meses']) if pd.notna(nó['atraso_meses']) else (1 if nó['tipo']=="Entrada" else 0))
                     d_edit = c_opt_e3.number_input("Dia Pagamento", value=int(nó['dia_pagamento']) if pd.notna(nó['dia_pagamento']) else 10)
+                else:
+                    v_edit = float(nó['valor_padrao']) if pd.notna(nó['valor_padrao']) else 0.0
+                    a_edit = int(nó['atraso_meses']) if pd.notna(nó['atraso_meses']) else 0
+                    d_edit = int(nó['dia_pagamento']) if pd.notna(nó['dia_pagamento']) else 10
 
                 if st.button("💾 Confirmar Edição", type="primary"):
-                    if nó['tipo'] == "Entrada":
-                        execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s WHERE id=%s", (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, sel_edit))
-                    else:
-                        execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s WHERE id=%s", (new_cat, new_sub, sel_edit))
+                    execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s, is_recorrente=%s WHERE id=%s", 
+                                  (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, 1 if e_rec else 0, sel_edit))
                     execute_query("UPDATE lancamentos SET categoria=%s, subgrupo=%s WHERE tipo=%s AND categoria=%s AND subgrupo=%s", (new_cat, new_sub, nó['tipo'], nó['categoria'], nó['subgrupo']))
                     st.success("Atualizado."); st.rerun()
         else: st.info("Nenhuma categoria encontrada.")
@@ -546,7 +551,7 @@ elif menu == "📊 Fluxo e Prioridades":
                 if novo_pago == 1 and novo_valor_pago == 0.0:
                     novo_valor_pago = novo_valor
                     delta_pago = novo_valor - orig_valor_pago
-                elif novo_pago == 0:
+                elif novo_pago == 0 and novo_valor_pago == orig_valor:
                     novo_valor_pago = 0.0
                     delta_pago = 0.0 - orig_valor_pago
 
@@ -619,12 +624,14 @@ elif menu == "📊 Fluxo e Prioridades":
                     idx_sub = subs_disp.index(r_sel['subgrupo']) if r_sel['subgrupo'] in subs_disp else 0
                     e_sub = st.selectbox("Subgrupo", subs_disp, index=idx_sub)
                     e_escopo = st.radio("Aplicar alteração estrutural em:", ["Apenas neste lançamento", "Neste e em todos os futuros da mesma compra"])
+                
+                # CORREÇÃO CRÍTICA 1 APLICADA: Parâmetro 'forma_pagamento=%s' explicitamente restabelecido
                 if st.button("💾 Confirmar Mudança Estrutural", type="primary"):
                     v_final = parse_valor(e_val)
                     if e_escopo == "Apenas neste lançamento":
-                        execute_query("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, data_vencimento=%s WHERE id=%s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_data, e_forma, int(sel_id)))
+                        execute_query("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, data_vencimento=%s, forma_pagamento=%s WHERE id=%s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_data, e_forma, int(sel_id)))
                     else:
-                        execute_query("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, data_vencimento=%s WHERE id=%s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_data, e_forma, int(sel_id)))
+                        execute_query("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, data_vencimento=%s, forma_pagamento=%s WHERE id=%s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_data, e_forma, int(sel_id)))
                         execute_query("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, forma_pagamento=%s WHERE compra_id=%s AND data_vencimento > %s AND id != %s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_forma, r_sel['compra_id'], r_sel['data_vencimento'], int(sel_id)))
                     st.success("Sucesso!"); st.rerun()
 
@@ -748,7 +755,6 @@ elif menu == "📈 Balanço Anual":
     else:
         ano_balanco = st.selectbox("Ano de Referência", anos_disp['ano'].astype(int).tolist(), index=0)
         
-        # Força a geração lazy dos 12 meses antes do SELECT
         for m in range(1, 13): processar_recorrencias_lazy(m, ano_balanco)
             
         df_ano = fetch_dataframe("SELECT * FROM lancamentos WHERE EXTRACT(YEAR FROM data_vencimento) = %s", (ano_balanco,))
@@ -760,12 +766,10 @@ elif menu == "📈 Balanço Anual":
             df_ano['valor_pago'] = df_ano['valor_pago'].fillna(0.0).astype(float)
             df_ano['mes_num'] = pd.to_datetime(df_ano['data_vencimento']).dt.month
             
-            # SOLUÇÃO ARQUITETURAL: Aplicação mista (Realizado se pago=1, Projetado/Orçado se pago=0)
             df_ano['hibrido_fpa'] = df_ano.apply(lambda r: float(r['valor_pago']) if r['pago'] == 1 else float(r['valor']), axis=1)
             
             mensal = df_ano.groupby(['mes_num', 'tipo'])['hibrido_fpa'].sum().unstack(fill_value=0.0)
             
-            # Reindexação estrita para garantir a presença dos 12 índices no eixo X
             mensal.index.name = 'mes_num'
             mensal = mensal.reindex(range(1, 13), fill_value=0.0).reset_index()
             
