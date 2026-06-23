@@ -8,7 +8,6 @@ import calendar
 import uuid
 import os
 import io
-import re
 
 # =================================================================
 # 1. INFRAESTRUTURA E CONEXÃO (SINGLETON ROBUSTO E ANTI-DDoS)
@@ -21,7 +20,7 @@ def get_connection():
         st.error("DATABASE_URL não configurada na variável de ambiente.")
         st.stop()
         
-    # Roteamento absoluto para a porta estável 5432 com SSL compulsório
+    # Força a porta estável de sessão (5432) e o sufixo compulsório de SSL
     db_url = db_url.replace(":6543/", ":5432/")
     if "sslmode=require" not in db_url:
         sep = "&" if "?" in db_url else "?"
@@ -170,17 +169,12 @@ def format_brl(valor):
     return f"{float(valor):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
 # =================================================================
-# 4. CONFIGURAÇÃO DA PÁGINA & CAPTURA DE DEEP LINKING
+# 4. CONFIGURAÇÃO DA PÁGINA
 # =================================================================
 
 st.set_page_config(page_title="Gestão Financeira", layout="wide")
 if not check_password(): st.stop()
 init_db()
-
-query_params = st.query_params
-url_cat = query_params.get("cat", "")
-url_desc = query_params.get("desc", "")
-url_val = query_params.get("val", "")
 
 # =================================================================
 # 5. ESTRUTURAS DINÂMICAS E CONSTANTES
@@ -212,6 +206,7 @@ st.sidebar.title("Navegação")
 menu = st.sidebar.radio("Módulo:", [
     "🏠 Início",
     "📝 Lançamentos", 
+    "⚙️ Gerenciar Categorias",
     "📊 Fluxo e Prioridades", 
     "📑 Demonstrativo", 
     "📈 Balanço Anual",
@@ -304,200 +299,127 @@ if menu == "🏠 Início":
         st.dataframe(df_7d[['Data', 'tipo', 'descricao', 'valor', 'Status']], use_container_width=True, hide_index=True)
 
 # =================================================================
-# 8. MÓDULO 1: LANÇAMENTOS E GESTÃO DE ESTRUTURA
+# 8. MÓDULO: GERENCIAR CATEGORIAS (DESACOPLADO NA SIDEBAR)
+# =================================================================
+
+elif menu == "⚙️ Gerenciar Categorias":
+    st.header("⚙️ Gerenciar Categorias e Contratos Recorrentes")
+    df_custom_global = fetch_dataframe("SELECT * FROM categorias_personalizadas")
+    tab_add, tab_edit, tab_del = st.tabs(["➕ Adicionar", "✏️ Editar", "🗑️ Excluir"])
+    
+    with tab_add:
+        c_add1, c_add2 = st.columns(2)
+        with c_add1:
+            ntipo = st.radio("Para qual tipo?", ["Despesa", "Entrada"], horizontal=True, key="add_tipo")
+            ncat = st.text_input("Nome da Categoria (Nova ou Existente)", placeholder="Ex: Valores Fixos")
+            n_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)")
+        with c_add2:
+            nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Hospital Trauma")
+            if n_rec: n_dt_start = st.date_input("Data de Início do Contrato", value=data_contexto_ativo)
+        
+        if ntipo == "Entrada":
+            st.markdown("---")
+            st.markdown("##### 🏥 Dados Padrão de Plantão (Opcional)")
+            c_opt1, c_opt2, c_opt3 = st.columns(3)
+            v_opt = c_opt1.number_input("Valor Padrão", min_value=0.0, step=50.0, value=0.0)
+            a_opt = c_opt2.number_input("Atraso (Meses)", min_value=0, max_value=6, value=1)
+            d_opt = c_opt3.number_input("Dia Pagamento", min_value=1, max_value=31, value=10)
+
+        if st.button("Salvar Nova Categoria/Subgrupo", type="primary"):
+            if not ncat.strip(): st.error("O nome da Categoria é obrigatório.")
+            else:
+                is_rec_val = 1 if n_rec else 0
+                dt_start_val = n_dt_start if n_rec else None
+                if ntipo == "Entrada":
+                    execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, data_inicio) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", 
+                                  (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt, is_rec_val, dt_start_val))
+                else:
+                    execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, is_recorrente, data_inicio, dia_pagamento, valor_padrao) VALUES (%s, %s, %s, %s, %s, 5, 0.0)", (ntipo, ncat.strip(), nsub.strip(), is_rec_val, dt_start_val))
+                st.success("Adicionado com sucesso!"); st.rerun()
+                
+    with tab_edit:
+        if not df_custom_global.empty:
+            opcoes_edit_local = {r['id']: f"{r['tipo']} ➔ {r['categoria']} ➔ {r['subgrupo']}" for _, r in df_custom_global.iterrows()}
+            sel_edit = st.selectbox("Selecione o item para editar:", options=[None] + list(opcoes_edit_local.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_edit_local[x])
+            if sel_edit:
+                nó = df_custom_global[df_custom_global['id'] == sel_edit].iloc[0]
+                c_ed_n1, c_ed_n2 = st.columns(2)
+                with c_ed_n1: new_cat = st.text_input("Nova Categoria", value=nó['categoria'])
+                with c_ed_n2: new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if pd.notna(nó['subgrupo']) else "")
+                
+                if nó['tipo'] == "Entrada":
+                    c_opt_e1, c_opt_e2, c_opt_e3 = st.columns(3)
+                    v_edit = c_opt_e1.number_input("Valor Padrão", value=float(nó['valor_padrao']) if pd.notna(nó['valor_padrao']) else 0.0)
+                    a_edit = c_opt_e2.number_input("Atraso (Meses)", value=int(nó['atraso_meses']) if pd.notna(nó['atraso_meses']) else 1)
+                    d_edit = c_opt_e3.number_input("Dia Pagamento", value=int(nó['dia_pagamento']) if pd.notna(nó['dia_pagamento']) else 10)
+
+                if st.button("💾 Confirmar Edição", type="primary"):
+                    if nó['tipo'] == "Entrada":
+                        execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s WHERE id=%s", (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, sel_edit))
+                    else:
+                        execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s WHERE id=%s", (new_cat, new_sub, sel_edit))
+                    execute_query("UPDATE lancamentos SET categoria=%s, subgrupo=%s WHERE tipo=%s AND categoria=%s AND subgrupo=%s", (new_cat, new_sub, nó['tipo'], nó['categoria'], nó['subgrupo']))
+                    st.success("Atualizado."); st.rerun()
+        else: st.info("Nenhuma categoria encontrada.")
+
+    with tab_del:
+        if not df_custom_global.empty:
+            opcoes_del_local = {r['id']: f"{r['tipo']} ➔ {r['categoria']} ➔ {r['subgrupo']}" for _, r in df_custom_global.iterrows()}
+            sel_del = st.selectbox("Selecione o item para excluir:", options=[None] + list(opcoes_del_local.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_del_local[x])
+            if sel_del and st.button("🗑️ Excluir Selecionado", type="primary"):
+                execute_query("DELETE FROM categorias_personalizadas WHERE id = %s", (sel_del,))
+                st.success("Excluído!"); st.rerun()
+
+# =================================================================
+# 9. MÓDULO 1: LANÇAMENTOS (NATIVO E DIRETO)
 # =================================================================
 
 elif menu == "📝 Lançamentos":
     st.header(f"📝 Novo Lançamento ({meses[mes_selecionado-1]}/{ano_selecionado})")
     
-    with st.expander("⚙️ Gerenciar Categorias e Contratos Recorrentes", expanded=not ESTRUTURA["Despesa"] and not ESTRUTURA["Entrada"]):
-        df_custom_global = fetch_dataframe("SELECT * FROM categorias_personalizadas")
-        tab_add, tab_edit, tab_del = st.tabs(["➕ Adicionar", "✏️ Editar", "🗑️ Excluir"])
+    col1, col2 = st.columns(2)
+    with col1:
+        tipo = st.radio("Tipo", ["Despesa", "Entrada"], horizontal=True, key="lanc_tipo")
+        forma_pgto = st.selectbox("Forma de Pagamento", ["À vista", "Crédito", "Outros"], index=0 if tipo == "Entrada" else 1)
+        descricao = st.text_input("Descrição")
+        valor_input = st.text_input("Valor (R$)", value="0,00")
+        prioridade = st.radio("Prioridade", ["Baixa 🟢", "Média 🟡", "Alta 🔴"], index=0, horizontal=True)
+    with col2:
+        if not ESTRUTURA[tipo]:
+            st.error("Não há categorias ativas. Crie uma no módulo '⚙️ Gerenciar Categorias'.")
+            categoria, subgrupo = None, None
+        else:
+            categoria = st.selectbox("Categoria", list(ESTRUTURA[tipo].keys()))
+            subgrupos_disp = ESTRUTURA[tipo][categoria] if categoria in ESTRUTURA[tipo] else []
+            subgrupo = st.selectbox("Subgrupo", subgrupos_disp)
         
-        with tab_add:
-            c_add1, c_add2 = st.columns(2)
-            with c_add1:
-                ntipo = st.radio("Para qual tipo?", ["Despesa", "Entrada"], horizontal=True, key="add_tipo")
-                ncat = st.text_input("Nome da Categoria (Nova ou Existente)", placeholder="Ex: Valores Fixos")
-                n_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)")
-            with c_add2:
-                nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Hospital Trauma")
-                if n_rec: n_dt_start = st.date_input("Data de Início do Contrato", value=data_contexto_ativo)
-            
-            if ntipo == "Entrada":
-                st.markdown("---")
-                st.markdown("##### 🏥 Dados Padrão de Plantão (Opcional)")
-                c_opt1, c_opt2, c_opt3 = st.columns(3)
-                v_opt = c_opt1.number_input("Valor Padrão", min_value=0.0, step=50.0, value=0.0)
-                a_opt = c_opt2.number_input("Atraso (Meses)", min_value=0, max_value=6, value=1)
-                d_opt = c_opt3.number_input("Dia Pagamento", min_value=1, max_value=31, value=10)
+        gasto_continuo = st.checkbox("🗓️ Provisão (Mês todo)")
+        data_venc_base = st.date_input("Data Referência", value=data_contexto_ativo, format="DD/MM/YYYY")
+        
+        parcelas = 1
+        tipo_rec = st.radio("Recorrência", ["Única", "Parcelada", "Fixa/Contínua"], horizontal=True)
+        if tipo_rec == "Parcelada": parcelas = st.number_input("Parcelas", min_value=2, value=2)
+        elif tipo_rec == "Fixa/Contínua": parcelas = 60
 
-            if st.button("Salvar Nova Categoria/Subgrupo", type="primary"):
-                if not ncat.strip(): st.error("O nome da Categoria é obrigatório.")
-                else:
-                    is_rec_val = 1 if n_rec else 0
-                    dt_start_val = n_dt_start if n_rec else None
-                    if ntipo == "Entrada":
-                        execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, data_inicio) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", 
-                                      (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt, is_rec_val, dt_start_val))
-                    else:
-                        execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, is_recorrente, data_inicio, dia_pagamento, valor_padrao) VALUES (%s, %s, %s, %s, %s, 5, 0.0)", (ntipo, ncat.strip(), nsub.strip(), is_rec_val, dt_start_val))
-                    st.success("Adicionado com sucesso!"); st.rerun()
-                    
-        with tab_edit:
-            if not df_custom_global.empty:
-                opcoes_edit_local = {r['id']: f"{r['tipo']} ➔ {r['categoria']} ➔ {r['subgrupo']}" for _, r in df_custom_global.iterrows()}
-                sel_edit = st.selectbox("Selecione o item para editar:", options=[None] + list(opcoes_edit_local.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_edit_local[x])
-                if sel_edit:
-                    nó = df_custom_global[df_custom_global['id'] == sel_edit].iloc[0]
-                    c_ed_n1, c_ed_n2 = st.columns(2)
-                    with c_ed_n1: new_cat = st.text_input("Nova Categoria", value=nó['categoria'])
-                    with c_ed_n2: new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if pd.notna(nó['subgrupo']) else "")
-                    
-                    if nó['tipo'] == "Entrada":
-                        c_opt_e1, c_opt_e2, c_opt_e3 = st.columns(3)
-                        v_edit = c_opt_e1.number_input("Valor Padrão", value=float(nó['valor_padrao']) if pd.notna(nó['valor_padrao']) else 0.0)
-                        a_edit = c_opt_e2.number_input("Atraso (Meses)", value=int(nó['atraso_meses']) if pd.notna(nó['atraso_meses']) else 1)
-                        d_edit = c_opt_e3.number_input("Dia Pagamento", value=int(nó['dia_pagamento']) if pd.notna(nó['dia_pagamento']) else 10)
-
-                    if st.button("💾 Confirmar Edição", type="primary"):
-                        if nó['tipo'] == "Entrada":
-                            execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s WHERE id=%s", (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, sel_edit))
-                        else:
-                            execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s WHERE id=%s", (new_cat, new_sub, sel_edit))
-                        execute_query("UPDATE lancamentos SET categoria=%s, subgrupo=%s WHERE tipo=%s AND categoria=%s AND subgrupo=%s", (new_cat, new_sub, nó['tipo'], nó['categoria'], nó['subgrupo']))
-                        st.success("Atualizado."); st.rerun()
-            else: st.info("Nenhuma categoria encontrada.")
-
-        with tab_del:
-            if not df_custom_global.empty:
-                opcoes_del_local = {r['id']: f"{r['tipo']} ➔ {r['categoria']} ➔ {r['subgrupo']}" for _, r in df_custom_global.iterrows()}
-                sel_del = st.selectbox("Selecione o item para excluir:", options=[None] + list(opcoes_del_local.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_del_local[x])
-                if sel_del and st.button("🗑️ Excluir Selecionado", type="primary"):
-                    execute_query("DELETE FROM categorias_personalizadas WHERE id = %s", (sel_del,))
-                    st.success("Excluído!"); st.rerun()
-
-    st.divider()
-
-    opcoes_express = []
-    for c in ESTRUTURA.get("Entrada", {}): opcoes_express.append(f"📥 {c}")
-    for c in ESTRUTURA.get("Despesa", {}): opcoes_express.append(f"💸 {c}")
-
-    def_desc = url_desc
-    def_val = url_val if url_val else "0,00"
-    def_cat_idx = 0
-
-    if url_cat and opcoes_express:
-        for idx, opt in enumerate(opcoes_express):
-            if url_cat.lower() in opt.lower():
-                def_cat_idx = idx
-                break
-
-    texto_notificacao = st.text_input("📋 Colar Notificação do Banco / Push / SMS", placeholder="Ex: Compra aprovada no seu Nubank valor R$ 142,50 em POSTO SHELL")
-    
-    if texto_notificacao:
-        match_amt = re.search(r'(?:R\$|R\$\s*)\s*(\d+(?:[\.,]\d+)?)', texto_notificacao, re.IGNORECASE)
-        if match_amt: def_val = match_amt.group(1).replace('.', ',')
-            
-        match_desc = re.search(r'(?:em|para|estabelecimento)\s+([A-Za-z0-9\s\*\.\-\&]+)', texto_notificacao, re.IGNORECASE)
-        raw_estabelecimento = ""
-        if match_desc: raw_estabelecimento = match_desc.group(1).strip()
-        elif match_amt:
-            partes = texto_notificacao.split(match_amt.group(0))
-            if len(partes) > 1: raw_estabelecimento = re.sub(r'^[-\*\s]+', '', partes[1]).strip()
-                
-        if raw_estabelecimento:
-            def_desc = raw_estabelecimento
-            df_h_lookup = fetch_dataframe("SELECT tipo, categoria FROM lancamentos WHERE descricao ILIKE %s LIMIT 1", (f"%{raw_estabelecimento}%",))
-            if not df_h_lookup.empty:
-                t_lookup = df_h_lookup.iloc[0]['tipo']
-                c_lookup = df_h_lookup.iloc[0]['categoria']
-                alvo = f"📥 {c_lookup}" if t_lookup == "Entrada" else f"💸 {c_lookup}"
-                if alvo in opcoes_express: def_cat_idx = opcoes_express.index(alvo)
-
-    st.subheader("⚡ Lançamento Expresso")
-    
-    if not opcoes_express:
-        st.warning("Nenhuma categoria cadastrada. Utilize o menu acima para criar sua primeira categoria.")
-    else:
-        with st.container(border=True):
-            col_e1, col_e2, col_e3, col_e4 = st.columns([2, 3, 2, 1])
-            with col_e1: cat_selecionada = st.selectbox("1. Categoria", opcoes_express, index=def_cat_idx)
-            with col_e2: desc_express = st.text_input("2. Descrição", value=def_desc, placeholder="Ex: Almoço / Uber / Plantão extra")
-            with col_e3: val_express = st.text_input("3. Valor (R$)", value=def_val)
-            
-            with col_e4:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("Gravar ⚡", type="primary", use_container_width=True):
-                    val_f_exp = parse_valor(val_express)
-                    if val_f_exp <= 0 or not desc_express.strip():
-                        st.error("Preencha Descrição e Valor.")
-                    else:
-                        tipo_inferido = "Entrada" if cat_selecionada.startswith("📥") else "Despesa"
-                        cat_real = cat_selecionada.split(" ", 1)[1]
-                        subs_da_cat = ESTRUTURA[tipo_inferido].get(cat_real, [])
-                        sub_padrao = subs_da_cat[0] if subs_da_cat else ""
-                        
-                        execute_query('''
-                            INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago) 
-                            VALUES (%s,%s,%s,%s,%s,%s,1,1,0,%s,'Outros','Média 🟡',0.0)
-                        ''', (tipo_inferido, cat_real, sub_padrao, desc_express.strip(), val_f_exp, data_contexto_ativo, str(uuid.uuid4())))
-                        st.success("Registrado instantaneamente!"); st.rerun()
-
-    with st.expander("📱 Atalho Mobile na Tela do Celular (Deep Link)"):
-        st.markdown("Crie ícones no iPhone/Android que abrem o app na categoria certa. Copie o exemplo:")
-        exemplo_link = f"https://seu-app.up.railway.app/?cat=Alimentacao&desc=Almoço"
-        st.code(exemplo_link, language="text")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    with st.expander("➕ Alternar para Modo Detalhado / Parcelado / Provisões Futuras"):
-        col1, col2 = st.columns(2)
-        with col1:
-            tipo = st.radio("Tipo", ["Despesa", "Entrada"], horizontal=True, key="lanc_tipo")
-            forma_pgto = st.selectbox("Forma de Pagamento", ["À vista", "Crédito", "Outros"], index=0 if tipo == "Entrada" else 1)
-            descricao = st.text_input("Descrição Detalhada", key="desc_full")
-            valor_input = st.text_input("Valor Previsto (R$)", value="0,00", key="val_full")
-            prioridade = st.radio("Prioridade", ["Baixa 🟢", "Média 🟡", "Alta 🔴"], index=0, horizontal=True)
-        with col2:
-            if not ESTRUTURA[tipo]:
-                st.error("Não há categorias ativas para este tipo.")
-                categoria, subgrupo = None, None
-            else:
-                categoria = st.selectbox("Categoria", list(ESTRUTURA[tipo].keys()), key="cat_full")
-                subgrupos_disp = ESTRUTURA[tipo][categoria] if categoria in ESTRUTURA[tipo] else []
-                subgrupo = st.selectbox("Subgrupo", subgrupos_disp, key="sub_full")
-            
-            gasto_continuo = st.checkbox("🗓️ Provisão (Mês todo)")
-            data_venc_base = st.date_input("Data Vencimento / Referência", value=data_contexto_ativo, format="DD/MM/YYYY")
-            
-            parcelas = 1
-            tipo_rec = st.radio("Recorrência", ["Única", "Parcelada", "Fixa/Contínua"], horizontal=True)
-            if tipo_rec == "Parcelada": parcelas = st.number_input("Parcelas", min_value=2, value=2)
-            elif tipo_rec == "Fixa/Contínua": parcelas = 60
-
-        if st.button("Registrar Lançamento Complexo", type="primary") and categoria:
-            val_f = parse_valor(valor_input)
-            if val_f <= 0: st.error("O valor deve ser maior que zero.")
-            else:
-                comp_id = str(uuid.uuid4())
-                registros = []
-                tot_p = 999 if tipo_rec == "Fixa/Contínua" else parcelas
-                desc_final = f"{descricao} (Provisão)" if gasto_continuo else descricao
-                for i in range(parcelas):
-                    m_f = data_venc_base.month - 1 + i
-                    a_f = data_venc_base.year + m_f // 12
-                    m_f = m_f % 12 + 1
-                    d_p = datetime.date(a_f, m_f, calendar.monthrange(a_f, m_f)[1]) if gasto_continuo else datetime.date(a_f, m_f, min(data_venc_base.day, calendar.monthrange(a_f, m_f)[1]))
-                    registros.append((tipo, categoria, subgrupo, desc_final, val_f, d_p, i+1, tot_p, 0, comp_id, forma_pgto, prioridade, 0.0))
-                execute_values_query('''
-                    INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago) 
-                    VALUES %s
-                ''', registros)
-                st.success("Salvo com sucesso!"); st.rerun()
+    if st.button("Registrar Lançamento", type="primary") and categoria:
+        val_f = parse_valor(valor_input)
+        if val_f <= 0: st.error("O valor deve ser maior que zero.")
+        else:
+            comp_id = str(uuid.uuid4())
+            registros = []
+            tot_p = 999 if tipo_rec == "Fixa/Contínua" else parcelas
+            desc_final = f"{descricao} (Provisão)" if gasto_continuo else descricao
+            for i in range(parcelas):
+                m_f = data_venc_base.month - 1 + i
+                a_f = data_venc_base.year + m_f // 12
+                m_f = m_f % 12 + 1
+                d_p = datetime.date(a_f, m_f, calendar.monthrange(a_f, m_f)[1]) if gasto_continuo else datetime.date(a_f, m_f, min(data_venc_base.day, calendar.monthrange(a_f, m_f)[1]))
+                registros.append((tipo, categoria, subgrupo, desc_final, val_f, d_p, i+1, tot_p, 0, comp_id, forma_pgto, prioridade, 0.0))
+            execute_values_query('''INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago) VALUES %s''', registros)
+            st.success("Salvo com sucesso!"); st.rerun()
 
 # =================================================================
-# 9. MÓDULO 2: FLUXO E PRIORIDADES (PK LOCK & EXPANDE WHATSAPP FILTRADO)
+# 10. MÓDULO 2: FLUXO E PRIORIDADES
 # =================================================================
 
 elif menu == "📊 Fluxo e Prioridades":
@@ -519,8 +441,6 @@ elif menu == "📊 Fluxo e Prioridades":
         cat_filtro = sel_cat if sel_cat else cat_disp
 
         df_view = df[(df['tipo'].isin(tipos_filtro)) & (df['categoria'].isin(cat_filtro))].copy()
-        
-        # Mapeamento determinístico de chaves primárias encapsuladas
         df_view['ids_alvo'] = df_view['id'].astype(str)
         
         mask_cred = df_view['forma_pagamento'] == 'Crédito'
@@ -595,7 +515,6 @@ elif menu == "📊 Fluxo e Prioridades":
             }
         )
         
-        # Amarramos as colunas nativas para o filtro do WhatsApp
         edit_df['tipo'] = df_view['tipo'].values
         edit_df['ordem_pri'] = df_view['ordem_pri'].values
 
@@ -646,8 +565,8 @@ elif menu == "📊 Fluxo e Prioridades":
 
         st.divider()
         
-        # --- EXPANDE WHATSAPP FILTRADO APENAS PARA DESPESAS PENDENTES ---
-        with st.expander("📱 Despesas Pendentes para WhatsApp (Copiar)", expanded=False):
+        # PROJEÇÃO WHATSAPP (ESTRITAMENTE DESPESAS PENDENTES)
+        with st.expander("📱 Resumo para WhatsApp (Pronto para copiar)", expanded=False):
             df_despesas_pendentes = edit_df[(edit_df['tipo'] == 'Despesa') & (~edit_df['Pago'])].sort_values(['ordem_pri', 'Data'])
             
             if df_despesas_pendentes.empty: 
@@ -701,7 +620,7 @@ elif menu == "📊 Fluxo e Prioridades":
                     st.success("Sucesso!"); st.rerun()
 
 # =================================================================
-# 10. MÓDULO 3: DEMONSTRATIVO
+# 11. MÓDULO 3: DEMONSTRATIVO
 # =================================================================
 
 elif menu == "📑 Demonstrativo":
@@ -808,7 +727,7 @@ elif menu == "📑 Demonstrativo":
                 st.rerun()
 
 # =================================================================
-# 11. MÓDULO: BALANÇO ANUAL
+# 12. MÓDULO: BALANÇO ANUAL
 # =================================================================
 
 elif menu == "📈 Balanço Anual":
@@ -879,7 +798,7 @@ elif menu == "📈 Balanço Anual":
                 st.plotly_chart(fig_sub, use_container_width=True)
 
 # =================================================================
-# 12. MÓDULO 4: OTIMIZAÇÃO DE PAGAMENTOS
+# 13. MÓDULO 4: OTIMIZAÇÃO DE PAGAMENTOS
 # =================================================================
 
 elif menu == "🔀 Otimização de Pagamentos":
@@ -954,7 +873,7 @@ elif menu == "🔀 Otimização de Pagamentos":
         else: st.warning("Produção Radioclim ou Humana não encontradas nas entradas deste mês.")
 
 # =================================================================
-# 13. MÓDULO 5: ESCALA VISUAL DE PLANTÕES (SAFETY LOCKS)
+# 14. MÓDULO 5: ESCALA VISUAL DE PLANTÕES
 # =================================================================
 
 elif menu == "🏥 Escala de Plantões":
