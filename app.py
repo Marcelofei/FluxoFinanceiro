@@ -8,6 +8,7 @@ import calendar
 import uuid
 import os
 import io
+import re
 
 # =================================================================
 # 1. INFRAESTRUTURA E CONEXÃO (SINGLETON ROBUSTO)
@@ -133,12 +134,18 @@ def format_brl(valor):
     return f"{float(valor):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
 # =================================================================
-# 3. CONFIGURAÇÃO DA PÁGINA
+# 3. CONFIGURAÇÃO DA PÁGINA & CAPTURA DE DEEP LINKING
 # =================================================================
 
 st.set_page_config(page_title="Gestão Financeira", layout="wide")
 if not check_password(): st.stop()
 init_db()
+
+# Interceptador de Deep Linking (Parâmetros via URL)
+query_params = st.query_params
+url_cat = query_params.get("cat", "")
+url_desc = query_params.get("desc", "")
+url_val = query_params.get("val", "")
 
 # =================================================================
 # 4. ESTRUTURAS DINÂMICAS E CONSTANTES
@@ -219,7 +226,7 @@ with col_top1: mes_selecionado = st.selectbox("Mês", range(1, 13), format_func=
 with col_top2: ano_selecionado = st.selectbox("Ano", range(hoje.year-2, hoje.year+5), index=2)
 
 # =================================================================
-# 6. MÓDULO 1: LANÇAMENTOS (REFATORADO PARA ULTRA-LOW FRICTION)
+# 6. MÓDULO 1: LANÇAMENTOS (COM REGEX PARSER & DEEP LINKING)
 # =================================================================
 
 if menu == "📝 Lançamentos":
@@ -278,21 +285,64 @@ if menu == "📝 Lançamentos":
 
     st.divider()
 
-    # --- NÍVEL 1: FLUXO EXPRESSO (DIRECIONADO AO MÉDICO OCUPADO) ---
-    st.subheader("⚡ Lançamento Expresso (3 Segundos)")
-    
+    # Montar lista de opções expressas
     opcoes_express = []
     for c in ESTRUTURA.get("Entrada", {}): opcoes_express.append(f"📥 {c}")
     for c in ESTRUTURA.get("Despesa", {}): opcoes_express.append(f"💸 {c}")
 
+    # Valores padrão do formulário Expresso (Iniciam vazios ou populados pelo Deep Link)
+    def_desc = url_desc
+    def_val = url_val if url_val else "0,00"
+    def_cat_idx = 0
+
+    # Tentar resolver a categoria vinda do Deep Link
+    if url_cat and opcoes_express:
+        for idx, opt in enumerate(opcoes_express):
+            if url_cat.lower() in opt.lower():
+                def_cat_idx = idx
+                break
+
+    # --- INGESTOR DE ÁREA DE TRANSFERÊNCIA (CLIPBOARD REGEX PARSER) ---
+    texto_notificacao = st.text_input("📋 Colar Notificação do Banco / Push / SMS", placeholder="Ex: Compra aprovada no seu Nubank valor R$ 142,50 em POSTO SHELL")
+    
+    if texto_notificacao:
+        # Extrair Valor
+        match_amt = re.search(r'(?:R\$|R\$\s*)\s*(\d+(?:[\.,]\d+)?)', texto_notificacao, re.IGNORECASE)
+        if match_amt:
+            def_val = match_amt.group(1).replace('.', ',')
+            
+        # Extrair Estabelecimento / Descrição
+        match_desc = re.search(r'(?:em|para|estabelecimento)\s+([A-Za-z0-9\s\*\.\-\&]+)', texto_notificacao, re.IGNORECASE)
+        raw_estabelecimento = ""
+        if match_desc:
+            raw_estabelecimento = match_desc.group(1).strip()
+        elif match_amt: # Fallback inteligente: pega o que vem após o dinheiro
+            partes = texto_notificacao.split(match_amt.group(0))
+            if len(partes) > 1:
+                raw_estabelecimento = re.sub(r'^[-\*\s]+', '', partes[1]).strip()
+                
+        if raw_estabelecimento:
+            def_desc = raw_estabelecimento
+            # Tentar adivinhar a categoria cruzando com o histórico do banco local
+            df_hist_lookup = fetch_dataframe("SELECT tipo, categoria FROM lancamentos WHERE descricao ILIKE %s LIMIT 1", (f"%{raw_estabelecimento}%",))
+            if not df_h_lookup.empty:
+                t_lookup = df_h_lookup.iloc[0]['tipo']
+                c_lookup = df_h_lookup.iloc[0]['categoria']
+                alvo = f"📥 {c_lookup}" if t_lookup == "Entrada" else f"💸 {c_lookup}"
+                if alvo in opcoes_express:
+                    def_cat_idx = opcoes_express.index(alvo)
+
+    # --- FORMULÁRIO EXPRESSO NÍVEL 1 ---
+    st.subheader("⚡ Lançamento Expresso")
+    
     if not opcoes_express:
         st.warning("Nenhuma categoria cadastrada. Utilize o menu acima para criar sua primeira categoria.")
     else:
         with st.container(border=True):
             col_e1, col_e2, col_e3, col_e4 = st.columns([2, 3, 2, 1])
-            with col_e1: cat_selecionada = st.selectbox("1. O que foi?", opcoes_express)
-            with col_e2: desc_express = st.text_input("2. Descrição Rápida", placeholder="Ex: Almoço / Uber / Plantão extra")
-            with col_e3: val_express = st.text_input("3. Valor (R$)", value="0,00", key="val_exp_input")
+            with col_e1: cat_selecionada = st.selectbox("1. Categoria", opcoes_express, index=def_cat_idx)
+            with col_e2: desc_express = st.text_input("2. Descrição", value=def_desc, placeholder="Ex: Almoço / Uber / Plantão extra")
+            with col_e3: val_express = st.text_input("3. Valor (R$)", value=def_val)
             
             with col_e4:
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -312,9 +362,17 @@ if menu == "📝 Lançamentos":
                         ''', (tipo_inferido, cat_real, sub_padrao, desc_express.strip(), val_f_exp, hoje, str(uuid.uuid4()), hoje))
                         st.success("Registrado instantaneamente!"); st.rerun()
 
+    # --- INSTRUÇÃO DE DEEP LINKING MOBILE ---
+    with st.expander("📱 Como Criar um Atalho Mobile na Tela do seu Celular"):
+        st.markdown("Você pode criar ícones no seu iPhone ou Android que já abrem a ferramenta com a categoria preenchida. Copie o link abaixo:")
+        url_base = st.query_params
+        exemplo_link = f"https://seu-app.up.railway.app/?cat=Alimentacao&desc=Almoço"
+        st.code(exemplo_link, language="text")
+        st.markdown("*(No Safari ou Chrome mobile, abra o link customizado e toque em **Compartilhar ➔ Adicionar à Tela de Início**)*")
+
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- NÍVEL 2: FLUXO RETROATIVO / COMPLEXO ---
+    # --- NÍVEL 2: FLUXO COMPLEXO / PARCELADO ---
     with st.expander("➕ Alternar para Modo Detalhado / Parcelado / Provisões Futuras"):
         col1, col2 = st.columns(2)
         with col1:
@@ -363,7 +421,7 @@ if menu == "📝 Lançamentos":
                 st.success("Salvo com sucesso!"); st.rerun()
 
 # =================================================================
-# 7. MÓDULO 2: FLUXO E PRIORIDADES (LIQUIDAÇÃO COM AUTO-INFERÊNCIA)
+# 7. MÓDULO 2: FLUXO E PRIORIDADES (DESACOPLADO COM BATCH COMMIT)
 # =================================================================
 
 elif menu == "📊 Fluxo e Prioridades":
@@ -419,10 +477,12 @@ elif menu == "📊 Fluxo e Prioridades":
         df_view.insert(0, '🗑️ Este', False)
         df_view.insert(1, '🗑️ Futuros', False)
 
-        st.markdown("*(Dica de Agilidade: Marque 'Pago'. Se deixar o 'Valor Real' zerado, o sistema copia o valor previsto automaticamente).*")
+        st.markdown("*(Controle em Lote: Marque vários 'Pagos' ou edite valores em sequência. O sistema aguardará você clicar no botão verde abaixo para persistir tudo de uma vez).*")
+        
+        # Grid desacoplado (A interface re-renderiza as caixinhas visualmente sem travar o banco)
         edit_df = st.data_editor(
             df_view[['🗑️ Este', '🗑️ Futuros', 'Data', 'prioridade', 'Desc. Exibição', 'valor', 'valor_efetivo', 'Pago']], 
-            use_container_width=True, hide_index=True, 
+            use_container_width=True, hide_index=True, key="grid_fluxo_batch",
             column_config={
                 "Data": st.column_config.DateColumn("Data Venc.", format="DD/MM/YYYY"), 
                 "valor": st.column_config.NumberColumn("Valor Previsto", format="%.2f"),
@@ -432,36 +492,48 @@ elif menu == "📊 Fluxo e Prioridades":
             }
         )
         
-        if st.button("Salvar Alterações Rápidas", type="primary"):
+        # GATILHO EXPLÍCITO DE PERSISTÊNCIA BATCH
+        if st.button("💾 Gravar Todas as Alterações no Banco (Commit)", type="primary"):
             for i, row in edit_df.iterrows():
-                id_s = str(df_view.loc[i, 'id'])
-                novo_pago = 1 if row['Pago'] else 0
-                velho_valor = float(df_view.loc[i, 'valor'])
-                novo_valor = float(row['valor'])
-                novo_valor_efetivo = float(row['valor_efetivo']) if pd.notna(row['valor_efetivo']) else 0.0
-                delta = novo_valor - velho_valor
+                orig_row = df_view.iloc[i]
+                id_s = str(orig_row['id'])
                 
-                nova_desc = row['Desc. Exibição'].split(' (')[0]
+                # Dirty-checking: verifica cirurgicamente se esta linha sofreu alteração
+                mudou_pago = row['Pago'] != orig_row['Pago']
+                mudou_val = float(row['valor']) != float(orig_row['valor'])
+                mudou_efetivo = float(row['valor_efetivo']) != float(orig_row['valor_efetivo'])
+                mudou_pri = row['prioridade'] != orig_row['prioridade']
+                mudou_desc = row['Desc. Exibição'] != orig_row['Desc. Exibição']
+                deletar = row['🗑️ Este'] or row['🗑️ Futuros']
                 
-                # --- AUTO-INFERÊNCIA DE VALOR REAL (FIM DA DIGITAÇÃO DUPLA) ---
-                if novo_pago == 1 and novo_valor_efetivo == 0.0:
-                    novo_valor_efetivo = novo_valor
+                if deletar or mudou_pago or mudou_val or mudou_efetivo or mudou_pri or mudou_desc:
+                    nova_desc = row['Desc. Exibição'].split(' (')[0]
+                    novo_pago = 1 if row['Pago'] else 0
+                    novo_valor = float(row['valor'])
+                    novo_valor_efetivo = float(row['valor_efetivo'])
+                    velho_valor = float(orig_row['valor'])
+                    delta = novo_valor - velho_valor
+                    
+                    # Auto-cópia de faturamento: se marcou pago e deixou zerado, assume o previsto
+                    if novo_pago == 1 and novo_valor_efetivo == 0.0:
+                        novo_valor_efetivo = novo_valor
 
-                if row['🗑️ Este'] or row['🗑️ Futuros']:
-                    if id_s == '-1': st.warning("Cartões consolidados não podem ser apagados aqui. Vá em Demonstrativo.")
-                    elif id_s.startswith('plantao_'): execute_query("DELETE FROM lancamentos WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%'", (id_s.replace('plantao_', ''), row['Data']))
-                    else: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if row['🗑️ Futuros'] else "DELETE FROM lancamentos WHERE id = %s", (df_view.loc[i, 'compra_id'], df_view.loc[i, 'data_vencimento']) if row['🗑️ Futuros'] else (int(id_s),))
-                else:
-                    if id_s == '-1':
-                        execute_query("UPDATE lancamentos SET pago=%s WHERE forma_pagamento='Crédito' AND EXTRACT(MONTH FROM data_vencimento)=%s AND EXTRACT(YEAR FROM data_vencimento)=%s", (novo_pago, mes_selecionado, ano_selecionado))
-                        if delta != 0: execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, pago, forma_pagamento, prioridade, data_competencia, valor_efetivo) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Despesa', 'Ajuste', '', '💳 Ajuste de Fatura Consolidada', delta, row['Data'], novo_pago, 'Outros', row['prioridade'], row['Data'], delta if novo_pago else 0.0))
-                    elif id_s.startswith('plantao_'):
-                        subg = id_s.replace('plantao_', '')
-                        execute_query("UPDATE lancamentos SET pago=%s WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%'", (novo_pago, subg, row['Data']))
-                        if delta != 0: execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, pago, forma_pagamento, prioridade, data_competencia, valor_efetivo) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Entrada', 'Ajuste', subg, f'🏥 Ajuste de Plantão {subg}', delta, row['Data'], novo_pago, 'Outros', row['prioridade'], row['Data'], delta if novo_pago else 0.0))
+                    if deletar:
+                        if id_s == '-1': st.warning("Cartões consolidados não podem ser apagados aqui. Vá em Demonstrativo.")
+                        elif id_s.startswith('plantao_'): execute_query("DELETE FROM lancamentos WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%'", (id_s.replace('plantao_', ''), row['Data']))
+                        else: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if row['🗑️ Futuros'] else "DELETE FROM lancamentos WHERE id = %s", (orig_row['compra_id'], orig_row['data_vencimento']) if row['🗑️ Futuros'] else (int(id_s),))
                     else:
-                        execute_query("UPDATE lancamentos SET pago=%s, prioridade=%s, descricao=%s, valor=%s, valor_efetivo=%s, data_vencimento=%s WHERE id=%s", (novo_pago, row['prioridade'], nova_desc, novo_valor, novo_valor_efetivo, row['Data'], int(id_s)))
-            st.rerun()
+                        if id_s == '-1':
+                            execute_query("UPDATE lancamentos SET pago=%s WHERE forma_pagamento='Crédito' AND EXTRACT(MONTH FROM data_vencimento)=%s AND EXTRACT(YEAR FROM data_vencimento)=%s", (novo_pago, mes_selecionado, ano_selecionado))
+                            if delta != 0: execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, pago, forma_pagamento, prioridade, data_competencia, valor_efetivo) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Despesa', 'Ajuste', '', '💳 Ajuste de Fatura Consolidada', delta, row['Data'], novo_pago, 'Outros', row['prioridade'], row['Data'], delta if novo_pago else 0.0))
+                        elif id_s.startswith('plantao_'):
+                            subg = id_s.replace('plantao_', '')
+                            execute_query("UPDATE lancamentos SET pago=%s WHERE tipo='Entrada' AND subgrupo=%s AND data_vencimento=%s AND descricao LIKE 'Plantão %%'", (novo_pago, subg, row['Data']))
+                            if delta != 0: execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, pago, forma_pagamento, prioridade, data_competencia, valor_efetivo) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Entrada', 'Ajuste', subg, f'🏥 Ajuste de Plantão {subg}', delta, row['Data'], novo_pago, 'Outros', row['prioridade'], row['Data'], delta if novo_pago else 0.0))
+                        else:
+                            execute_query("UPDATE lancamentos SET pago=%s, prioridade=%s, descricao=%s, valor=%s, valor_efetivo=%s, data_vencimento=%s WHERE id=%s", (novo_pago, row['prioridade'], nova_desc, novo_valor, novo_valor_efetivo, row['Data'], int(id_s)))
+            
+            st.success("🎉 Alterações em massa gravadas no PostgreSQL!"); st.rerun()
 
         st.divider()
         st.subheader("📱 Compartilhar no WhatsApp")
@@ -661,7 +733,7 @@ elif menu == "📈 Balanço Anual":
         c4.metric("Margem de Lucro", f"{margem:.1f}%")
         
         st.divider()
-        tab_graf1, tab_graf2, tab_graf3 = st.tabs(["📊 Evolução Mensal", "🗂️ Composição de Gastos", "⏳ Defasagem de Liquidez (Aging)"])
+        tab_graf1, tab_graf2 = st.tabs(["📊 Evolução Mensal", "🗂️ Composição de Gastos"])
         
         with tab_graf1:
             fig_evol = px.bar(mensal, x='Mes', y=['Entrada', 'Despesa'], 
@@ -691,29 +763,6 @@ elif menu == "📈 Balanço Anual":
                                  color='valor', color_continuous_scale='Reds')
                 fig_sub.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_sub, use_container_width=True)
-
-        with tab_graf3:
-            st.subheader("Análise de Recebíveis Retidos por Competência (Capital Pendente de Repasse)")
-            st.markdown("Rastreamento de faturamento médico cujo serviço já foi executado (`data_competencia`), mas o repasse hospitalar segue pendente (`pago == 0`).")
-            df_retidos = fetch_dataframe("SELECT subgrupo, descricao, valor, data_competencia, data_vencimento FROM lancamentos WHERE tipo = 'Entrada' AND pago = 0 AND data_competencia IS NOT NULL ORDER BY data_competencia ASC")
-            
-            if not df_retidos.empty:
-                df_retidos['Atraso (Dias)'] = (hoje - pd.to_datetime(df_retidos['data_competencia']).dt.date).apply(lambda x: x.days)
-                df_retidos['Mês Competência'] = pd.to_datetime(df_retidos['data_competencia']).dt.strftime('%m/%Y')
-                df_retidos['Data Prevista'] = pd.to_datetime(df_retidos['data_vencimento']).dt.strftime('%d/%m/%Y')
-                
-                st.dataframe(
-                    df_retidos[['Mês Competência', 'subgrupo', 'descricao', 'valor', 'Data Prevista', 'Atraso (Dias)']],
-                    use_container_width=True, hide_index=True,
-                    column_config={
-                        "valor": st.column_config.NumberColumn("Montante Retido (R$)", format="%.2f"),
-                        "Atraso (Dias)": st.column_config.NumberColumn("Dias Corridos", format="%d dias")
-                    }
-                )
-                montante_total_retido = df_retidos['valor'].sum()
-                st.metric("Montante Total Retido nos Hospitais", f"R$ {format_brl(montante_total_retido)}")
-            else:
-                st.success("Nenhum patrimônio faturado encontra-se retido ou pendente de repasse no momento.")
 
 # =================================================================
 # 10. MÓDULO 4: OTIMIZAÇÃO DE PAGAMENTOS
