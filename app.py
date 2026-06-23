@@ -7,6 +7,7 @@ import datetime
 import calendar
 import uuid
 import os
+import io
 
 # =================================================================
 # 1. INFRAESTRUTURA E CONEXÃO (SINGLETON ROBUSTO E ANTI-DDoS)
@@ -19,7 +20,7 @@ def get_connection():
         st.error("DATABASE_URL não configurada na variável de ambiente.")
         st.stop()
         
-    # Diretriz 1: Forçar porta 5432 (Sessão) e sufixo compulsório sslmode=require
+    # Garante o roteamento correto para a porta estável 5432 com SSL ativo
     db_url = db_url.replace(":6543/", ":5432/")
     if "sslmode=require" not in db_url:
         sep = "&" if "?" in db_url else "?"
@@ -72,7 +73,6 @@ def fetch_dataframe(query, params=None):
 
 @st.cache_resource
 def init_db():
-    # Diretriz 3: Exclusividade de CREATE TABLE IF NOT EXISTS
     execute_query('''
         CREATE TABLE IF NOT EXISTS categorias_personalizadas (
             id SERIAL PRIMARY KEY,
@@ -199,7 +199,7 @@ meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "A
 prioridades_map = {"Alta 🔴": 0, "Média 🟡": 1, "Baixa 🟢": 2}
 
 # =================================================================
-# 6. SIDEBAR E FILTROS GLOBAL (RETENÇÃO DE CONTEXTO RESTAURADA)
+# 6. SIDEBAR E FILTROS GLOBAL (RETENÇÃO DE CONTEXTO)
 # =================================================================
 
 st.sidebar.title("Navegação")
@@ -214,13 +214,10 @@ menu = st.sidebar.radio("Módulo:", [
 ])
 st.sidebar.divider()
 
-# CORREÇÃO ARQUITETURAL: Seletor fixado estritamente no namespace st.sidebar
 st.sidebar.markdown("### 📅 Período Ativo")
 col_sb1, col_sb2 = st.sidebar.columns(2)
-with col_sb1:
-    mes_selecionado = st.selectbox("Mês", range(1, 13), format_func=lambda x: meses[x-1], index=hoje.month-1, key="sb_mes")
-with col_sb2:
-    ano_selecionado = st.selectbox("Ano", range(hoje.year-2, hoje.year+5), index=2, key="sb_ano")
+with col_sb1: mes_selecionado = st.selectbox("Mês", range(1, 13), format_func=lambda x: meses[x-1], index=hoje.month-1, key="sb_mes")
+with col_sb2: ano_selecionado = st.selectbox("Ano", range(hoje.year-2, hoje.year+5), index=2, key="sb_ano")
 
 st.sidebar.divider()
 st.sidebar.subheader("🛡️ Backup")
@@ -236,7 +233,6 @@ def importar_csv(arquivo):
         if 'prioridade' not in df_imp.columns: df_imp['prioridade'] = 'Baixa 🟢'
         if 'valor_pago' not in df_imp.columns: df_imp['valor_pago'] = df_imp['valor']
         
-        # Diretriz 4: Aplicação estrita de TRUNCATE TABLE
         execute_query("TRUNCATE TABLE lancamentos RESTART IDENTITY")
         registros = [(
             r['tipo'], r['categoria'], r['subgrupo'], r['descricao'], r['valor'], 
@@ -260,8 +256,6 @@ if a_up and st.sidebar.button("🚀 Confirmar Restauração"):
     if importar_csv(a_up): st.rerun()
 
 processar_recorrencias_lazy(mes_selecionado, ano_selecionado)
-
-# Resolução de data contextual padrão amarrada ao seletor ativo da barra lateral
 dia_maximo_alvo = calendar.monthrange(ano_selecionado, mes_selecionado)[1]
 data_contexto_ativo = datetime.date(ano_selecionado, mes_selecionado, min(hoje.day, dia_maximo_alvo))
 
@@ -274,7 +268,6 @@ if menu == "🏠 Início":
     
     dt_limite = hoje + datetime.timedelta(days=7)
     df_7d = fetch_dataframe("SELECT data_vencimento, tipo, descricao, valor, pago FROM lancamentos WHERE data_vencimento BETWEEN %s AND %s ORDER BY data_vencimento ASC", (hoje, dt_limite))
-    
     df_mes_atual = fetch_dataframe("SELECT tipo, valor, valor_pago, pago FROM lancamentos WHERE EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s", (hoje.month, hoje.year))
     
     c_inc1, c_inc2, c_inc3 = st.columns(3)
@@ -320,7 +313,7 @@ elif menu == "📝 Lançamentos":
             with c_add1:
                 ntipo = st.radio("Para qual tipo?", ["Despesa", "Entrada"], horizontal=True, key="add_tipo")
                 ncat = st.text_input("Nome da Categoria (Nova ou Existente)", placeholder="Ex: Valores Fixos")
-                n_rec = st.checkbox("🔄 Este item é um contrato fixo/recorrente? (Geração Automática Mensal)")
+                n_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)")
             with c_add2:
                 nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Hospital Trauma")
                 if n_rec: n_dt_start = st.date_input("Data de Início do Contrato", value=data_contexto_ativo)
@@ -396,7 +389,6 @@ elif menu == "📝 Lançamentos":
             subgrupo = st.selectbox("Subgrupo", subgrupos_disp)
         
         gasto_continuo = st.checkbox("🗓️ Provisão (Mês todo)")
-        # Amarrado ao contexto temporal ativo
         data_venc_base = st.date_input("Data Referência", value=data_contexto_ativo, format="DD/MM/YYYY")
         
         parcelas = 1
@@ -422,7 +414,7 @@ elif menu == "📝 Lançamentos":
             st.success("Salvo!"); st.rerun()
 
 # =================================================================
-# 9. MÓDULO 2: FLUXO E PRIORIDADES
+# 9. MÓDULO 2: FLUXO E PRIORIDADES (SISTEMA DE SEGURANÇA DETERMINÍSTICO)
 # =================================================================
 
 elif menu == "📊 Fluxo e Prioridades":
@@ -518,6 +510,10 @@ elif menu == "📊 Fluxo e Prioridades":
             }
         )
         
+        # Re-acoplamos as colunas de tipo/prioridade interna para alimentar a lógica de cópia do WhatsApp sem falhas
+        edit_df['tipo'] = df_view['tipo'].values
+        edit_df['ordem_pri'] = df_view['ordem_pri'].values
+
         if st.button("Salvar Alterações Rápidas", type="primary"):
             for i, row in edit_df.iterrows():
                 orig_row = df_view.loc[i]
@@ -544,12 +540,9 @@ elif menu == "📊 Fluxo e Prioridades":
                 tupla_ids_reais = tuple(map(int, orig_row['ids_alvo'].split(',')))
                 
                 if row['🗑️ Este'] or row['🗑️ Futuros']:
-                    if id_s == '-1': 
-                        st.warning("Cartões consolidados não podem ser apagados aqui.")
-                    elif id_s.startswith('plantao_'): 
-                        execute_query("DELETE FROM lancamentos WHERE id IN %s", (tupla_ids_reais,))
-                    else: 
-                        execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if row['🗑️ Futuros'] else "DELETE FROM lancamentos WHERE id = %s", (orig_row['compra_id'], orig_row['data_vencimento']) if row['🗑️ Futuros'] else (tupla_ids_reais[0],))
+                    if id_s == '-1': st.warning("Cartões consolidados não podem ser apagados aqui.")
+                    elif id_s.startswith('plantao_'): execute_query("DELETE FROM lancamentos WHERE id IN %s", (tupla_ids_reais,))
+                    else: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if row['🗑️ Futuros'] else "DELETE FROM lancamentos WHERE id = %s", (orig_row['compra_id'], orig_row['data_vencimento']) if row['🗑️ Futuros'] else (tupla_ids_reais[0],))
                 else:
                     if id_s == '-1':
                         execute_query("UPDATE lancamentos SET pago=%s WHERE id IN %s", (novo_pago, tupla_ids_reais))
@@ -567,19 +560,27 @@ elif menu == "📊 Fluxo e Prioridades":
             st.rerun()
 
         st.divider()
-        st.subheader("📱 Compartilhar no WhatsApp")
-        if st.button("Gerar Lista para WhatsApp"):
-            df_despesas_wpp = df_view[df_view['tipo'] == 'Despesa'].sort_values(['ordem_pri', 'data_vencimento'])
-            if df_despesas_wpp.empty: st.success("Nenhuma despesa registrada para este mês! 🎉")
+        
+        # --- EXPANDE EM TEMPO REAL PARA WHATSAPP (FIM DO BUG DE RE-RUN FANTASMA) ---
+        with st.expander("📱 Resumo para WhatsApp (Pronto para copiar)", expanded=False):
+            df_despesas_wpp = edit_df[edit_df['tipo'] == 'Despesa'].sort_values(['ordem_pri', 'Data'])
+            
+            if df_despesas_wpp.empty: 
+                st.success("Nenhuma despesa registrada para este mês! 🎉")
             else:
                 texto_wpp = f"*Resumo de Contas - {meses[mes_selecionado-1]}/{ano_selecionado}*\n\n"
                 t_wpp = 0.0
+                
                 for _, r in df_despesas_wpp.iterrows():
-                    d_s = pd.to_datetime(r['data_vencimento']).strftime('%d/%m')
-                    if r['Pago']: texto_wpp += f"✅ ~{d_s} - {r['Desc. Exibição']}: R$ {format_brl(r['valor'])}~\n"
+                    d_s = pd.to_datetime(r['Data']).strftime('%d/%m')
+                    val_mostrar = float(r['valor_pago']) if r['Pago'] and float(r['valor_pago']) > 0 else float(r['valor'])
+                    
+                    if r['Pago']: 
+                        texto_wpp += f"✅ ~{d_s} - {r['Desc. Exibição']}: R$ {format_brl(val_mostrar)}~\n"
                     else:
-                        texto_wpp += f"⏳ {d_s} - {r['Desc. Exibição']}: R$ {format_brl(r['valor'])}\n"
-                        t_wpp += float(r['valor'])
+                        texto_wpp += f"⏳ {d_s} - {r['Desc. Exibição']}: R$ {format_brl(val_mostrar)}\n"
+                        t_wpp += val_mostrar
+                        
                 texto_wpp += f"\n*Total Restante a Pagar:* R$ {format_brl(t_wpp)}"
                 st.code(texto_wpp, language="markdown")
 
@@ -737,6 +738,7 @@ elif menu == "📈 Balanço Anual":
     else:
         ano_balanco = st.selectbox("Ano de Referência", anos_disp['ano'].astype(int).tolist(), index=0)
         
+        # Backfill compulsório de Jan a Dez para o fechamento anual confiável
         for m in range(1, 13): processar_recorrencias_lazy(m, ano_balanco)
             
         df_ano = fetch_dataframe("SELECT * FROM lancamentos WHERE EXTRACT(YEAR FROM data_vencimento) = %s", (ano_balanco,))
@@ -872,7 +874,7 @@ elif menu == "🔀 Otimização de Pagamentos":
         else: st.warning("Produção Radioclim ou Humana não encontradas nas entradas deste mês.")
 
 # =================================================================
-# 13. MÓDULO 5: ESCALA VISUAL DE PLANTÕES
+# 13. MÓDULO 5: ESCALA VISUAL DE PLANTÕES (SAFETY LOCKS)
 # =================================================================
 
 elif menu == "🏥 Escala de Plantões":
@@ -952,7 +954,7 @@ elif menu == "🏥 Escala de Plantões":
                     if pd.notna(res.iloc[0]['valor_padrao']): default_vals["v"] = float(res.iloc[0]['valor_padrao'])
                     if pd.notna(res.iloc[0]['atraso_meses']): default_vals["m"] = int(res.iloc[0]['atraso_meses'])
                     if pd.notna(res.iloc[0]['dia_pagamento']): default_vals["d"] = int(res.iloc[0]['dia_pagamento'])
-            if modo == "Dia Específico": d_p = st.date_input("Data", value=hoje, format="DD/MM/YYYY")
+            if modo == "Dia Específico": d_p = st.date_input("Data", value=data_contexto_ativo)
             else: dias_s = st.multiselect("Dias", options=[0,1,2,3,4,5,6], format_func=lambda x: ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"][x])
         with c2:
             v_t = st.number_input("Valor (R$)", value=default_vals["v"])
@@ -969,7 +971,7 @@ elif menu == "🏥 Escala de Plantões":
                 regs.append(("Entrada", cat_escolhida, loc_p, f"Plantão {loc_p} ({d_p.strftime('%d/%m/%Y')})", v_t, datetime.date(a_f, m_f, reg_d), 1, 1, 0, str(uuid.uuid4()), "Outros", "Baixa 🟢", 0.0))
             elif dias_s:
                 for off in range(m_rec):
-                    m_a, a_a = (cal_mes + off - 1) % 12 + 1, cal_ano + (cal_mes + off - 1) // 12
+                    m_a, a_a = (mes_selecionado + off - 1) % 12 + 1, ano_selecionado + (mes_selecionado + off - 1) // 12
                     m_p, a_p = (m_a + reg_m - 1) % 12 + 1, a_a + (m_a + reg_m - 1) // 12
                     for d in range(1, calendar.monthrange(a_a, m_a)[1] + 1):
                         curr = datetime.date(a_a, m_a, d)
