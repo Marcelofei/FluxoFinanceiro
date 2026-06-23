@@ -8,6 +8,7 @@ import calendar
 import uuid
 import os
 import io
+import re
 
 # =================================================================
 # 1. INFRAESTRUTURA E CONEXÃO (SINGLETON ROBUSTO)
@@ -127,6 +128,45 @@ def format_brl(valor):
     if pd.isna(valor): return "0,00"
     return f"{float(valor):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
+# Leitor e extrator nativo de tags estruturadas de arquivos OFX bancários
+def parse_ofx_string(ofx_content):
+    transactions = []
+    blocks = re.findall(r'<STMTTRN>(.*?)</STMTTRN>', ofx_content, re.DOTALL | re.IGNORECASE)
+    for block in blocks:
+        trntype = re.search(r'<TRNTYPE>(.*?)(?:\n|<)', block, re.IGNORECASE)
+        dtposted = re.search(r'<DTPOSTED>(.*?)(?:\n|<)', block, re.IGNORECASE)
+        trnamt = re.search(r'<TRNAMT>(.*?)(?:\n|<)', block, re.IGNORECASE)
+        memo = re.search(r'<MEMO>(.*?)(?:\n|<)', block, re.IGNORECASE)
+        name = re.search(r'<NAME>(.*?)(?:\n|<)', block, re.IGNORECASE)
+        
+        t_date_str = dtposted.group(1).strip() if dtposted else ""
+        t_amt = trnamt.group(1).strip() if trnamt else "0"
+        t_memo = memo.group(1).strip() if memo else ""
+        t_name = name.group(1).strip() if name else ""
+        
+        desc = t_name if t_name else t_memo
+        if not desc: desc = "Transação de Extrato"
+        
+        try:
+            ano = int(t_date_str[0:4])
+            mes = int(t_date_str[4:6])
+            dia = int(t_date_str[6:8])
+            data_venc = datetime.date(ano, mes, dia)
+        except:
+            data_venc = datetime.date.today()
+            
+        valor = float(t_amt.replace(',', '.'))
+        tipo_mov = "Entrada" if valor > 0 else "Despesa"
+        valor = abs(valor)
+        
+        transactions.append({
+            "Data": data_venc,
+            "Descrição": desc,
+            "Valor": valor,
+            "Tipo": tipo_mov
+        })
+    return transactions
+
 # =================================================================
 # 3. CONFIGURAÇÃO DA PÁGINA
 # =================================================================
@@ -164,6 +204,7 @@ prioridades_map = {"Alta 🔴": 0, "Média 🟡": 1, "Baixa 🟢": 2}
 st.sidebar.title("Navegação")
 menu = st.sidebar.radio("Módulo:", [
     "📝 Lançamentos", 
+    "📥 Conciliação OFX",
     "📊 Fluxo e Prioridades", 
     "📑 Demonstrativo", 
     "📈 Balanço Anual",
@@ -322,6 +363,105 @@ if menu == "📝 Lançamentos":
             st.success("Salvo!"); st.rerun()
 
 # =================================================================
+# 6.2 MÓDULO AUXILIAR: CONCILIAÇÃO BANCÁRIA OFX
+# =================================================================
+
+elif menu == "📥 Conciliação OFX":
+    st.header("📥 Conciliação Bancária Automatizada (Extrato .OFX)")
+    st.markdown("Exporte o extrato em formato **.ofx** no app do seu banco e faça o upload aqui. O sistema usará seu histórico completo para auto-categorizar tudo.")
+    
+    arquivo_ofx = st.file_uploader("Selecione o arquivo de extrato (.ofx)", type=["ofx"])
+    if arquivo_ofx:
+        conteudo = arquivo_ofx.read().decode("utf-8", errors="ignore")
+        transacoes = parse_ofx_string(conteudo)
+        
+        if not transacoes:
+            st.warning("Nenhuma transação estruturada válida foi localizada neste arquivo OFX.")
+        else:
+            # Puxar inteligência histórica do banco de dados local para de-para automático
+            df_historico = fetch_dataframe("SELECT tipo, descricao, categoria, subgrupo, forma_pagamento, prioridade FROM lancamentos")
+            
+            # Puxar tabelas de apoio dinâmicas para o dropdown da planilha
+            todas_categorias = []
+            todos_subgrupos = [""]
+            df_cats = fetch_dataframe("SELECT DISTINCT categoria, subgrupo FROM categorias_personalizadas")
+            if not df_cats.empty:
+                todas_categorias = sorted(df_cats['categoria'].dropna().unique().tolist())
+                todos_subgrupos += sorted(df_cats['subgrupo'].dropna().unique().tolist())
+            
+            registros_mapeados = []
+            for t in transacoes:
+                cat_sugerida = ""
+                sub_sugerido = ""
+                forma_sugerida = "À vista" if t['Tipo'] == "Entrada" else "Outros"
+                prioridade_sugerida = "Baixa 🟢"
+                
+                # Regra de Aprendizado por Histórico Local (Substring Match)
+                if not df_historico.empty:
+                    df_match = df_historico[(df_historico['tipo'] == t['Tipo']) & (df_historico['descricao'].str.contains(re.escape(t['Descrição']), case=False, na=False))]
+                    if not df_match.empty:
+                        cat_sugerida = df_match.iloc[0]['categoria']
+                        sub_sugerido = df_match.iloc[0]['subgrupo']
+                        forma_sugerida = df_match.iloc[0]['forma_pagamento']
+                        prioridade_sugerida = df_match.iloc[0]['prioridade']
+                
+                registros_mapeados.append({
+                    "Importar": True,
+                    "Data": t['Data'],
+                    "Tipo": t['Tipo'],
+                    "Descrição": t['Descrição'],
+                    "Valor": t['Valor'],
+                    "Categoria": cat_sugerida,
+                    "Subgrupo": sub_sugerido if sub_sugerido else "",
+                    "Forma Pagamento": forma_sugerida,
+                    "Prioridade": prioridade_sugerida
+                })
+            
+            df_ofx_ed = pd.DataFrame(registros_mapeados)
+            st.markdown(f"📊 **{len(df_ofx_ed)} transações encontradas.** Ajuste ou valide os dados abaixo:")
+            
+            # Renderização de Planilha de Validação Interativa Humana
+            df_validado = st.data_editor(
+                df_ofx_ed,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Importar": st.column_config.CheckboxColumn("Importar?"),
+                    "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                    "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Entrada", "Despesa"]),
+                    "Valor": st.column_config.NumberColumn("Valor (R$)", format="%.2f"),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=todas_categorias),
+                    "Subgrupo": st.column_config.SelectboxColumn("Subgrupo", options=todos_subgrupos),
+                    "Forma Pagamento": st.column_config.SelectboxColumn("Forma Pagamento", options=["À vista", "Crédito", "Outros"]),
+                    "Prioridade": st.column_config.SelectboxColumn("Prioridade", options=["Alta 🔴", "Média 🟡", "Baixa 🟢"])
+                }
+            )
+            
+            if st.button("🚀 Confirmar e Importar Transações Selecionadas", type="primary"):
+                novos_lancamentos = []
+                comp_id_lote = str(uuid.uuid4())
+                
+                for idx, r in df_validado.iterrows():
+                    if r['Importar']:
+                        if not r['Categoria'] or str(r['Categoria']).strip() == "":
+                            st.error(f"Erro: A transação '{r['Descrição']}' na linha {idx+1} não possui uma Categoria atribuída.")
+                            st.stop()
+                        
+                        novos_lancamentos.append((
+                            r['Tipo'], r['Categoria'], r['Subgrupo'], r['Descrição'], 
+                            float(r['Valor']), r['Data'], 1, 1, 1, # Salva como Pago automáticos por ser extrato real
+                            comp_id_lote, r['Forma Pagamento'], r['Prioridade']
+                        ))
+                
+                if novos_lancamentos:
+                    execute_values_query('''
+                        INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade) 
+                        VALUES %s
+                    ''', novos_lancamentos)
+                    st.success(f"Sucesso! {len(novos_lancamentos)} lançamentos inseridos e conciliados de forma consolidada!")
+                    st.rerun()
+
+# =================================================================
 # 7. MÓDULO 2: FLUXO E PRIORIDADES
 # =================================================================
 
@@ -369,7 +509,6 @@ elif menu == "📊 Fluxo e Prioridades":
         df_view['Pago'] = df_view['pago'].astype(bool)
         df_view['Data'] = pd.to_datetime(df_view['data_vencimento']).dt.date
         
-        # Adicionar info de parcelas na descrição de exibição
         def format_desc(row):
             if pd.notna(row.get('total_parcelas')) and row['total_parcelas'] > 1 and row['total_parcelas'] != 999:
                 return f"{row['descricao']} ({int(row['parcela_atual'])}/{int(row['total_parcelas'])})"
@@ -401,7 +540,6 @@ elif menu == "📊 Fluxo e Prioridades":
                 novo_valor = float(row['valor'])
                 delta = novo_valor - velho_valor
                 
-                # Se o usuário editou a descrição, limpar o sufixo de parcelas se ele existir
                 nova_desc = row['Desc. Exibição'].split(' (')[0]
                 
                 if row['🗑️ Este'] or row['🗑️ Futuros']:
@@ -576,35 +714,30 @@ elif menu == "📑 Demonstrativo":
                 st.rerun()
 
 # =================================================================
-# 9. NOVO MÓDULO: BALANÇO ANUAL
+# 9. MÓDULO: BALANÇO ANUAL
 # =================================================================
 
 elif menu == "📈 Balanço Anual":
     st.header("📈 Balanço Financeiro Anual")
-    # Seleção de Ano
     anos_disp = fetch_dataframe("SELECT DISTINCT EXTRACT(YEAR FROM data_vencimento) as ano FROM lancamentos ORDER BY ano DESC")
     if anos_disp.empty:
         st.info("Sem dados suficientes para gerar balanço anual.")
     else:
         ano_balanco = st.selectbox("Ano de Referência", anos_disp['ano'].astype(int).tolist(), index=0)
         
-        # Buscar todos os dados do ano
         df_ano = fetch_dataframe("SELECT * FROM lancamentos WHERE EXTRACT(YEAR FROM data_vencimento) = %s", (ano_balanco,))
         df_ano['valor'] = df_ano['valor'].astype(float)
         df_ano['mes_num'] = pd.to_datetime(df_ano['data_vencimento']).dt.month
         
-        # Agrupamento mensal
         mensal = df_ano.groupby(['mes_num', 'tipo'])['valor'].sum().unstack(fill_value=0).reset_index()
         for col in ['Entrada', 'Despesa']:
             if col not in mensal.columns: mensal[col] = 0.0
             
         mensal['Saldo'] = mensal['Entrada'] - mensal['Despesa']
-        # Ordenar meses
         mensal = mensal.sort_values('mes_num')
         mensal['Mes'] = mensal['mes_num'].apply(lambda x: meses[x-1])
         mensal['Acumulado'] = mensal['Saldo'].cumsum()
         
-        # --- KPIs ---
         tot_ent = mensal['Entrada'].sum()
         tot_des = mensal['Despesa'].sum()
         lucro_ano = tot_ent - tot_des
@@ -617,12 +750,9 @@ elif menu == "📈 Balanço Anual":
         c4.metric("Margem de Lucro", f"{margem:.1f}%")
         
         st.divider()
-        
-        # --- GRÁFICOS ---
         tab_graf1, tab_graf2 = st.tabs(["📊 Evolução Mensal", "🗂️ Composição de Gastos"])
         
         with tab_graf1:
-            # Gráfico de Barras Duplas
             fig_evol = px.bar(mensal, x='Mes', y=['Entrada', 'Despesa'], 
                               barmode='group', title="Comparativo: Geração de Valor vs Custo",
                               color_discrete_map={'Entrada': '#4CAF50', 'Despesa': '#F44336'},
@@ -630,7 +760,6 @@ elif menu == "📈 Balanço Anual":
             fig_evol.update_layout(legend_title_text='Fluxo')
             st.plotly_chart(fig_evol, use_container_width=True)
             
-            # Gráfico de Linha Acumulada
             fig_acum = px.area(mensal, x='Mes', y='Acumulado', title="Fluxo de Caixa Acumulado (Patrimônio Disponível)",
                                color_discrete_sequence=['#2196F3'], markers=True)
             st.plotly_chart(fig_acum, use_container_width=True)
@@ -659,8 +788,11 @@ elif menu == "📈 Balanço Anual":
 elif menu == "🔀 Otimização de Pagamentos":
     st.header("🔀 Otimização de Pagamentos")
     df_mes = fetch_dataframe("SELECT * FROM lancamentos WHERE EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s", (mes_selecionado, ano_selecionado))
+    
     if not df_mes.empty:
         df_e, df_d = df_mes[df_mes['tipo'] == 'Entrada'].copy(), df_mes[df_mes['tipo'] == 'Despesa'].copy()
+        
+        # Aglutinação visual de plantões
         mask_p = df_e['descricao'].str.contains('Plantão', na=False)
         if mask_p.any():
             df_plantoes = df_e[mask_p].copy()
@@ -668,14 +800,17 @@ elif menu == "🔀 Otimização de Pagamentos":
             for (sub, data), grupo in df_plantoes.groupby(['subgrupo', 'data_vencimento']):
                 df_e = pd.concat([df_e, pd.DataFrame([{'descricao': f'🏥 Plantões {sub}', 'valor': grupo['valor'].sum(), 'data_vencimento': data, 'subgrupo': sub, 'prioridade': 'Baixa 🟢'}])], ignore_index=True)
 
+        # Fundo de provisão estrito à Produção (Radioclim/Humana)
         df_e['is_prov_hr'] = df_e['descricao'].str.contains(r'Produção\s+(?:Radioclim|Humana)|Producao\s+(?:Radioclim|Humana)', case=False, na=False)
         df_hr, df_outras = df_e[df_e['is_prov_hr']].copy(), df_e[~df_e['is_prov_hr']].copy()
 
+        # Fatura Consolidada
         mask_c = df_d['forma_pagamento'] == 'Crédito'
         if mask_c.any():
             sum_c = df_d[mask_c]['valor'].sum()
             df_d = pd.concat([df_d[~mask_c], pd.DataFrame([{'id': -1, 'descricao': '💳 Cartão de Crédito', 'valor': sum_c, 'data_vencimento': datetime.date(ano_selecionado, mes_selecionado, 10), 'prioridade': 'Alta 🔴'}])], ignore_index=True)
             
+        # Classificação de Despesas: Normais vs Provisões
         df_d['is_prov'] = df_d['descricao'].str.contains(r'\(Provisão\)', case=False, na=False)
         fila_normais = df_d[~df_d['is_prov']].to_dict('records')
         fila_provisoes = df_d[df_d['is_prov']].to_dict('records')
@@ -723,6 +858,7 @@ elif menu == "🔀 Otimização de Pagamentos":
                     c2.metric("Saldo Sobrante", f"R$ {format_brl(saldo)}")
                 else: st.info("Sem provisões pendentes.")
                 st.divider()
+        else: st.warning("Produção Radioclim ou Humana não encontradas nas entradas deste mês.")
 
 # =================================================================
 # 11. MÓDULO 5: ESCALA VISUAL DE PLANTÕES
@@ -777,7 +913,7 @@ elif menu == "🏥 Escala de Plantões":
                 ids = tuple(df_geren['id'].tolist())
                 if ids:
                     if len(ids) == 1: execute_query("DELETE FROM lancamentos WHERE id = %s", (ids[0],))
-                    else: execute_query(f"DELETE FROM lancamentos WHERE id IN %s", (ids,))
+                    else: execute_query("DELETE FROM lancamentos WHERE id IN %s", (ids,))
                     st.rerun()
     else: st.info("Sem plantões registrados.")
 
@@ -788,7 +924,7 @@ elif menu == "🏥 Escala de Plantões":
 
     st.divider()
     st.subheader("➕ Adicionar à Escala")
-    modo = st.radio("Modo", ["Dia Específico", "Plantões Fixos na Semana (Recorrente)"], horizontal=True)
+    modo = st.radio("Modo", ["Dia Específico", "Plantões Fixos na Semana"], horizontal=True)
     locais_dyn = list(set([item for sublist in ESTRUTURA["Entrada"].values() for item in sublist]))
     with st.container(border=True):
         c1, c2 = st.columns(2)
