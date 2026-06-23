@@ -289,9 +289,9 @@ if menu == "🏠 Início":
         "SELECT * FROM lancamentos WHERE tipo = 'Despesa' AND pago = 0 AND data_vencimento BETWEEN %s AND %s ORDER BY data_vencimento ASC", 
         (hoje, data_fim)
     )
-    # 2. Plantões na semana
+    # 2. Plantões na semana (Corrigido com escape literal '%%')
     df_plantao = fetch_dataframe(
-        "SELECT * FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE 'Plantão %' AND data_vencimento BETWEEN %s AND %s", 
+        "SELECT * FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE 'Plantão %%' AND data_vencimento BETWEEN %s AND %s", 
         (hoje, data_fim)
     )
     
