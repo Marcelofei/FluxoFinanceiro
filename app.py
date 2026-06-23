@@ -32,37 +32,48 @@ def get_connection():
         st.stop()
 
 def execute_query(query, params=None, fetch=False):
-    try:
-        conn = get_connection()
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            if fetch: return cur.fetchall()
-    except (psycopg2.OperationalError, psycopg2.InterfaceError):
-        st.cache_resource.clear()
-        conn = get_connection()
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            if fetch: return cur.fetchall()
+    for attempt in range(2):
+        try:
+            conn = get_connection()
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                if fetch: return cur.fetchall()
+                return None
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            if attempt == 0:
+                get_connection.clear()
+                continue
+            st.error(f"Falha persistente de I/O com o banco: {e}")
+            st.stop()
 
 def execute_values_query(query, params_list):
-    try:
-        conn = get_connection()
-        with conn.cursor() as cur:
-            execute_values(cur, query, params_list)
-    except (psycopg2.OperationalError, psycopg2.InterfaceError):
-        st.cache_resource.clear()
-        conn = get_connection()
-        with conn.cursor() as cur:
-            execute_values(cur, query, params_list)
+    for attempt in range(2):
+        try:
+            conn = get_connection()
+            with conn.cursor() as cur:
+                execute_values(cur, query, params_list)
+                return
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            if attempt == 0:
+                get_connection.clear()
+                continue
+            st.error(f"Falha persistente de I/O (Lote): {e}")
+            st.stop()
 
 def fetch_dataframe(query, params=None):
-    try:
-        conn = get_connection()
-        return pd.read_sql_query(query, conn, params=params)
-    except Exception:
-        st.cache_resource.clear()
-        conn = get_connection()
-        return pd.read_sql_query(query, conn, params=params)
+    for attempt in range(2):
+        try:
+            conn = get_connection()
+            return pd.read_sql_query(query, conn, params=params)
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            if attempt == 0:
+                get_connection.clear()
+                continue
+            st.error("Falha persistente de leitura do banco de dados.")
+            st.stop()
+        except Exception as e:
+            st.error(f"Erro de sintaxe/semântica SQL: {e}")
+            return pd.DataFrame()
 
 @st.cache_resource
 def init_db():
@@ -121,9 +132,17 @@ def check_password():
 
 def parse_valor(valor_str):
     if isinstance(valor_str, (float, int)): return float(valor_str)
-    clean_val = str(valor_str).replace('.', '').replace(',', '.')
-    try: return float(clean_val)
-    except ValueError: return 0.0
+    v_str = str(valor_str).strip()
+    if not v_str: return 0.0
+    
+    if '.' in v_str and ',' in v_str:
+        v_str = v_str.replace('.', '').replace(',', '.')
+    elif ',' in v_str:
+        v_str = v_str.replace(',', '.')
+    try: 
+        return float(v_str)
+    except ValueError: 
+        return 0.0
 
 def format_brl(valor):
     if pd.isna(valor): return "0,00"
@@ -141,6 +160,7 @@ init_db()
 # 4. ESTRUTURAS DINÂMICAS E CONSTANTES
 # =================================================================
 
+@st.cache_data(ttl=600)
 def get_estrutura_dinamica():
     estrutura = {"Entrada": {}, "Despesa": {}}
     try:
@@ -238,6 +258,7 @@ if menu == "📝 Lançamentos":
                                       (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt))
                     else:
                         execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo) VALUES (%s, %s, %s)", (ntipo, ncat.strip(), nsub.strip()))
+                    get_estrutura_dinamica.clear()
                     st.success("Adicionado com sucesso!")
                     st.rerun()
                     
@@ -270,6 +291,7 @@ if menu == "📝 Lançamentos":
                             execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s WHERE id=%s", (new_cat, new_sub, sel_edit))
                         
                         execute_query("UPDATE lancamentos SET categoria=%s, subgrupo=%s WHERE tipo=%s AND categoria=%s AND subgrupo=%s", (new_cat, new_sub, nó['tipo'], nó['categoria'], nó['subgrupo']))
+                        get_estrutura_dinamica.clear()
                         st.success("Atualizado com sucesso.")
                         st.rerun()
             else: st.info("Nenhuma categoria encontrada.")
@@ -279,6 +301,7 @@ if menu == "📝 Lançamentos":
                 sel_del = st.selectbox("Selecione o item para excluir:", options=[None] + list(opcoes_edit.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_edit[x])
                 if sel_del and st.button("🗑️ Excluir Selecionado", type="primary"):
                     execute_query("DELETE FROM categorias_personalizadas WHERE id = %s", (sel_del,))
+                    get_estrutura_dinamica.clear()
                     st.success("Excluído com sucesso!")
                     st.rerun()
 
@@ -375,7 +398,6 @@ elif menu == "📊 Fluxo e Prioridades":
         df_view['Pago'] = df_view['pago'].astype(bool)
         df_view['Data'] = pd.to_datetime(df_view['data_vencimento']).dt.date
         
-        # Adicionar info de parcelas na descrição de exibição
         def format_desc(row):
             if pd.notna(row.get('total_parcelas')) and row['total_parcelas'] > 1 and row['total_parcelas'] != 999:
                 return f"{row['descricao']} ({int(row['parcela_atual'])}/{int(row['total_parcelas'])})"
@@ -402,6 +424,15 @@ elif menu == "📊 Fluxo e Prioridades":
         
         if st.button("Salvar Alterações Rápidas", type="primary"):
             for i, row in edit_df.iterrows():
+                # Curto-circuito de I/O: Ignora transações em linhas que não foram manipuladas
+                pago_mod = bool(row['Pago']) != bool(df_view.loc[i, 'Pago'])
+                val_mod = float(row['valor']) != float(df_view.loc[i, 'valor'])
+                val_pago_mod = float(row['valor_pago'] if pd.notna(row['valor_pago']) else 0.0) != float(df_view.loc[i, 'valor_pago'])
+                del_mod = row['🗑️ Este'] or row['🗑️ Futuros']
+                
+                if not (pago_mod or val_mod or val_pago_mod or del_mod):
+                    continue
+
                 id_s = str(df_view.loc[i, 'id'])
                 novo_pago = 1 if row['Pago'] else 0
                 velho_valor = float(df_view.loc[i, 'valor'])
@@ -412,7 +443,6 @@ elif menu == "📊 Fluxo e Prioridades":
                 novo_valor_pago = float(row['valor_pago']) if pd.notna(row['valor_pago']) else 0.0
                 delta_pago = novo_valor_pago - velho_valor_pago
                 
-                # Regra Inteligente de preenchimento para médico ocupado
                 if novo_pago == 1 and novo_valor_pago == 0.0:
                     novo_valor_pago = novo_valor
                     delta_pago = novo_valor - velho_valor_pago
@@ -634,7 +664,6 @@ elif menu == "📈 Balanço Anual":
         df_ano['valor_pago'] = df_ano['valor_pago'].fillna(0.0).astype(float)
         df_ano['mes_num'] = pd.to_datetime(df_ano['data_vencimento']).dt.month
         
-        # Consolida balanço mensal baseado no que foi efetivamente pago/recebido
         mensal = df_ano.groupby(['mes_num', 'tipo'])['valor_pago'].sum().unstack(fill_value=0).reset_index()
         for col in ['Entrada', 'Despesa']:
             if col not in mensal.columns: mensal[col] = 0.0
@@ -698,7 +727,6 @@ elif menu == "🔀 Otimização de Pagamentos":
     if not df_mes.empty:
         df_e, df_d = df_mes[df_mes['tipo'] == 'Entrada'].copy(), df_mes[df_mes['tipo'] == 'Despesa'].copy()
         
-        # Aglutinação visual de plantões
         mask_p = df_e['descricao'].str.contains('Plantão', na=False)
         if mask_p.any():
             df_plantoes = df_e[mask_p].copy()
@@ -706,17 +734,14 @@ elif menu == "🔀 Otimização de Pagamentos":
             for (sub, data), group in df_plantoes.groupby(['subgrupo', 'data_vencimento']):
                 df_e = pd.concat([df_e, pd.DataFrame([{'descricao': f'🏥 Plantões {sub}', 'valor': group['valor'].sum(), 'data_vencimento': data, 'subgrupo': sub, 'prioridade': 'Baixa 🟢'}])], ignore_index=True)
 
-        # Fundo de provisão estrito à Produção (Radioclim/Humana)
         df_e['is_prov_hr'] = df_e['descricao'].str.contains(r'Produção\s+(?:Radioclim|Humana)|Producao\s+(?:Radioclim|Humana)', case=False, na=False)
         df_hr, df_outras = df_e[df_e['is_prov_hr']].copy(), df_e[~df_e['is_prov_hr']].copy()
 
-        # Fatura Consolidada
         mask_c = df_d['forma_pagamento'] == 'Crédito'
         if mask_c.any():
             sum_c = df_d[mask_c]['valor'].sum()
             df_d = pd.concat([df_d[~mask_c], pd.DataFrame([{'id': -1, 'descricao': '💳 Cartão de Crédito', 'valor': sum_c, 'data_vencimento': datetime.date(ano_selecionado, mes_selecionado, 10), 'prioridade': 'Alta 🔴'}])], ignore_index=True)
             
-        # Classificação de Despesas: Normais vs Provisões
         df_d['is_prov'] = df_d['descricao'].str.contains(r'\(Provisão\)', case=False, na=False)
         fila_normais = df_d[~df_d['is_prov']].to_dict('records')
         fila_provisoes = df_d[df_d['is_prov']].to_dict('records')
