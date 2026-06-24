@@ -335,6 +335,10 @@ if menu == "🏠 Início":
 # 9. MÓDULO: GERENCIAR CATEGORIAS E RECORRÊNCIAS
 # =================================================================
 
+# =================================================================
+# 8. MÓDULO: GERENCIAR CATEGORIAS E RECORRÊNCIAS
+# =================================================================
+
 elif menu == "⚙️ Gerenciar Categorias":
     st.header("⚙️ Gerenciar Categorias e Contratos Recorrentes")
     df_custom_global = fetch_dataframe("SELECT * FROM categorias_personalizadas")
@@ -344,27 +348,27 @@ elif menu == "⚙️ Gerenciar Categorias":
         c_add1, c_add2 = st.columns(2)
         with c_add1:
             ntipo = st.radio("Para qual tipo?", ["Despesa", "Entrada"], horizontal=True, key="add_tipo")
-            ncat = st.text_input("Nome da Categoria (Nova ou Existente)", placeholder="Ex: Valores Fixos")
-            n_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)")
+            ncat = st.text_input("Nome da Categoria (Nova ou Existente)", placeholder="Ex: Valores Fixos", key="add_cat_input")
+            n_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)", key="add_rec_check")
         with c_add2:
-            nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Hospital Trauma")
+            nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Hospital Trauma", key="add_sub_input")
             if ntipo == "Despesa":
-                n_env = st.checkbox("⚖️ Tornar esta categoria um 'Envelope Virtual' (Teto para despesas variáveis)")
+                n_env = st.checkbox("⚖️ Tornar esta categoria um 'Envelope Virtual' (Teto para despesas variáveis)", key="add_env_check")
             else:
                 n_env = False
-            if n_rec: n_dt_start = st.date_input("Data de Início do Contrato", value=data_contexto_ativo)
+            if n_rec: n_dt_start = st.date_input("Data de Início do Contrato", value=data_contexto_ativo, key="add_dt_input")
         
         if ntipo == "Entrada" or n_rec or n_env:
             st.markdown("---")
             st.markdown("##### ⚙️ Parâmetros de Padrão e Recorrência")
             c_opt1, c_opt2, c_opt3 = st.columns(3)
-            v_opt = c_opt1.number_input("Valor Padrão (R$)", min_value=0.0, step=50.0, value=0.0)
-            a_opt = c_opt2.number_input("Atraso (Meses) - Útil p/ Plantões", min_value=0, max_value=6, value=1 if ntipo=="Entrada" else 0)
-            d_opt = c_opt3.number_input("Dia de Pagamento/Vencimento", min_value=1, max_value=31, value=10)
+            v_opt = c_opt1.number_input("Valor Padrão (R$)", min_value=0.0, step=50.0, value=0.0, key="add_vopt_num")
+            a_opt = c_opt2.number_input("Atraso (Meses) - Útil p/ Plantões", min_value=0, max_value=6, value=1 if ntipo=="Entrada" else 0, key="add_aopt_num")
+            d_opt = c_opt3.number_input("Dia de Pagamento/Vencimento", min_value=1, max_value=31, value=10, key="add_dopt_num")
         else:
             v_opt, a_opt, d_opt = 0.0, 0, 10
 
-        if st.button("Salvar Nova Categoria/Subgrupo", type="primary"):
+        if st.button("Salvar Nova Categoria/Subgrupo", type="primary", key="add_save_btn"):
             if not ncat.strip(): st.error("O nome da Categoria é obrigatório.")
             else:
                 is_rec_val = 1 if n_rec else 0
@@ -373,6 +377,46 @@ elif menu == "⚙️ Gerenciar Categorias":
                 execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, data_inicio, is_envelope) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", 
                               (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt, is_rec_val, dt_start_val, is_env_val))
                 st.success("Adicionado com sucesso!"); st.rerun()
+                
+    with tab_edit:
+        if not df_custom_global.empty:
+            opcoes_edit_local = {r['id']: f"{r['tipo']} ➔ {r['categoria']} ➔ {r['subgrupo']}" for _, r in df_custom_global.iterrows()}
+            sel_edit = st.selectbox("Selecione o item para editar:", options=[None] + list(opcoes_edit_local.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_edit_local[x], key="edit_select_target")
+            if sel_edit:
+                nó = df_custom_global[df_custom_global['id'] == sel_edit].iloc[0]
+                c_ed_n1, c_ed_n2 = st.columns(2)
+                with c_ed_n1: new_cat = st.text_input("Nova Categoria", value=nó['categoria'], key="edit_cat_input")
+                with c_ed_n2: new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if pd.notna(nó['subgrupo']) else "", key="edit_sub_input")
+                
+                e_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)", value=bool(nó['is_recorrente'] == 1), key="edit_rec_check")
+                e_env = st.checkbox("⚖️ Tornar esta categoria um 'Envelope Virtual'", value=bool(nó['is_envelope'] == 1), key="edit_env_check") if nó['tipo'] == 'Despesa' else False
+                
+                if nó['tipo'] == "Entrada" or e_rec or e_env:
+                    st.markdown("---")
+                    st.markdown("##### ⚙️ Parâmetros de Padrão e Recorrência")
+                    c_opt_e1, c_opt_e2, c_opt_e3 = st.columns(3)
+                    v_edit = c_opt_e1.number_input("Valor Padrão (R$)", value=float(nó['valor_padrao']) if pd.notna(nó['valor_padrao']) else 0.0, key="edit_vopt_num")
+                    a_edit = c_opt_e2.number_input("Atraso (Meses)", value=int(nó['atraso_meses']) if pd.notna(nó['atraso_meses']) else (1 if nó['tipo']=="Entrada" else 0), key="edit_aopt_num")
+                    d_edit = c_opt_e3.number_input("Dia Pagamento", value=int(nó['dia_pagamento']) if pd.notna(nó['dia_pagamento']) else 10, key="edit_dopt_num")
+                else:
+                    v_edit = float(nó['valor_padrao']) if pd.notna(nó['valor_padrao']) else 0.0
+                    a_edit = int(nó['atraso_meses']) if pd.notna(nó['atraso_meses']) else 0
+                    d_edit = int(nó['dia_pagamento']) if pd.notna(nó['dia_pagamento']) else 10
+
+                if st.button("💾 Confirmar Edição", type="primary", key="edit_save_btn"):
+                    execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s, is_recorrente=%s, is_envelope=%s WHERE id=%s", 
+                                  (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, 1 if e_rec else 0, 1 if e_env else 0, sel_edit))
+                    execute_query("UPDATE lancamentos SET categoria=%s, subgrupo=%s WHERE tipo=%s AND categoria=%s AND subgrupo=%s", (new_cat, new_sub, nó['tipo'], nó['categoria'], nó['subgrupo']))
+                    st.success("Atualizado."); st.rerun()
+        else: st.info("Nenhuma categoria encontrada.")
+
+    with tab_del:
+        if not df_custom_global.empty:
+            opcoes_del_local = {r['id']: f"{r['tipo']} ➔ {r['categoria']} ➔ {r['subgrupo']}" for _, r in df_custom_global.iterrows()}
+            sel_del = st.selectbox("Selecione o item para excluir:", options=[None] + list(opcoes_del_local.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_del_local[x], key="del_select_target")
+            if sel_del and st.button("🗑️ Excluir Selecionado", type="primary", key="del_save_btn"):
+                execute_query("DELETE FROM categorias_personalizadas WHERE id = %s", (sel_del,))
+                st.success("Excluído!"); st.rerun()
                 
     with tab_edit:
         if not df_custom_global.empty:
