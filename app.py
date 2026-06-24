@@ -217,17 +217,18 @@ init_db()
 # =================================================================
 # 5B. IDENTIDADE VISUAL
 # =================================================================
-# Paleta (token system):
-#   Ink #1C2430        -> texto principal
-#   Ink-muted #5B6570   -> texto secundário, labels
-#   Paper #F7F8F6       -> fundo (definido também no .streamlit/config.toml)
-#   Paper-secondary #ECEEEA -> sidebar, cartões
-#   Steady #2F6F62      -> marca / "em dia" / saudável (cor primária do tema)
-#   Caution #C8862D     -> atenção
-#   Critical #B4453A    -> atrasado / estourado
-#   Border #D9DDD7
+# Paleta (token system) — tema escuro deliberado:
+#   Ink #E8EAED          -> texto principal (claro, sobre fundo escuro)
+#   Ink-muted #8B94A0    -> texto secundário, labels
+#   Base #12161B         -> fundo da página (definido também no .streamlit/config.toml)
+#   Surface #1B2127      -> cartões, métricas, conteúdo "elevado"
+#   Surface-sidebar #0E1216 -> sidebar (um tom mais escuro, recua visualmente)
+#   Steady #3FAE8D       -> marca / "em dia" / saudável (cor primária do tema)
+#   Caution #DDA251      -> atenção
+#   Critical #E0695C     -> atrasado / estourado
+#   Border #2A3138
 # Tipografia: Manrope (texto e títulos) + IBM Plex Mono (só para números/valores,
-# pra dar a sensação de "painel de ficha financeira" em vez de planilha genérica).
+# pra dar a sensação de "painel de ficha financeira" em vez de planilha genérica.
 
 def aplicar_estilo_visual():
     st.markdown("""
@@ -235,36 +236,30 @@ def aplicar_estilo_visual():
     @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
     /* -----------------------------------------------------------
-       FORÇA TEMA CLARO DE FORMA DEFINITIVA.
-       O Streamlit permite que cada navegador salve uma preferência
-       de tema (claro/escuro/sistema) que pode sobrepor o config.toml.
-       Para esse app ter uma identidade visual única e consistente
-       pra qualquer pessoa que abrir o link, sobrescrevemos tanto as
-       variáveis CSS internas quanto os contêineres principais.
+       FORÇA TEMA ESCURO DE FORMA DEFINITIVA.
+       Mesma lógica de antes, agora pro lado escuro: garante que
+       qualquer pessoa que abra o link veja a mesma identidade visual,
+       independente da preferência de tema salva no navegador dela.
        ----------------------------------------------------------- */
     :root, .stApp {
-        --background-color: #F7F8F6 !important;
-        --secondary-background-color: #ECEEEA !important;
-        --text-color: #1C2430 !important;
-        --primary-color: #2F6F62 !important;
+        --background-color: #12161B !important;
+        --secondary-background-color: #1B2127 !important;
+        --text-color: #E8EAED !important;
+        --primary-color: #3FAE8D !important;
     }
     html, body, .stApp,
     [data-testid="stAppViewContainer"],
     [data-testid="stMain"],
     [data-testid="stHeader"],
     .main {
-        background-color: #F7F8F6 !important;
+        background-color: #12161B !important;
     }
     [data-testid="stHeader"] {
         background-color: rgba(0,0,0,0) !important;
     }
     .stApp {
-        color: #1C2430;
+        color: #E8EAED;
     }
-    </style>
-    """, unsafe_allow_html=True)
-    st.markdown("""
-    <style>
 
     html, body, [class*="css"] {
         font-family: 'Manrope', sans-serif;
@@ -272,96 +267,95 @@ def aplicar_estilo_visual():
     h1, h2, h3, h4, h5, h6 {
         font-family: 'Manrope', sans-serif !important;
         font-weight: 700 !important;
-        color: #1C2430 !important;
+        color: #E8EAED !important;
         letter-spacing: -0.01em;
     }
 
     /* Métricas como cartões de "ficha" */
     div[data-testid="stMetric"], div[data-testid="metric-container"] {
-        background: #FFFFFF !important;
-        border: 1px solid #D9DDD7;
+        background: #1B2127 !important;
+        border: 1px solid #2A3138;
         border-radius: 14px;
         padding: 0.9rem 1.1rem 0.8rem 1.1rem;
-        box-shadow: 0 1px 2px rgba(28,36,48,0.05);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.35);
     }
     div[data-testid="stMetricValue"] {
         font-family: 'IBM Plex Mono', monospace !important;
         font-weight: 600 !important;
-        color: #1C2430 !important;
+        color: #E8EAED !important;
     }
     div[data-testid="stMetricLabel"] {
         font-weight: 600 !important;
-        color: #5B6570 !important;
+        color: #8B94A0 !important;
         font-size: 0.78rem !important;
         text-transform: uppercase;
         letter-spacing: 0.04em;
     }
     div[data-testid="stMetricLabel"] p {
-        color: #5B6570 !important;
+        color: #8B94A0 !important;
     }
 
     /* Texto geral de rótulos/legendas — cobre selectbox, checkbox, radio, inputs,
        captions e markdown comum, pra não depender da cor padrão do tema do navegador */
     .stApp label, .stApp .stMarkdown, .stApp .stMarkdown p,
-    .stApp [data-testid="stCaptionContainer"], .stApp [data-testid="stWidgetLabel"] p,
+    .stApp [data-testid="stWidgetLabel"] p,
     .stApp [data-testid="stWidgetLabel"] {
-        color: #1C2430 !important;
+        color: #E8EAED !important;
     }
     .stApp [data-testid="stCaptionContainer"] {
-        color: #5B6570 !important;
+        color: #8B94A0 !important;
     }
 
     /* Sidebar */
     section[data-testid="stSidebar"] {
-        background: #ECEEEA !important;
-        border-right: 1px solid #D9DDD7;
+        background: #0E1216 !important;
+        border-right: 1px solid #2A3138;
     }
     section[data-testid="stSidebar"] * {
-        color: #1C2430 !important;
+        color: #E8EAED !important;
     }
 
     /* -----------------------------------------------------------
        BOTÕES — regra agressiva e redundante de propósito.
-       O Streamlit pinta os botões "secondary" com cor vinda do tema
-       ativo do navegador, então usamos várias formas de seletor +
-       !important + wildcard nos elementos internos (o texto do botão
-       fica dentro de um <p>/<div> aninhado, então sobrescrever só o
-       <button> às vezes não basta).
+       O Streamlit pinta os botões com cor vinda do tema ativo do
+       navegador, então usamos várias formas de seletor + !important
+       + wildcard nos elementos internos (o texto do botão fica
+       dentro de um <p>/<div> aninhado).
        ----------------------------------------------------------- */
     .stButton button,
     .stButton button[kind="secondary"],
     .stButton button:not([kind="primary"]) {
-        background-color: #FFFFFF !important;
-        border: 1px solid #D9DDD7 !important;
-        color: #1C2430 !important;
+        background-color: #1B2127 !important;
+        border: 1px solid #2A3138 !important;
+        color: #E8EAED !important;
     }
     .stButton button *,
     .stButton button[kind="secondary"] *,
     .stButton button:not([kind="primary"]) * {
-        color: #1C2430 !important;
+        color: #E8EAED !important;
     }
     .stButton button:hover,
     .stButton button:not([kind="primary"]):hover {
-        background-color: #ECEEEA !important;
-        border-color: #2F6F62 !important;
-        color: #1C2430 !important;
+        background-color: #20262C !important;
+        border-color: #3FAE8D !important;
+        color: #E8EAED !important;
     }
 
     .stButton button[kind="primary"] {
-        background-color: #2F6F62 !important;
-        border: 1px solid #2F6F62 !important;
-        color: #FFFFFF !important;
+        background-color: #3FAE8D !important;
+        border: 1px solid #3FAE8D !important;
+        color: #0E1216 !important;
     }
     .stButton button[kind="primary"] * {
-        color: #FFFFFF !important;
+        color: #0E1216 !important;
     }
     .stButton button[kind="primary"]:hover {
-        background-color: #244F45 !important;
-        border-color: #244F45 !important;
-        color: #FFFFFF !important;
+        background-color: #379A7C !important;
+        border-color: #379A7C !important;
+        color: #0E1216 !important;
     }
     .stButton button[kind="primary"]:hover * {
-        color: #FFFFFF !important;
+        color: #0E1216 !important;
     }
 
     section[data-testid="stSidebar"] .stButton button {
@@ -378,7 +372,7 @@ def aplicar_estilo_visual():
         font-weight: 700;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: #5B6570 !important;
+        color: #8B94A0 !important;
         margin: 1.1rem 0 0.4rem 0.15rem;
     }
 
@@ -388,21 +382,48 @@ def aplicar_estilo_visual():
     }
     .stTabs [data-baseweb="tab"] {
         font-weight: 600;
-        color: #5B6570 !important;
+        color: #8B94A0 !important;
     }
     .stTabs [data-baseweb="tab"] p {
-        color: #5B6570 !important;
+        color: #8B94A0 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #3FAE8D !important;
+    }
+    .stTabs [aria-selected="true"] p {
+        color: #3FAE8D !important;
     }
 
     /* Tabelas */
     div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
         border-radius: 10px;
         overflow: hidden;
+        border: 1px solid #2A3138;
+    }
+
+    /* Containers usados como "cartão" (formulários, edição estrutural) */
+    div[data-testid="stExpander"], div[data-testid="stForm"] {
+        border: 1px solid #2A3138 !important;
+        border-radius: 12px !important;
+        background: #1B2127 !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
 aplicar_estilo_visual()
+
+def aplicar_tema_grafico(fig):
+    """Aplica o fundo e a tipografia do tema escuro a qualquer gráfico Plotly,
+    pra não aparecer um retângulo branco no meio do painel escuro."""
+    fig.update_layout(
+        paper_bgcolor="#1B2127",
+        plot_bgcolor="#1B2127",
+        font=dict(family="Manrope, sans-serif", color="#E8EAED"),
+        legend=dict(font=dict(color="#E8EAED")),
+        xaxis=dict(gridcolor="#2A3138", linecolor="#2A3138", color="#8B94A0"),
+        yaxis=dict(gridcolor="#2A3138", linecolor="#2A3138", color="#8B94A0"),
+    )
+    return fig
 
 # =================================================================
 # 6. ESTRUTURAS DINÂMICAS E CONSTANTES
@@ -431,8 +452,8 @@ prioridades_map = {"Alta 🔴": 0, "Média 🟡": 1, "Baixa 🟢": 2}
 # =================================================================
 
 st.sidebar.markdown(
-    "<div style='font-weight:800; font-size:1.05rem; color:#1C2430; margin-bottom:0.2rem;'>💰 Gestão Financeira</div>"
-    "<div style='font-size:0.8rem; color:#5B6570; margin-bottom:0.4rem;'>Painel de controle financeiro</div>",
+    "<div style='font-weight:800; font-size:1.05rem; color:#E8EAED; margin-bottom:0.2rem;'>💰 Gestão Financeira</div>"
+    "<div style='font-size:0.8rem; color:#8B94A0; margin-bottom:0.4rem;'>Painel de controle financeiro</div>",
     unsafe_allow_html=True
 )
 st.sidebar.divider()
@@ -549,11 +570,14 @@ if menu == "🏠 Início":
 
         def _cor_linha_status(row):
             if row['Status'] == '✅ Pago':
-                return ['background-color: #E3EEEA; color: #1C2430'] * len(row)
-            return ['background-color: #F6EBDA; color: #1C2430'] * len(row)
+                return ['background-color: #17241E; color: #E8EAED'] * len(row)
+            return ['background-color: #29241A; color: #E8EAED'] * len(row)
 
-        df_7d_view = df_7d[['Data', 'tipo', 'descricao', 'valor', 'Status']]
-        st.dataframe(df_7d_view.style.apply(_cor_linha_status, axis=1), use_container_width=True, hide_index=True)
+        df_7d_view = df_7d[['Data', 'tipo', 'descricao', 'valor', 'Status']].rename(
+            columns={'tipo': 'Tipo', 'descricao': 'Descrição', 'valor': 'Valor'}
+        )
+        estilo_7d = df_7d_view.style.apply(_cor_linha_status, axis=1).format({'Valor': lambda v: f"R$ {format_brl(v)}"})
+        st.dataframe(estilo_7d, use_container_width=True, hide_index=True)
 
 # =================================================================
 # 9. MÓDULO: GERENCIAR CATEGORIAS E RECORRÊNCIAS
@@ -951,7 +975,7 @@ elif menu == "📑 Demonstrativo":
                 df_grp = df_d.groupby('categoria')['valor'].sum().reset_index()
                 fig = px.pie(df_grp, values='valor', names='categoria', hole=0.4)
                 fig.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(aplicar_tema_grafico(fig), use_container_width=True)
 
             def exibir_demonstrativo(dataframe):
                 if dataframe.empty: return
@@ -964,8 +988,8 @@ elif menu == "📑 Demonstrativo":
 
                 def _cor_linha_demonstrativo(row):
                     if row['Status'] == '✅ Pago':
-                        return ['background-color: #E3EEEA; color: #1C2430'] * len(row)
-                    return ['background-color: #F6EBDA; color: #1C2430'] * len(row)
+                        return ['background-color: #17241E; color: #E8EAED'] * len(row)
+                    return ['background-color: #29241A; color: #E8EAED'] * len(row)
 
                 estilo = tabela.style.apply(_cor_linha_demonstrativo, axis=1).format({
                     'Planejado': lambda v: f"R$ {format_brl(v)}",
@@ -1037,10 +1061,10 @@ elif menu == "📑 Demonstrativo":
 
                 def _cor_linha_envelope(row):
                     if row['Métrica de Saúde'].startswith('🔴'):
-                        return ['background-color: #F5E3E0; color: #1C2430'] * len(row)
+                        return ['background-color: #2A1B19; color: #E8EAED'] * len(row)
                     if row['Métrica de Saúde'].startswith('🟡'):
-                        return ['background-color: #F6EBDA; color: #1C2430'] * len(row)
-                    return ['background-color: #E3EEEA; color: #1C2430'] * len(row)
+                        return ['background-color: #29241A; color: #E8EAED'] * len(row)
+                    return ['background-color: #17241E; color: #E8EAED'] * len(row)
 
                 estilo_env = df_matriz.style.apply(_cor_linha_envelope, axis=1).format({
                     'Orçamento Inicial (Teto)': lambda v: f"R$ {format_brl(v)}",
@@ -1101,14 +1125,14 @@ elif menu == "📈 Balanço Anual":
             with tab_graf1:
                 fig_evol = px.bar(mensal, x='Mes', y=['Entrada', 'Despesa'],
                                   barmode='group', title="Balanço FP&A Híbrido (Realizado + Projetado)",
-                                  color_discrete_map={'Entrada': '#2F6F62', 'Despesa': '#B4453A'},
+                                  color_discrete_map={'Entrada': '#3FAE8D', 'Despesa': '#E0695C'},
                                   labels={'value': 'Valor (R$)', 'variable': 'Fluxo'})
                 fig_evol.update_layout(legend_title_text='Fluxo')
-                st.plotly_chart(fig_evol, use_container_width=True)
+                st.plotly_chart(aplicar_tema_grafico(fig_evol), use_container_width=True)
 
                 fig_acum = px.area(mensal, x='Mes', y='Acumulado', title="Fluxo de Caixa Acumulado (Híbrido)",
-                                   color_discrete_sequence=['#2196F3'], markers=True)
-                st.plotly_chart(fig_acum, use_container_width=True)
+                                   color_discrete_sequence=['#3FAE8D'], markers=True)
+                st.plotly_chart(aplicar_tema_grafico(fig_acum), use_container_width=True)
 
             with tab_graf2:
                 col_d1, col_d2 = st.columns(2)
@@ -1117,15 +1141,15 @@ elif menu == "📈 Balanço Anual":
                     df_desp_ano = df_ano[df_ano['tipo'] == 'Despesa'].groupby('categoria')['hibrido_fpa'].sum().reset_index()
                     fig_pie_d = px.pie(df_desp_ano, values='hibrido_fpa', names='categoria', hole=0.5)
                     fig_pie_d.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig_pie_d, use_container_width=True)
+                    st.plotly_chart(aplicar_tema_grafico(fig_pie_d), use_container_width=True)
                 with col_d2:
                     st.subheader("Maiores Centros de Custo (Subgrupos)")
                     df_sub_ano = df_ano[df_ano['tipo'] == 'Despesa'].groupby('subgrupo')['hibrido_fpa'].sum().sort_values(ascending=False).head(12).reset_index()
                     fig_sub = px.bar(df_sub_ano, x='hibrido_fpa', y='subgrupo', orientation='h',
                                      title="Top 12 Centros de Custo do Ano",
-                                     color='hibrido_fpa', color_continuous_scale='Reds')
+                                     color='hibrido_fpa', color_continuous_scale=['#29241A', '#DDA251', '#E0695C'])
                     fig_sub.update_layout(yaxis={'categoryorder':'total ascending'})
-                    st.plotly_chart(fig_sub, use_container_width=True)
+                    st.plotly_chart(aplicar_tema_grafico(fig_sub), use_container_width=True)
 
 # =================================================================
 # 14. MÓDULO 4: OTIMIZAÇÃO DE PAGAMENTOS (RESTAURADO)
@@ -1220,18 +1244,18 @@ elif menu == "🏥 Escala de Plantões":
         df_m_cal = df_t[(pd.to_datetime(df_t['d_p']).dt.month == cal_mes) & (pd.to_datetime(df_t['d_p']).dt.year == cal_ano)].copy()
 
     cols = st.columns(7)
-    for i, dia in enumerate(["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]): cols[i].markdown(f"<div style='text-align: center; font-weight: 700; padding: 6px; font-family: Manrope, sans-serif; color:#5B6570; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; border-bottom: 2px solid #2F6F62;'>{dia}</div>", unsafe_allow_html=True)
+    for i, dia in enumerate(["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]): cols[i].markdown(f"<div style='text-align: center; font-weight: 700; padding: 6px; font-family: Manrope, sans-serif; color:#8B94A0; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; border-bottom: 2px solid #3FAE8D;'>{dia}</div>", unsafe_allow_html=True)
     for week in calendar.monthcalendar(cal_ano, cal_mes):
         w_cols = st.columns(7)
         for i, day in enumerate(week):
             with w_cols[i]:
                 if day != 0:
                     cd = datetime.date(cal_ano, cal_mes, day)
-                    bg = "background-color: rgba(47, 111, 98, 0.08);" if cd == hoje else "background-color: #FFFFFF;"
-                    brdr = "border: 2px solid #2F6F62;" if cd == hoje else "border: 1px solid #D9DDD7;"
-                    html = f"<div style='{bg} {brdr} border-radius: 10px; padding: 6px; min-height: 90px; margin-top: 6px;'><div style='text-align:right; font-weight:600; font-family: Manrope, sans-serif; color:#1C2430; font-size:0.85rem;'>{day}</div>"
+                    bg = "background-color: rgba(63, 174, 141, 0.14);" if cd == hoje else "background-color: #1B2127;"
+                    brdr = "border: 2px solid #3FAE8D;" if cd == hoje else "border: 1px solid #2A3138;"
+                    html = f"<div style='{bg} {brdr} border-radius: 10px; padding: 6px; min-height: 90px; margin-top: 6px;'><div style='text-align:right; font-weight:600; font-family: Manrope, sans-serif; color:#E8EAED; font-size:0.85rem;'>{day}</div>"
                     if not df_m_cal.empty:
-                        for _, s in df_m_cal[df_m_cal['d_p'] == cd].iterrows(): html += f"<div style='background-color:#2F6F62; color:white; font-size:10px; padding:2px 4px; border-radius:4px; margin-top:2px; white-space:nowrap; overflow:hidden;'>🏥 {s['subgrupo']}</div>"
+                        for _, s in df_m_cal[df_m_cal['d_p'] == cd].iterrows(): html += f"<div style='background-color:#3FAE8D; color:#0E1216; font-size:10px; font-weight:600; padding:2px 4px; border-radius:4px; margin-top:2px; white-space:nowrap; overflow:hidden;'>🏥 {s['subgrupo']}</div>"
                     st.markdown(html + "</div>", unsafe_allow_html=True)
 
     st.divider()
