@@ -210,9 +210,111 @@ def format_brl(valor):
 # 5. CONFIGURAÇÃO DA PÁGINA
 # =================================================================
 
-st.set_page_config(page_title="Gestão Financeira", layout="wide")
+st.set_page_config(page_title="Gestão Financeira", layout="wide", page_icon="💰")
 if not check_password(): st.stop()
 init_db()
+
+# =================================================================
+# 5B. IDENTIDADE VISUAL
+# =================================================================
+# Paleta (token system):
+#   Ink #1C2430        -> texto principal
+#   Ink-muted #5B6570   -> texto secundário, labels
+#   Paper #F7F8F6       -> fundo (definido também no .streamlit/config.toml)
+#   Paper-secondary #ECEEEA -> sidebar, cartões
+#   Steady #2F6F62      -> marca / "em dia" / saudável (cor primária do tema)
+#   Caution #C8862D     -> atenção
+#   Critical #B4453A    -> atrasado / estourado
+#   Border #D9DDD7
+# Tipografia: Manrope (texto e títulos) + IBM Plex Mono (só para números/valores,
+# pra dar a sensação de "painel de ficha financeira" em vez de planilha genérica).
+
+def aplicar_estilo_visual():
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Manrope', sans-serif;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Manrope', sans-serif !important;
+        font-weight: 700 !important;
+        color: #1C2430 !important;
+        letter-spacing: -0.01em;
+    }
+
+    /* Métricas como cartões de "ficha" */
+    div[data-testid="stMetric"], div[data-testid="metric-container"] {
+        background: #FFFFFF;
+        border: 1px solid #D9DDD7;
+        border-radius: 14px;
+        padding: 0.9rem 1.1rem 0.8rem 1.1rem;
+        box-shadow: 0 1px 2px rgba(28,36,48,0.05);
+    }
+    div[data-testid="stMetricValue"] {
+        font-family: 'IBM Plex Mono', monospace !important;
+        font-weight: 600 !important;
+        color: #1C2430 !important;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-weight: 600 !important;
+        color: #5B6570 !important;
+        font-size: 0.78rem !important;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background: #ECEEEA;
+        border-right: 1px solid #D9DDD7;
+    }
+    section[data-testid="stSidebar"] .stButton button {
+        width: 100%;
+        text-align: left;
+        justify-content: flex-start;
+        border-radius: 8px;
+        font-weight: 500;
+        padding: 0.45rem 0.8rem;
+    }
+    .nav-eyebrow {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #5B6570;
+        margin: 1.1rem 0 0.4rem 0.15rem;
+    }
+
+    /* Botão primário (ação principal / item de menu ativo) */
+    .stButton button[kind="primary"] {
+        background-color: #2F6F62;
+        border-color: #2F6F62;
+    }
+    .stButton button[kind="primary"]:hover {
+        background-color: #244F45;
+        border-color: #244F45;
+    }
+
+    /* Abas */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 4px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        font-weight: 600;
+        color: #5B6570;
+    }
+
+    /* Tabelas */
+    div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
+        border-radius: 10px;
+        overflow: hidden;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+aplicar_estilo_visual()
 
 # =================================================================
 # 6. ESTRUTURAS DINÂMICAS E CONSTANTES
@@ -240,26 +342,48 @@ prioridades_map = {"Alta 🔴": 0, "Média 🟡": 1, "Baixa 🟢": 2}
 # 7. SIDEBAR E FILTROS GLOBAL
 # =================================================================
 
-st.sidebar.title("Navegação")
-menu = st.sidebar.radio("Módulo:", [
-    "🏠 Início",
-    "📝 Lançamentos",
-    "⚙️ Gerenciar Categorias",
-    "📊 Fluxo e Prioridades",
-    "📑 Demonstrativo",
-    "📈 Balanço Anual",
-    "🔀 Otimização de Pagamentos",
-    "🏥 Escala de Plantões"
-])
+st.sidebar.markdown(
+    "<div style='font-weight:800; font-size:1.05rem; color:#1C2430; margin-bottom:0.2rem;'>💰 Gestão Financeira</div>"
+    "<div style='font-size:0.8rem; color:#5B6570; margin-bottom:0.4rem;'>Painel de controle financeiro</div>",
+    unsafe_allow_html=True
+)
 st.sidebar.divider()
 
-st.sidebar.markdown("### 📅 Período Ativo")
+if "menu_atual" not in st.session_state:
+    st.session_state.menu_atual = "🏠 Início"
+
+def _nav_btn(label, key):
+    ativo = st.session_state.menu_atual == label
+    if st.sidebar.button(label, key=key, type="primary" if ativo else "secondary", use_container_width=True):
+        st.session_state.menu_atual = label
+        st.rerun()
+
+st.sidebar.markdown("<div class='nav-eyebrow'>Visão Geral</div>", unsafe_allow_html=True)
+_nav_btn("🏠 Início", "nav_inicio")
+_nav_btn("📑 Demonstrativo", "nav_demonstrativo")
+_nav_btn("📈 Balanço Anual", "nav_balanco")
+
+st.sidebar.markdown("<div class='nav-eyebrow'>Lançar e Organizar</div>", unsafe_allow_html=True)
+_nav_btn("📝 Lançamentos", "nav_lancamentos")
+_nav_btn("📊 Fluxo e Prioridades", "nav_fluxo")
+_nav_btn("🔀 Otimização de Pagamentos", "nav_otimizacao")
+
+st.sidebar.markdown("<div class='nav-eyebrow'>Plantões</div>", unsafe_allow_html=True)
+_nav_btn("🏥 Escala de Plantões", "nav_escala")
+
+st.sidebar.markdown("<div class='nav-eyebrow'>Configuração</div>", unsafe_allow_html=True)
+_nav_btn("⚙️ Gerenciar Categorias", "nav_categorias")
+
+menu = st.session_state.menu_atual
+st.sidebar.divider()
+
+st.sidebar.markdown("<div class='nav-eyebrow'>Período Ativo</div>", unsafe_allow_html=True)
 col_sb1, col_sb2 = st.sidebar.columns(2)
 with col_sb1: mes_selecionado = st.selectbox("Mês", range(1, 13), format_func=lambda x: meses[x-1], index=hoje.month-1, key="sb_mes")
 with col_sb2: ano_selecionado = st.selectbox("Ano", range(hoje.year-2, hoje.year+5), index=2, key="sb_ano")
 
 st.sidebar.divider()
-st.sidebar.subheader("🛡️ Backup")
+st.sidebar.markdown("<div class='nav-eyebrow'>Backup</div>", unsafe_allow_html=True)
 
 def exportar_csv():
     df = fetch_dataframe("SELECT * FROM lancamentos")
@@ -334,7 +458,14 @@ if menu == "🏠 Início":
         df_7d['valor'] = df_7d['valor'].astype(float)
         df_7d['Status'] = df_7d['pago'].apply(lambda x: '✅ Pago' if x == 1 else '⏳ Pendente')
         df_7d['Data'] = pd.to_datetime(df_7d['data_vencimento']).dt.strftime('%d/%m/%Y')
-        st.dataframe(df_7d[['Data', 'tipo', 'descricao', 'valor', 'Status']], use_container_width=True, hide_index=True)
+
+        def _cor_linha_status(row):
+            if row['Status'] == '✅ Pago':
+                return ['background-color: #E3EEEA'] * len(row)
+            return ['background-color: #F6EBDA'] * len(row)
+
+        df_7d_view = df_7d[['Data', 'tipo', 'descricao', 'valor', 'Status']]
+        st.dataframe(df_7d_view.style.apply(_cor_linha_status, axis=1), use_container_width=True, hide_index=True)
 
 # =================================================================
 # 9. MÓDULO: GERENCIAR CATEGORIAS E RECORRÊNCIAS
@@ -738,11 +869,21 @@ elif menu == "📑 Demonstrativo":
                 if dataframe.empty: return
                 dataframe['Desc. Exibição'] = dataframe.apply(lambda r: f"{r['descricao']} ({int(r['parcela_atual'])}/{int(r['total_parcelas'])})" if pd.notna(r.get('total_parcelas')) and r['total_parcelas'] > 1 and r['total_parcelas'] != 999 else r['descricao'], axis=1)
                 dataframe['Status'] = dataframe['pago'].apply(lambda x: '✅ Pago' if x == 1 else '⏳ Pendente')
-                st.dataframe(
-                    dataframe[['Data BR', 'Desc. Exibição', 'valor', 'valor_pago', 'prioridade', 'Status']],
-                    hide_index=True, use_container_width=True,
-                    column_config={"valor": st.column_config.NumberColumn("Planejado", format="%.2f"), "valor_pago": st.column_config.NumberColumn("Pago/Real", format="%.2f")}
+
+                tabela = dataframe[['Data BR', 'Desc. Exibição', 'valor', 'valor_pago', 'prioridade', 'Status']].rename(
+                    columns={'Data BR': 'Data', 'Desc. Exibição': 'Descrição', 'valor': 'Planejado', 'valor_pago': 'Pago/Real', 'prioridade': 'Prioridade'}
                 )
+
+                def _cor_linha_demonstrativo(row):
+                    if row['Status'] == '✅ Pago':
+                        return ['background-color: #E3EEEA'] * len(row)
+                    return ['background-color: #F6EBDA'] * len(row)
+
+                estilo = tabela.style.apply(_cor_linha_demonstrativo, axis=1).format({
+                    'Planejado': lambda v: f"R$ {format_brl(v)}",
+                    'Pago/Real': lambda v: f"R$ {format_brl(v)}"
+                })
+                st.dataframe(estilo, hide_index=True, use_container_width=True)
 
             c1, c2 = st.columns(2)
             with c1:
@@ -805,14 +946,20 @@ elif menu == "📑 Demonstrativo":
 
             if matriz_envelopes:
                 df_matriz = pd.DataFrame(matriz_envelopes)
-                st.dataframe(
-                    df_matriz, use_container_width=True, hide_index=True,
-                    column_config={
-                        "Orçamento Inicial (Teto)": st.column_config.NumberColumn(format="R$ %.2f"),
-                        "Gasto Realizado (Acumulado)": st.column_config.NumberColumn(format="R$ %.2f"),
-                        "Saldo Restante Livre": st.column_config.NumberColumn(format="R$ %.2f")
-                    }
-                )
+
+                def _cor_linha_envelope(row):
+                    if row['Métrica de Saúde'].startswith('🔴'):
+                        return ['background-color: #F5E3E0'] * len(row)
+                    if row['Métrica de Saúde'].startswith('🟡'):
+                        return ['background-color: #F6EBDA'] * len(row)
+                    return ['background-color: #E3EEEA'] * len(row)
+
+                estilo_env = df_matriz.style.apply(_cor_linha_envelope, axis=1).format({
+                    'Orçamento Inicial (Teto)': lambda v: f"R$ {format_brl(v)}",
+                    'Gasto Realizado (Acumulado)': lambda v: f"R$ {format_brl(v)}",
+                    'Saldo Restante Livre': lambda v: f"R$ {format_brl(v)}"
+                })
+                st.dataframe(estilo_env, use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhum lançamento encontrado para os envelopes configurados neste mês.")
 
@@ -866,7 +1013,7 @@ elif menu == "📈 Balanço Anual":
             with tab_graf1:
                 fig_evol = px.bar(mensal, x='Mes', y=['Entrada', 'Despesa'],
                                   barmode='group', title="Balanço FP&A Híbrido (Realizado + Projetado)",
-                                  color_discrete_map={'Entrada': '#4CAF50', 'Despesa': '#F44336'},
+                                  color_discrete_map={'Entrada': '#2F6F62', 'Despesa': '#B4453A'},
                                   labels={'value': 'Valor (R$)', 'variable': 'Fluxo'})
                 fig_evol.update_layout(legend_title_text='Fluxo')
                 st.plotly_chart(fig_evol, use_container_width=True)
@@ -985,18 +1132,18 @@ elif menu == "🏥 Escala de Plantões":
         df_m_cal = df_t[(pd.to_datetime(df_t['d_p']).dt.month == cal_mes) & (pd.to_datetime(df_t['d_p']).dt.year == cal_ano)].copy()
 
     cols = st.columns(7)
-    for i, dia in enumerate(["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]): cols[i].markdown(f"<div style='text-align: center; font-weight: bold; padding: 5px; border-bottom: 2px solid #4CAF50;'>{dia}</div>", unsafe_allow_html=True)
+    for i, dia in enumerate(["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]): cols[i].markdown(f"<div style='text-align: center; font-weight: 700; padding: 6px; font-family: Manrope, sans-serif; color:#5B6570; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; border-bottom: 2px solid #2F6F62;'>{dia}</div>", unsafe_allow_html=True)
     for week in calendar.monthcalendar(cal_ano, cal_mes):
         w_cols = st.columns(7)
         for i, day in enumerate(week):
             with w_cols[i]:
                 if day != 0:
                     cd = datetime.date(cal_ano, cal_mes, day)
-                    bg = "background-color: rgba(76, 175, 80, 0.1);" if cd == hoje else ""
-                    brdr = "border: 2px solid #4CAF50;" if cd == hoje else "border: 1px solid rgba(150, 150, 150, 0.3);"
-                    html = f"<div style='{bg} {brdr} border-radius: 5px; padding: 5px; min-height: 90px; margin-top: 5px;'><div style='text-align:right; font-weight:bold;'>{day}</div>"
+                    bg = "background-color: rgba(47, 111, 98, 0.08);" if cd == hoje else "background-color: #FFFFFF;"
+                    brdr = "border: 2px solid #2F6F62;" if cd == hoje else "border: 1px solid #D9DDD7;"
+                    html = f"<div style='{bg} {brdr} border-radius: 10px; padding: 6px; min-height: 90px; margin-top: 6px;'><div style='text-align:right; font-weight:600; font-family: Manrope, sans-serif; color:#1C2430; font-size:0.85rem;'>{day}</div>"
                     if not df_m_cal.empty:
-                        for _, s in df_m_cal[df_m_cal['d_p'] == cd].iterrows(): html += f"<div style='background-color:#4CAF50; color:white; font-size:10px; padding:2px; margin-top:2px; white-space:nowrap; overflow:hidden;'>🏥 {s['subgrupo']}</div>"
+                        for _, s in df_m_cal[df_m_cal['d_p'] == cd].iterrows(): html += f"<div style='background-color:#2F6F62; color:white; font-size:10px; padding:2px 4px; border-radius:4px; margin-top:2px; white-space:nowrap; overflow:hidden;'>🏥 {s['subgrupo']}</div>"
                     st.markdown(html + "</div>", unsafe_allow_html=True)
 
     st.divider()
