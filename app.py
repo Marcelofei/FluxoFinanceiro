@@ -234,6 +234,38 @@ def aplicar_estilo_visual():
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
+    /* -----------------------------------------------------------
+       FORÇA TEMA CLARO DE FORMA DEFINITIVA.
+       O Streamlit permite que cada navegador salve uma preferência
+       de tema (claro/escuro/sistema) que pode sobrepor o config.toml.
+       Para esse app ter uma identidade visual única e consistente
+       pra qualquer pessoa que abrir o link, sobrescrevemos tanto as
+       variáveis CSS internas quanto os contêineres principais.
+       ----------------------------------------------------------- */
+    :root, .stApp {
+        --background-color: #F7F8F6 !important;
+        --secondary-background-color: #ECEEEA !important;
+        --text-color: #1C2430 !important;
+        --primary-color: #2F6F62 !important;
+    }
+    html, body, .stApp,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    [data-testid="stHeader"],
+    .main {
+        background-color: #F7F8F6 !important;
+    }
+    [data-testid="stHeader"] {
+        background-color: rgba(0,0,0,0) !important;
+    }
+    .stApp {
+        color: #1C2430;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+
     html, body, [class*="css"] {
         font-family: 'Manrope', sans-serif;
     }
@@ -246,7 +278,7 @@ def aplicar_estilo_visual():
 
     /* Métricas como cartões de "ficha" */
     div[data-testid="stMetric"], div[data-testid="metric-container"] {
-        background: #FFFFFF;
+        background: #FFFFFF !important;
         border: 1px solid #D9DDD7;
         border-radius: 14px;
         padding: 0.9rem 1.1rem 0.8rem 1.1rem;
@@ -264,11 +296,28 @@ def aplicar_estilo_visual():
         text-transform: uppercase;
         letter-spacing: 0.04em;
     }
+    div[data-testid="stMetricLabel"] p {
+        color: #5B6570 !important;
+    }
+
+    /* Texto geral de rótulos/legendas — cobre selectbox, checkbox, radio, inputs,
+       captions e markdown comum, pra não depender da cor padrão do tema do navegador */
+    .stApp label, .stApp .stMarkdown, .stApp .stMarkdown p,
+    .stApp [data-testid="stCaptionContainer"], .stApp [data-testid="stWidgetLabel"] p,
+    .stApp [data-testid="stWidgetLabel"] {
+        color: #1C2430 !important;
+    }
+    .stApp [data-testid="stCaptionContainer"] {
+        color: #5B6570 !important;
+    }
 
     /* Sidebar */
     section[data-testid="stSidebar"] {
-        background: #ECEEEA;
+        background: #ECEEEA !important;
         border-right: 1px solid #D9DDD7;
+    }
+    section[data-testid="stSidebar"] * {
+        color: #1C2430;
     }
     section[data-testid="stSidebar"] .stButton button {
         width: 100%;
@@ -277,13 +326,17 @@ def aplicar_estilo_visual():
         border-radius: 8px;
         font-weight: 500;
         padding: 0.45rem 0.8rem;
+        color: #1C2430;
+    }
+    section[data-testid="stSidebar"] .stButton button[kind="primary"] {
+        color: #FFFFFF !important;
     }
     .nav-eyebrow {
         font-size: 0.72rem;
         font-weight: 700;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: #5B6570;
+        color: #5B6570 !important;
         margin: 1.1rem 0 0.4rem 0.15rem;
     }
 
@@ -303,7 +356,10 @@ def aplicar_estilo_visual():
     }
     .stTabs [data-baseweb="tab"] {
         font-weight: 600;
-        color: #5B6570;
+        color: #5B6570 !important;
+    }
+    .stTabs [data-baseweb="tab"] p {
+        color: #5B6570 !important;
     }
 
     /* Tabelas */
@@ -461,8 +517,8 @@ if menu == "🏠 Início":
 
         def _cor_linha_status(row):
             if row['Status'] == '✅ Pago':
-                return ['background-color: #E3EEEA'] * len(row)
-            return ['background-color: #F6EBDA'] * len(row)
+                return ['background-color: #E3EEEA; color: #1C2430'] * len(row)
+            return ['background-color: #F6EBDA; color: #1C2430'] * len(row)
 
         df_7d_view = df_7d[['Data', 'tipo', 'descricao', 'valor', 'Status']]
         st.dataframe(df_7d_view.style.apply(_cor_linha_status, axis=1), use_container_width=True, hide_index=True)
@@ -876,8 +932,8 @@ elif menu == "📑 Demonstrativo":
 
                 def _cor_linha_demonstrativo(row):
                     if row['Status'] == '✅ Pago':
-                        return ['background-color: #E3EEEA'] * len(row)
-                    return ['background-color: #F6EBDA'] * len(row)
+                        return ['background-color: #E3EEEA; color: #1C2430'] * len(row)
+                    return ['background-color: #F6EBDA; color: #1C2430'] * len(row)
 
                 estilo = tabela.style.apply(_cor_linha_demonstrativo, axis=1).format({
                     'Planejado': lambda v: f"R$ {format_brl(v)}",
@@ -949,10 +1005,10 @@ elif menu == "📑 Demonstrativo":
 
                 def _cor_linha_envelope(row):
                     if row['Métrica de Saúde'].startswith('🔴'):
-                        return ['background-color: #F5E3E0'] * len(row)
+                        return ['background-color: #F5E3E0; color: #1C2430'] * len(row)
                     if row['Métrica de Saúde'].startswith('🟡'):
-                        return ['background-color: #F6EBDA'] * len(row)
-                    return ['background-color: #E3EEEA'] * len(row)
+                        return ['background-color: #F6EBDA; color: #1C2430'] * len(row)
+                    return ['background-color: #E3EEEA; color: #1C2430'] * len(row)
 
                 estilo_env = df_matriz.style.apply(_cor_linha_envelope, axis=1).format({
                     'Orçamento Inicial (Teto)': lambda v: f"R$ {format_brl(v)}",
