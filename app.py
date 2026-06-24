@@ -317,8 +317,53 @@ def aplicar_estilo_visual():
         border-right: 1px solid #D9DDD7;
     }
     section[data-testid="stSidebar"] * {
-        color: #1C2430;
+        color: #1C2430 !important;
     }
+
+    /* -----------------------------------------------------------
+       BOTÕES — regra agressiva e redundante de propósito.
+       O Streamlit pinta os botões "secondary" com cor vinda do tema
+       ativo do navegador, então usamos várias formas de seletor +
+       !important + wildcard nos elementos internos (o texto do botão
+       fica dentro de um <p>/<div> aninhado, então sobrescrever só o
+       <button> às vezes não basta).
+       ----------------------------------------------------------- */
+    .stButton button,
+    .stButton button[kind="secondary"],
+    .stButton button:not([kind="primary"]) {
+        background-color: #FFFFFF !important;
+        border: 1px solid #D9DDD7 !important;
+        color: #1C2430 !important;
+    }
+    .stButton button *,
+    .stButton button[kind="secondary"] *,
+    .stButton button:not([kind="primary"]) * {
+        color: #1C2430 !important;
+    }
+    .stButton button:hover,
+    .stButton button:not([kind="primary"]):hover {
+        background-color: #ECEEEA !important;
+        border-color: #2F6F62 !important;
+        color: #1C2430 !important;
+    }
+
+    .stButton button[kind="primary"] {
+        background-color: #2F6F62 !important;
+        border: 1px solid #2F6F62 !important;
+        color: #FFFFFF !important;
+    }
+    .stButton button[kind="primary"] * {
+        color: #FFFFFF !important;
+    }
+    .stButton button[kind="primary"]:hover {
+        background-color: #244F45 !important;
+        border-color: #244F45 !important;
+        color: #FFFFFF !important;
+    }
+    .stButton button[kind="primary"]:hover * {
+        color: #FFFFFF !important;
+    }
+
     section[data-testid="stSidebar"] .stButton button {
         width: 100%;
         text-align: left;
@@ -326,11 +371,8 @@ def aplicar_estilo_visual():
         border-radius: 8px;
         font-weight: 500;
         padding: 0.45rem 0.8rem;
-        color: #1C2430;
     }
-    section[data-testid="stSidebar"] .stButton button[kind="primary"] {
-        color: #FFFFFF !important;
-    }
+
     .nav-eyebrow {
         font-size: 0.72rem;
         font-weight: 700;
@@ -338,16 +380,6 @@ def aplicar_estilo_visual():
         text-transform: uppercase;
         color: #5B6570 !important;
         margin: 1.1rem 0 0.4rem 0.15rem;
-    }
-
-    /* Botão primário (ação principal / item de menu ativo) */
-    .stButton button[kind="primary"] {
-        background-color: #2F6F62;
-        border-color: #2F6F62;
-    }
-    .stButton button[kind="primary"]:hover {
-        background-color: #244F45;
-        border-color: #244F45;
     }
 
     /* Abas */
