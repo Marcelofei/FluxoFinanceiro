@@ -155,30 +155,31 @@ def processar_recorrencias_lazy(mes, ano):
             ''', (contrato['tipo'], contrato['categoria'], contrato['subgrupo'], desc_c, val_p, dt_limite_alvo, compra_id_contrato))
 
 # =================================================================
-# 3. MOTOR DE ABATIMENTO AUTOMÁTICO DE ENVELOPES (BACKEND)
+# 3. MOTOR DE ABATIMENTO AUTOMÁTICO DE PROVISÕES (BACKEND)
 # =================================================================
 
-def executar_abatimento_envelope(categoria, valor_gasto, mes, ano):
+def executar_abatimento_envelope(categoria, subgrupo, valor_gasto, mes, ano):
     """
-    Deduz dinamicamente o valor de uma despesa real realizada do teto orçamentário (pago=0)
-    caso a categoria esteja configurada como um Envelope Virtual.
+    Deduz dinamicamente o valor de uma despesa real realizada do lançamento de
+    Provisão (pago=0, descrição contém "(Provisão)") da mesma categoria+subgrupo
+    no mês vigente. Não depende mais de nenhuma configuração na categoria --
+    a Provisão é uma característica do PRÓPRIO lançamento, criada na aba
+    '📝 Lançamentos'.
 
-    IMPORTANTE: o saldo do teto pode ficar NEGATIVO de propósito (sem GREATEST/clamp em 0).
-    Isso preserva o invariante "orçamento original = realizado + disponível" mesmo quando
-    o usuário estoura o teto -- se travássemos em zero, o valor do estouro se perderia e a
-    tela de Envelopes passaria a mostrar um "orçamento inicial" inflado e mentiroso.
+    O saldo pode ficar NEGATIVO de propósito (sem clamp em 0), pra preservar o
+    invariante "orçamento original = realizado + disponível" mesmo estourando o teto.
     """
-    df_cat = fetch_dataframe("SELECT is_envelope FROM categorias_personalizadas WHERE categoria = %s AND tipo = 'Despesa' LIMIT 1", (categoria,))
-    if not df_cat.empty and int(df_cat.iloc[0]['is_envelope'] or 0) == 1:
-        execute_query('''
-            UPDATE lancamentos
-            SET valor = valor - %s
-            WHERE pago = 0
-              AND tipo = 'Despesa'
-              AND categoria = %s
-              AND EXTRACT(MONTH FROM data_vencimento) = %s
-              AND EXTRACT(YEAR FROM data_vencimento) = %s
-        ''', (valor_gasto, categoria, mes, ano))
+    execute_query('''
+        UPDATE lancamentos
+        SET valor = valor - %s
+        WHERE pago = 0
+          AND tipo = 'Despesa'
+          AND categoria = %s
+          AND subgrupo = %s
+          AND descricao ILIKE %s
+          AND EXTRACT(MONTH FROM data_vencimento) = %s
+          AND EXTRACT(YEAR FROM data_vencimento) = %s
+    ''', (valor_gasto, categoria, subgrupo, '%(Provisão)%', mes, ano))
 
 # =================================================================
 # 4. SISTEMA DE SEGURANÇA E AUXILIARES
@@ -206,6 +207,14 @@ def format_brl(valor):
     if pd.isna(valor): return "0,00"
     return f"{float(valor):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
+def ordenar_categorias_com_prioridade(categorias, prioridade="despesas essenciais"):
+    """Ordena uma lista de categorias colocando a categoria prioritária primeiro
+    (comparação sem diferenciar maiúsculas/minúsculas), e o resto em ordem alfabética."""
+    cats = list(categorias)
+    match = next((c for c in cats if str(c).strip().lower() == prioridade), None)
+    resto = sorted([c for c in cats if c != match], key=lambda x: str(x).lower())
+    return ([match] if match else []) + resto
+
 # =================================================================
 # 5. CONFIGURAÇÃO DA PÁGINA
 # =================================================================
@@ -217,30 +226,11 @@ init_db()
 # =================================================================
 # 5B. IDENTIDADE VISUAL
 # =================================================================
-# Paleta (token system) — tema escuro deliberado:
-#   Ink #E8EAED          -> texto principal (claro, sobre fundo escuro)
-#   Ink-muted #8B94A0    -> texto secundário, labels
-#   Base #12161B         -> fundo da página (definido também no .streamlit/config.toml)
-#   Surface #1B2127      -> cartões, métricas, conteúdo "elevado"
-#   Surface-sidebar #0E1216 -> sidebar (um tom mais escuro, recua visualmente)
-#   Steady #3FAE8D       -> marca / "em dia" / saudável (cor primária do tema)
-#   Caution #DDA251      -> atenção
-#   Critical #E0695C     -> atrasado / estourado
-#   Border #2A3138
-# Tipografia: Manrope (texto e títulos) + IBM Plex Mono (só para números/valores,
-# pra dar a sensação de "painel de ficha financeira" em vez de planilha genérica.
-
 def aplicar_estilo_visual():
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
-    /* -----------------------------------------------------------
-       FORÇA TEMA ESCURO DE FORMA DEFINITIVA.
-       Mesma lógica de antes, agora pro lado escuro: garante que
-       qualquer pessoa que abra o link veja a mesma identidade visual,
-       independente da preferência de tema salva no navegador dela.
-       ----------------------------------------------------------- */
     :root, .stApp {
         --background-color: #12161B !important;
         --secondary-background-color: #1B2127 !important;
@@ -271,7 +261,6 @@ def aplicar_estilo_visual():
         letter-spacing: -0.01em;
     }
 
-    /* Métricas como cartões de "ficha" */
     div[data-testid="stMetric"], div[data-testid="metric-container"] {
         background: #1B2127 !important;
         border: 1px solid #2A3138;
@@ -295,8 +284,6 @@ def aplicar_estilo_visual():
         color: #8B94A0 !important;
     }
 
-    /* Texto geral de rótulos/legendas — cobre selectbox, checkbox, radio, inputs,
-       captions e markdown comum, pra não depender da cor padrão do tema do navegador */
     .stApp label, .stApp .stMarkdown, .stApp .stMarkdown p,
     .stApp [data-testid="stWidgetLabel"] p,
     .stApp [data-testid="stWidgetLabel"] {
@@ -306,7 +293,6 @@ def aplicar_estilo_visual():
         color: #8B94A0 !important;
     }
 
-    /* Sidebar */
     section[data-testid="stSidebar"] {
         background: #0E1216 !important;
         border-right: 1px solid #2A3138;
@@ -315,13 +301,6 @@ def aplicar_estilo_visual():
         color: #E8EAED !important;
     }
 
-    /* -----------------------------------------------------------
-       BOTÕES — regra agressiva e redundante de propósito.
-       O Streamlit pinta os botões com cor vinda do tema ativo do
-       navegador, então usamos várias formas de seletor + !important
-       + wildcard nos elementos internos (o texto do botão fica
-       dentro de um <p>/<div> aninhado).
-       ----------------------------------------------------------- */
     .stButton button,
     .stButton button[kind="secondary"],
     .stButton button:not([kind="primary"]) {
@@ -376,7 +355,6 @@ def aplicar_estilo_visual():
         margin: 1.1rem 0 0.4rem 0.15rem;
     }
 
-    /* Abas */
     .stTabs [data-baseweb="tab-list"] {
         gap: 4px;
     }
@@ -394,14 +372,12 @@ def aplicar_estilo_visual():
         color: #3FAE8D !important;
     }
 
-    /* Tabelas */
     div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
         border-radius: 10px;
         overflow: hidden;
         border: 1px solid #2A3138;
     }
 
-    /* Containers usados como "cartão" (formulários, edição estrutural) */
     div[data-testid="stExpander"], div[data-testid="stForm"] {
         border: 1px solid #2A3138 !important;
         border-radius: 12px !important;
@@ -413,8 +389,6 @@ def aplicar_estilo_visual():
 aplicar_estilo_visual()
 
 def aplicar_tema_grafico(fig):
-    """Aplica o fundo e a tipografia do tema escuro a qualquer gráfico Plotly,
-    pra não aparecer um retângulo branco no meio do painel escuro."""
     fig.update_layout(
         paper_bgcolor="#1B2127",
         plot_bgcolor="#1B2127",
@@ -475,7 +449,6 @@ _nav_btn("📈 Balanço Anual", "nav_balanco")
 st.sidebar.markdown("<div class='nav-eyebrow'>Lançar e Organizar</div>", unsafe_allow_html=True)
 _nav_btn("📝 Lançamentos", "nav_lancamentos")
 _nav_btn("📊 Fluxo e Prioridades", "nav_fluxo")
-_nav_btn("🔀 Otimização de Pagamentos", "nav_otimizacao")
 
 st.sidebar.markdown("<div class='nav-eyebrow'>Plantões</div>", unsafe_allow_html=True)
 _nav_btn("🏥 Escala de Plantões", "nav_escala")
@@ -585,6 +558,7 @@ if menu == "🏠 Início":
 
 elif menu == "⚙️ Gerenciar Categorias":
     st.header("⚙️ Gerenciar Categorias e Contratos Recorrentes")
+    st.caption("💡 A opção 'Provisão' (envelope de orçamento variável) agora é definida na hora de lançar a despesa em '📝 Lançamentos', não mais aqui.")
     df_custom_global = fetch_dataframe("SELECT * FROM categorias_personalizadas")
     tab_add, tab_edit, tab_del = st.tabs(["➕ Adicionar", "✏️ Editar", "🗑️ Excluir"])
 
@@ -596,19 +570,9 @@ elif menu == "⚙️ Gerenciar Categorias":
             n_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)", key="add_rec_check")
         with c_add2:
             nsub = st.text_input("Nome do Subgrupo (Opcional)", placeholder="Ex: Hospital Trauma", key="add_sub_input")
-            if ntipo == "Despesa":
-                n_env = st.checkbox("⚖️ Tornar esta categoria um 'Envelope Virtual' (Teto para despesas variáveis)", key="add_env_check")
-            else:
-                n_env = False
-            # Envelope SEMPRE precisa do motor recorrente para gerar o teto mensal automaticamente;
-            # por isso o checkbox de Envelope também liga a recorrência (n_rec_efetivo).
-            n_rec_efetivo = n_rec or n_env
-            if n_rec_efetivo: n_dt_start = st.date_input("Data de Início do Contrato/Teto", value=data_contexto_ativo, key="add_dt_input")
+            if n_rec: n_dt_start = st.date_input("Data de Início do Contrato", value=data_contexto_ativo, key="add_dt_input")
 
-        if n_env:
-            st.caption("💡 Envelope Virtual precisa de um teto mensal recorrente para funcionar — por isso a recorrência foi ativada automaticamente.")
-
-        if ntipo == "Entrada" or n_rec_efetivo:
+        if ntipo == "Entrada" or n_rec:
             st.markdown("---")
             st.markdown("##### ⚙️ Parâmetros de Padrão e Recorrência")
             c_opt1, c_opt2, c_opt3 = st.columns(3)
@@ -621,11 +585,10 @@ elif menu == "⚙️ Gerenciar Categorias":
         if st.button("Salvar Nova Categoria/Subgrupo", type="primary", key="add_save_btn"):
             if not ncat.strip(): st.error("O nome da Categoria é obrigatório.")
             else:
-                is_rec_val = 1 if n_rec_efetivo else 0
-                is_env_val = 1 if n_env else 0
-                dt_start_val = n_dt_start if n_rec_efetivo else None
-                execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, data_inicio, is_envelope) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                              (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt, is_rec_val, dt_start_val, is_env_val))
+                is_rec_val = 1 if n_rec else 0
+                dt_start_val = n_dt_start if n_rec else None
+                execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, data_inicio) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                              (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt, is_rec_val, dt_start_val))
                 st.success("Adicionado com sucesso!"); st.rerun()
 
     with tab_edit:
@@ -638,13 +601,9 @@ elif menu == "⚙️ Gerenciar Categorias":
                 with c_ed_n1: new_cat = st.text_input("Nova Categoria", value=nó['categoria'], key="edit_cat_input")
                 with c_ed_n2: new_sub = st.text_input("Novo Subgrupo", value=nó['subgrupo'] if pd.notna(nó['subgrupo']) else "", key="edit_sub_input")
 
-                e_env = st.checkbox("⚖️ Tornar esta categoria um 'Envelope Virtual'", value=bool(nó['is_envelope'] == 1), key="edit_env_check") if nó['tipo'] == 'Despesa' else False
-                e_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)", value=bool(nó['is_recorrente'] == 1) or e_env, key="edit_rec_check", disabled=e_env)
-                e_rec_efetivo = e_rec or e_env
-                if e_env:
-                    st.caption("💡 Envelope Virtual precisa de recorrência para gerar o teto mensal — por isso essa opção está travada como ativa.")
+                e_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)", value=bool(nó['is_recorrente'] == 1), key="edit_rec_check")
 
-                if nó['tipo'] == "Entrada" or e_rec_efetivo:
+                if nó['tipo'] == "Entrada" or e_rec:
                     st.markdown("---")
                     st.markdown("##### ⚙️ Parâmetros de Padrão e Recorrência")
                     c_opt_e1, c_opt_e2, c_opt_e3 = st.columns(3)
@@ -657,8 +616,8 @@ elif menu == "⚙️ Gerenciar Categorias":
                     d_edit = int(nó['dia_pagamento']) if pd.notna(nó['dia_pagamento']) else 10
 
                 if st.button("💾 Confirmar Edição", type="primary", key="edit_save_btn"):
-                    execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s, is_recorrente=%s, is_envelope=%s WHERE id=%s",
-                                  (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, 1 if e_rec_efetivo else 0, 1 if e_env else 0, sel_edit))
+                    execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s, is_recorrente=%s WHERE id=%s",
+                                  (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, 1 if e_rec else 0, sel_edit))
                     execute_query("UPDATE lancamentos SET categoria=%s, subgrupo=%s WHERE tipo=%s AND categoria=%s AND subgrupo=%s", (new_cat, new_sub, nó['tipo'], nó['categoria'], nó['subgrupo']))
                     st.success("Atualizado."); st.rerun()
         else: st.info("Nenhuma categoria encontrada.")
@@ -685,9 +644,17 @@ elif menu == "📝 Lançamentos":
         descricao = st.text_input("Descrição")
         valor_input = st.text_input("Valor Planejado (R$)", value="0,00")
         prioridade = st.radio("Prioridade", ["Baixa 🟢", "Média 🟡", "Alta 🔴"], index=0, horizontal=True)
-        pago_imediato = st.checkbox("Marcar como Pago/Efetivado imediatamente")
-        if pago_imediato:
-            st.caption("💡 Em compras parceladas, só a 1ª parcela é marcada como paga agora — as futuras continuam pendentes.")
+
+        gasto_continuo = st.checkbox("🗓️ Provisão (Mês todo)") if tipo == "Despesa" else False
+        if gasto_continuo:
+            st.caption("💡 Provisão cria o teto do mês para essa categoria/subgrupo (nasce como pendente). "
+                       "As compras do dia a dia que você lançar depois, na mesma categoria/subgrupo, vão "
+                       "abater automaticamente desse teto quando forem marcadas como pagas.")
+            pago_imediato = False
+        else:
+            pago_imediato = st.checkbox("Marcar como Pago/Efetivado imediatamente")
+            if pago_imediato:
+                st.caption("💡 Em compras parceladas, só a 1ª parcela é marcada como paga agora — as futuras continuam pendentes.")
     with col2:
         if not ESTRUTURA[tipo]:
             st.error("Não há categorias ativas. Crie uma no módulo '⚙️ Gerenciar Categorias'.")
@@ -697,11 +664,11 @@ elif menu == "📝 Lançamentos":
             subgrupos_disp = ESTRUTURA[tipo][categoria] if categoria in ESTRUTURA[tipo] else []
             subgrupo = st.selectbox("Subgrupo", subgrupos_disp)
 
-        gasto_continuo = st.checkbox("🗓️ Provisão (Mês todo)")
         data_venc_base = st.date_input("Data Referência", value=data_contexto_ativo, format="DD/MM/YYYY")
 
         parcelas = 1
-        tipo_rec = st.radio("Recorrência", ["Única", "Parcelada", "Fixa/Contínua"], horizontal=True)
+        tipo_rec = st.radio("Recorrência", ["Única", "Parcelada", "Fixa/Contínua"], horizontal=True,
+                            help="Pra Provisão recorrente todo mês, use 'Fixa/Contínua'.")
         if tipo_rec == "Parcelada": parcelas = st.number_input("Parcelas", min_value=2, value=2)
         elif tipo_rec == "Fixa/Contínua": parcelas = 60
 
@@ -714,25 +681,26 @@ elif menu == "📝 Lançamentos":
             tot_p = 999 if tipo_rec == "Fixa/Contínua" else parcelas
             desc_final = f"{descricao} (Provisão)" if gasto_continuo else descricao
 
-            # "Pago imediato" só faz sentido pra esta ocorrência específica (i==0).
-            # Parcelas/meses futuros de uma compra parcelada/contínua ainda não venceram,
-            # então nunca devem nascer já marcadas como pagas.
+            # Provisão nasce sempre como teto pendente (pago=0) -- não faz sentido um
+            # orçamento do mês já nascer "gasto". "Pago imediato" só existe pra despesas
+            # normais, e só vale pra 1ª ocorrência de uma compra parcelada/contínua.
             for i in range(parcelas):
                 m_f = data_venc_base.month - 1 + i
                 a_f = data_venc_base.year + m_f // 12
                 m_f = m_f % 12 + 1
                 d_p = datetime.date(a_f, m_f, calendar.monthrange(a_f, m_f)[1]) if gasto_continuo else datetime.date(a_f, m_f, min(data_venc_base.day, calendar.monthrange(a_f, m_f)[1]))
 
-                pago_atual = 1 if (pago_imediato and i == 0) else 0
-                v_pago_atual = val_f if (pago_imediato and i == 0) else 0.0
+                pago_atual = 1 if (pago_imediato and i == 0 and not gasto_continuo) else 0
+                v_pago_atual = val_f if (pago_imediato and i == 0 and not gasto_continuo) else 0.0
 
                 registros.append((tipo, categoria, subgrupo, desc_final, val_f, d_p, i+1, tot_p, pago_atual, comp_id, forma_pgto, prioridade, v_pago_atual))
 
             execute_values_query('''INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago) VALUES %s''', registros)
 
-            # Abatimento automático de envelope: só dispara se a 1ª ocorrência já nasceu paga.
-            if tipo == "Despesa" and pago_imediato:
-                executar_abatimento_envelope(categoria, val_f, data_venc_base.month, data_venc_base.year)
+            # Abatimento automático: dispara sempre que uma despesa NORMAL (não-Provisão)
+            # nasce paga, contra a Provisão aberta da mesma categoria+subgrupo no mês.
+            if tipo == "Despesa" and pago_imediato and not gasto_continuo:
+                executar_abatimento_envelope(categoria, subgrupo, val_f, data_venc_base.month, data_venc_base.year)
 
             st.success("Salvo com sucesso!"); st.rerun()
 
@@ -880,8 +848,11 @@ elif menu == "📊 Fluxo e Prioridades":
                     else:
                         execute_query("UPDATE lancamentos SET pago=%s, prioridade=%s, descricao=%s, valor=%s, valor_pago=%s, data_vencimento=%s WHERE id=%s", (novo_pago, row['prioridade'], nova_desc, novo_valor, novo_valor_pago, row['Data'], tupla_ids_reais[0]))
 
-                        if orig_row['tipo'] == 'Despesa' and novo_pago == 1 and orig_row['pago'] == 0:
-                            executar_abatimento_envelope(orig_row['categoria'], novo_valor_pago, mes_selecionado, ano_selecionado)
+                        # Abatimento contra a Provisão da mesma categoria+subgrupo -- só se
+                        # ESTE lançamento não for ele próprio uma Provisão.
+                        eh_provisao = '(Provisão)' in str(orig_row['descricao'])
+                        if orig_row['tipo'] == 'Despesa' and novo_pago == 1 and orig_row['pago'] == 0 and not eh_provisao:
+                            executar_abatimento_envelope(orig_row['categoria'], orig_row['subgrupo'], novo_valor_pago, mes_selecionado, ano_selecionado)
             st.rerun()
 
         st.divider()
@@ -941,14 +912,14 @@ elif menu == "📊 Fluxo e Prioridades":
                     st.success("Sucesso!"); st.rerun()
 
 # =================================================================
-# 12. MÓDULO 3: DEMONSTRATIVO (COM ANALÍTICO DE ENVELOPES)
+# 12. MÓDULO 3: DEMONSTRATIVO (COM ANALÍTICO DE PROVISÕES)
 # =================================================================
 
 elif menu == "📑 Demonstrativo":
     st.header("📑 Demonstrativo Financeiro")
     df = fetch_dataframe("SELECT * FROM lancamentos WHERE EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s", (mes_selecionado, ano_selecionado))
 
-    tab_dem, tab_env = st.tabs(["📊 Balanço Mensal", "⚖️ Envelopes Orçado vs Realizado"])
+    tab_dem, tab_env = st.tabs(["📊 Balanço Mensal", "⚖️ Provisões Orçado vs Realizado"])
 
     with tab_dem:
         if not df.empty:
@@ -1000,80 +971,95 @@ elif menu == "📑 Demonstrativo":
             c1, c2 = st.columns(2)
             with c1:
                 st.subheader("🟢 Entradas Detalhadas")
-                for cat in df_e['categoria'].unique():
+                for cat in sorted(df_e['categoria'].unique(), key=lambda x: str(x).lower()):
                     df_c = df_e[df_e['categoria'] == cat]
                     with st.expander(f"{cat} - R$ {format_brl(df_c['valor'].sum())}"):
                         for sub in df_c['subgrupo'].unique():
                             df_s = df_c[df_c['subgrupo'] == sub].copy()
+                            if df_s.empty: continue
+                            st.markdown(f"**🔹 {sub if sub else 'Geral'}**")
                             exibir_demonstrativo(df_s)
             with c2:
                 st.subheader("🔴 Despesas Detalhadas")
-                for cat in df_d['categoria'].unique():
+                for cat in ordenar_categorias_com_prioridade(df_d['categoria'].unique()):
                     df_c = df_d[df_d['categoria'] == cat]
                     with st.expander(f"{cat} - R$ {format_brl(df_c['valor'].sum())}"):
                         for sub in df_c['subgrupo'].unique():
                             df_s = df_c[df_c['subgrupo'] == sub].copy()
+                            if df_s.empty: continue
+                            st.markdown(f"**🔹 {sub if sub else 'Geral'}**")
                             exibir_demonstrativo(df_s)
         else:
             st.info("Sem lançamentos neste período.")
 
     with tab_env:
-        st.subheader("⚖️ Acompanhamento de Envelopes (Despesas Variáveis)")
-        st.markdown("Comparação em tempo real entre o teu teto orçamentário e o que já foi gasto.")
+        st.subheader("⚖️ Acompanhamento de Provisões (Despesas Variáveis)")
+        st.markdown("Comparação em tempo real entre o teu teto orçamentário e o que já foi gasto. "
+                    "Provisões são criadas em '📝 Lançamentos', marcando a opção 🗓️ Provisão (Mês todo).")
 
-        df_envelopes_config = fetch_dataframe("SELECT categoria FROM categorias_personalizadas WHERE is_envelope = 1 AND tipo = 'Despesa'")
-
-        if df_envelopes_config.empty:
-            st.info("Nenhuma categoria está configurada como 'Envelope Virtual' atualmente. Vá a '⚙️ Gerenciar Categorias' para ativar.")
-        elif df.empty:
+        if df.empty:
             st.info("Sem transações no período ativo.")
         else:
-            matriz_envelopes = []
-            for cat in df_envelopes_config['categoria'].unique():
-                df_pago = df[(df['categoria'] == cat) & (df['pago'] == 1)]
-                df_teto = df[(df['categoria'] == cat) & (df['pago'] == 0)]
+            df_provisoes_mes = df[(df['tipo'] == 'Despesa') & df['descricao'].str.contains(r'\(Provisão\)', case=False, na=False, regex=True)]
 
-                realizado = float(df_pago['valor_pago'].sum())
-                disponivel = float(df_teto['valor'].sum())  # pode ser negativo se estourou o teto
-                orcamento_inicial = realizado + disponivel
-
-                if realizado == 0 and disponivel == 0:
-                    continue
-
-                if disponivel > 0 and orcamento_inicial > 0:
-                    percent_livre = (disponivel / orcamento_inicial) * 100
-                    status_txt = f"🟢 {percent_livre:.1f}% disponível"
-                elif disponivel == 0:
-                    status_txt = "🟡 Limite exato atingido"
-                else:
-                    status_txt = f"🔴 Estourado em R$ {format_brl(abs(disponivel))}"
-
-                matriz_envelopes.append({
-                    "Categoria": cat,
-                    "Orçamento Inicial (Teto)": orcamento_inicial,
-                    "Gasto Realizado (Acumulado)": realizado,
-                    "Saldo Restante Livre": disponivel,
-                    "Métrica de Saúde": status_txt
-                })
-
-            if matriz_envelopes:
-                df_matriz = pd.DataFrame(matriz_envelopes)
-
-                def _cor_linha_envelope(row):
-                    if row['Métrica de Saúde'].startswith('🔴'):
-                        return ['background-color: #2A1B19; color: #E8EAED'] * len(row)
-                    if row['Métrica de Saúde'].startswith('🟡'):
-                        return ['background-color: #29241A; color: #E8EAED'] * len(row)
-                    return ['background-color: #17241E; color: #E8EAED'] * len(row)
-
-                estilo_env = df_matriz.style.apply(_cor_linha_envelope, axis=1).format({
-                    'Orçamento Inicial (Teto)': lambda v: f"R$ {format_brl(v)}",
-                    'Gasto Realizado (Acumulado)': lambda v: f"R$ {format_brl(v)}",
-                    'Saldo Restante Livre': lambda v: f"R$ {format_brl(v)}"
-                })
-                st.dataframe(estilo_env, use_container_width=True, hide_index=True)
+            if df_provisoes_mes.empty:
+                st.info("Nenhuma Provisão criada para este mês ainda. Vá em '📝 Lançamentos' e marque 🗓️ Provisão (Mês todo) numa despesa variável.")
             else:
-                st.info("Nenhum lançamento encontrado para os envelopes configurados neste mês.")
+                matriz_envelopes = []
+                combos = df_provisoes_mes[['categoria', 'subgrupo']].drop_duplicates().to_dict('records')
+                for combo in combos:
+                    cat, sub = combo['categoria'], combo['subgrupo']
+                    df_realizado = df[
+                        (df['categoria'] == cat) & (df['subgrupo'] == sub) & (df['pago'] == 1) &
+                        (~df['descricao'].str.contains(r'\(Provisão\)', case=False, na=False, regex=True))
+                    ]
+                    df_teto = df[
+                        (df['categoria'] == cat) & (df['subgrupo'] == sub) & (df['pago'] == 0) &
+                        (df['descricao'].str.contains(r'\(Provisão\)', case=False, na=False, regex=True))
+                    ]
+
+                    realizado = float(df_realizado['valor_pago'].sum())
+                    disponivel = float(df_teto['valor'].sum())  # pode ser negativo se estourou o teto
+                    orcamento_inicial = realizado + disponivel
+
+                    if realizado == 0 and disponivel == 0:
+                        continue
+
+                    if disponivel > 0 and orcamento_inicial > 0:
+                        percent_livre = (disponivel / orcamento_inicial) * 100
+                        status_txt = f"🟢 {percent_livre:.1f}% disponível"
+                    elif disponivel == 0:
+                        status_txt = "🟡 Limite exato atingido"
+                    else:
+                        status_txt = f"🔴 Estourado em R$ {format_brl(abs(disponivel))}"
+
+                    matriz_envelopes.append({
+                        "Categoria": cat,
+                        "Subgrupo": sub if sub else "Geral",
+                        "Orçamento Inicial (Teto)": orcamento_inicial,
+                        "Gasto Realizado (Acumulado)": realizado,
+                        "Saldo Restante Livre": disponivel,
+                        "Métrica de Saúde": status_txt
+                    })
+
+                if matriz_envelopes:
+                    df_matriz = pd.DataFrame(matriz_envelopes)
+
+                    def _cor_linha_envelope(row):
+                        if row['Métrica de Saúde'].startswith('🔴'):
+                            return ['background-color: #2A1B19; color: #E8EAED'] * len(row)
+                        if row['Métrica de Saúde'].startswith('🟡'):
+                            return ['background-color: #29241A; color: #E8EAED'] * len(row)
+                        return ['background-color: #17241E; color: #E8EAED'] * len(row)
+
+                    estilo_env = df_matriz.style.apply(_cor_linha_envelope, axis=1).format({
+                        'Orçamento Inicial (Teto)': lambda v: f"R$ {format_brl(v)}",
+                        'Gasto Realizado (Acumulado)': lambda v: f"R$ {format_brl(v)}",
+                        'Saldo Restante Livre': lambda v: f"R$ {format_brl(v)}"
+                    })
+                    st.dataframe(estilo_env, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Nenhuma Provisão com movimento neste mês.")
 
 # =================================================================
 # 13. MÓDULO: BALANÇO ANUAL
@@ -1096,8 +1082,6 @@ elif menu == "📈 Balanço Anual":
             df_ano['valor_pago'] = df_ano['valor_pago'].fillna(0.0).astype(float)
             df_ano['mes_num'] = pd.to_datetime(df_ano['data_vencimento']).dt.month
 
-            # Híbrido FP&A: usa o realizado quando pago, e cai pro planejado quando ainda não --
-            # assim o gráfico do ano mostra passado realizado + futuro projetado de forma coerente.
             df_ano['hibrido_fpa'] = df_ano.apply(lambda r: float(r['valor_pago']) if r['pago'] == 1 else float(r['valor']), axis=1)
             mensal = df_ano.groupby(['mes_num', 'tipo'])['hibrido_fpa'].sum().unstack(fill_value=0.0)
             mensal = mensal.reindex(range(1, 13), fill_value=0.0).reset_index()
@@ -1152,82 +1136,7 @@ elif menu == "📈 Balanço Anual":
                     st.plotly_chart(aplicar_tema_grafico(fig_sub), use_container_width=True)
 
 # =================================================================
-# 14. MÓDULO 4: OTIMIZAÇÃO DE PAGAMENTOS (RESTAURADO)
-# =================================================================
-
-elif menu == "🔀 Otimização de Pagamentos":
-    st.header("🔀 Otimização de Pagamentos")
-    df_mes = fetch_dataframe("SELECT * FROM lancamentos WHERE EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s", (mes_selecionado, ano_selecionado))
-
-    if not df_mes.empty:
-        df_e, df_d = df_mes[df_mes['tipo'] == 'Entrada'].copy(), df_mes[df_mes['tipo'] == 'Despesa'].copy()
-
-        mask_p = df_e['descricao'].str.contains('Plantão', na=False)
-        if mask_p.any():
-            df_plantoes = df_e[mask_p].copy()
-            df_e = df_e[~mask_p].copy()
-            for (sub, data), group in df_plantoes.groupby(['subgrupo', 'data_vencimento']):
-                df_e = pd.concat([df_e, pd.DataFrame([{'descricao': f'🏥 Plantões {sub}', 'valor': group['valor'].sum(), 'data_vencimento': data, 'subgrupo': sub, 'prioridade': 'Baixa 🟢'}])], ignore_index=True)
-
-        df_e['is_prov_hr'] = df_e['descricao'].str.contains(r'Produção\s+(?:Radioclim|Humana)|Producao\s+(?:Radioclim|Humana)', case=False, na=False)
-        df_hr, df_outras = df_e[df_e['is_prov_hr']].copy(), df_e[~df_e['is_prov_hr']].copy()
-
-        mask_c = df_d['forma_pagamento'] == 'Crédito'
-        if mask_c.any():
-            sum_c = df_d[mask_c]['valor'].sum()
-            df_d = pd.concat([df_d[~mask_c], pd.DataFrame([{'id': -1, 'descricao': '💳 Cartão de Crédito', 'valor': sum_c, 'data_vencimento': datetime.date(ano_selecionado, mes_selecionado, 10), 'prioridade': 'Alta 🔴'}])], ignore_index=True)
-
-        df_d['is_prov'] = df_d['descricao'].str.contains(r'\(Provisão\)', case=False, na=False)
-        fila_normais = df_d[~df_d['is_prov']].to_dict('records')
-        fila_provisoes = df_d[df_d['is_prov']].to_dict('records')
-        for s in fila_normais: s['v_rest'] = float(s['valor'])
-        for s in fila_provisoes: s['v_rest'] = float(s['valor'])
-
-        st.subheader("🗓️ Fluxo Geral: Contas Prioritárias")
-        if not df_outras.empty:
-            ag_e = df_outras.groupby('data_vencimento').agg({'valor':'sum', 'descricao': lambda x: ' + '.join(pd.Series(x).unique().astype(str))}).reset_index().sort_values('data_vencimento')
-            for _, e in ag_e.iterrows():
-                saldo = float(e['valor'])
-                st.markdown(f"### 📥 {pd.to_datetime(e['data_vencimento']).strftime('%d/%m')} | {e['descricao']} | R$ {format_brl(saldo)}")
-                elg = sorted([s for s in fila_normais if s['v_rest'] > 0], key=lambda x: (prioridades_map.get(x.get('prioridade', 'Baixa 🟢'), 2), x['data_vencimento']))
-                aloc = []
-                s_abt = 0.0
-                for s in elg:
-                    if saldo > 0:
-                        pg = min(saldo, s['v_rest'])
-                        s['v_rest'] -= pg; saldo -= pg; s_abt += pg
-                        aloc.append({"Conta": s['descricao'], "Venc.": pd.to_datetime(s['data_vencimento']).strftime('%d/%m'), "Abatido": f"R$ {format_brl(pg)}"})
-                if aloc:
-                    st.dataframe(pd.DataFrame(aloc), use_container_width=True, hide_index=True)
-                    c1, c2 = st.columns(2)
-                    c1.metric("Distribuído", f"R$ {format_brl(s_abt)}")
-                    c2.metric("Saldo Sobrante", f"R$ {format_brl(saldo)}")
-                st.divider()
-
-        st.subheader("🎯 Fundo de Provisões: Produção Radioclim & Humana")
-        if not df_hr.empty:
-            for _, e in df_hr.iterrows():
-                saldo = float(e['valor'])
-                st.markdown(f"### 📥 {pd.to_datetime(e['data_vencimento']).strftime('%d/%m')} | {e['descricao']} | R$ {format_brl(saldo)}")
-                elg_p = sorted([s for s in fila_provisoes if s['v_rest'] > 0], key=lambda x: (prioridades_map.get(x.get('prioridade', 'Baixa 🟢'), 2), x['data_vencimento']))
-                aloc_p = []
-                s_abt_p = 0.0
-                for s in elg_p:
-                    if saldo > 0:
-                        pg = min(saldo, s['v_rest'])
-                        s['v_rest'] -= pg; saldo -= pg; s_abt_p += pg
-                        aloc_p.append({"Provisão": s['descricao'], "Abatido": f"R$ {format_brl(pg)}"})
-                if aloc_p:
-                    st.dataframe(pd.DataFrame(aloc_p), use_container_width=True, hide_index=True)
-                    c1, c2 = st.columns(2)
-                    c1.metric("Distribuído", f"R$ {format_brl(s_abt_p)}")
-                    c2.metric("Saldo Sobrante", f"R$ {format_brl(saldo)}")
-                else: st.info("Sem provisões pendentes.")
-                st.divider()
-        else: st.warning("Produção Radioclim ou Humana não encontradas nas entradas deste mês.")
-
-# =================================================================
-# 15. MÓDULO 5: ESCALA VISUAL DE PLANTÕES (RESTAURADO)
+# 14. MÓDULO: ESCALA VISUAL DE PLANTÕES
 # =================================================================
 
 elif menu == "🏥 Escala de Plantões":
