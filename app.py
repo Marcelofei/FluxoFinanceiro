@@ -134,9 +134,17 @@ def processar_recorrencias_lazy(mes, ano):
     df_contratos = fetch_dataframe("SELECT * FROM categorias_personalizadas WHERE is_recorrente = 1")
     if df_contratos.empty: return
 
+    ultimo_dia_mes = calendar.monthrange(ano, mes)[1]
+
     for _, contrato in df_contratos.iterrows():
         dt_inicio = pd.to_datetime(contrato['data_inicio']).date() if pd.notna(contrato['data_inicio']) else datetime.date(ano, mes, 1)
-        dt_limite_alvo = datetime.date(ano, mes, min(int(contrato['dia_pagamento'] or 1), calendar.monthrange(ano, mes)[1]))
+
+        # Envelope sempre nasce no último dia do mês (como Provisão funcionava antes),
+        # independente do campo "Dia de Pagamento" -- esse campo só vale pra contratos
+        # fixos normais (Aluguel, Internet, etc).
+        eh_envelope = int(contrato.get('is_envelope') or 0) == 1
+        dia_alvo = ultimo_dia_mes if eh_envelope else min(int(contrato['dia_pagamento'] or 1), ultimo_dia_mes)
+        dt_limite_alvo = datetime.date(ano, mes, dia_alvo)
 
         if dt_limite_alvo < dt_inicio: continue
 
@@ -148,7 +156,8 @@ def processar_recorrencias_lazy(mes, ano):
 
         if check_exist.empty:
             val_p = float(contrato['valor_padrao'] or 0.0)
-            desc_c = f"{contrato['categoria']} - {contrato['subgrupo'] or ''} (Recorrente)"
+            sufixo = "(Envelope do Mês)" if eh_envelope else "(Recorrente)"
+            desc_c = f"{contrato['categoria']} - {contrato['subgrupo'] or ''} {sufixo}"
             execute_query('''
                 INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago)
                 VALUES (%s, %s, %s, %s, %s, %s, 1, 1, 0, %s, 'Outros', 'Média 🟡', 0.0)
@@ -591,7 +600,7 @@ elif menu == "⚙️ Gerenciar Categorias":
             if n_rec_efetivo: n_dt_start = st.date_input("Data de Início do Contrato/Teto", value=data_contexto_ativo, key="add_dt_input")
 
         if n_env:
-            st.caption("💡 Envelope Virtual precisa de um teto mensal recorrente para funcionar — por isso a recorrência foi ativada automaticamente.")
+            st.caption("💡 Envelope Virtual sempre nasce no último dia do mês com o valor total planejado, e vai sendo abatido conforme você lança despesas pagas nessa categoria/subgrupo — o campo 'Dia de Pagamento' abaixo não é usado neste caso.")
 
         if ntipo == "Entrada" or n_rec_efetivo:
             st.markdown("---")
@@ -627,7 +636,7 @@ elif menu == "⚙️ Gerenciar Categorias":
                 e_rec = st.checkbox("🔄 Contrato fixo/recorrente? (Autogeração Mensal)", value=bool(nó['is_recorrente'] == 1) or e_env, key="edit_rec_check", disabled=e_env)
                 e_rec_efetivo = e_rec or e_env
                 if e_env:
-                    st.caption("💡 Envelope Virtual precisa de recorrência para gerar o teto mensal — por isso essa opção está travada como ativa.")
+                    st.caption("💡 Envelope Virtual sempre nasce no último dia do mês com o valor total planejado, e vai sendo abatido conforme você lança despesas pagas nessa categoria/subgrupo — o campo 'Dia de Pagamento' abaixo não é usado neste caso.")
 
                 if nó['tipo'] == "Entrada" or e_rec_efetivo:
                     st.markdown("---")
