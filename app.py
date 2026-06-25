@@ -215,6 +215,17 @@ def ordenar_categorias_com_prioridade(categorias, prioridade="despesas essenciai
     resto = sorted([c for c in cats if c != match], key=lambda x: str(x).lower())
     return ([match] if match else []) + resto
 
+def flash(tipo, mensagem):
+    """Guarda uma mensagem pra ser exibida DEPOIS do próximo rerun. st.rerun()
+    interrompe a execução na hora, então um st.success() chamado bem antes de um
+    st.rerun() na mesma linha nunca chega a ser visto na tela."""
+    st.session_state['_flash'] = (tipo, mensagem)
+
+def exibir_flash():
+    if '_flash' in st.session_state:
+        tipo, mensagem = st.session_state.pop('_flash')
+        getattr(st, tipo)(mensagem)
+
 # =================================================================
 # 5. CONFIGURAÇÃO DA PÁGINA
 # =================================================================
@@ -498,11 +509,15 @@ c_data = exportar_csv()
 if c_data: st.sidebar.download_button("📥 Baixar CSV", data=c_data, file_name=f"backup_{hoje.strftime('%d_%m_%Y')}.csv", mime="text/csv")
 a_up = st.sidebar.file_uploader("Restaurar CSV", type="csv")
 if a_up and st.sidebar.button("🚀 Confirmar Restauração"):
-    if importar_csv(a_up): st.rerun()
+    if importar_csv(a_up):
+        flash("success", "📥 Backup restaurado com sucesso!")
+        st.rerun()
 
 processar_recorrencias_lazy(mes_selecionado, ano_selecionado)
 dia_maximo_alvo = calendar.monthrange(ano_selecionado, mes_selecionado)[1]
 data_contexto_ativo = datetime.date(ano_selecionado, mes_selecionado, min(hoje.day, dia_maximo_alvo))
+
+exibir_flash()
 
 # =================================================================
 # 8. MÓDULO: TELA INICIAL
@@ -589,7 +604,7 @@ elif menu == "⚙️ Gerenciar Categorias":
                 dt_start_val = n_dt_start if n_rec else None
                 execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, data_inicio) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                               (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt, is_rec_val, dt_start_val))
-                st.success("Adicionado com sucesso!"); st.rerun()
+                flash("success", "Categoria adicionada com sucesso!"); st.rerun()
 
     with tab_edit:
         if not df_custom_global.empty:
@@ -619,7 +634,7 @@ elif menu == "⚙️ Gerenciar Categorias":
                     execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s, is_recorrente=%s WHERE id=%s",
                                   (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, 1 if e_rec else 0, sel_edit))
                     execute_query("UPDATE lancamentos SET categoria=%s, subgrupo=%s WHERE tipo=%s AND categoria=%s AND subgrupo=%s", (new_cat, new_sub, nó['tipo'], nó['categoria'], nó['subgrupo']))
-                    st.success("Atualizado."); st.rerun()
+                    flash("success", "Categoria atualizada com sucesso!"); st.rerun()
         else: st.info("Nenhuma categoria encontrada.")
 
     with tab_del:
@@ -628,7 +643,7 @@ elif menu == "⚙️ Gerenciar Categorias":
             sel_del = st.selectbox("Selecione o item para excluir:", options=[None] + list(opcoes_del_local.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_del_local[x], key="del_select_target")
             if sel_del and st.button("🗑️ Excluir Selecionado", type="primary", key="del_save_btn"):
                 execute_query("DELETE FROM categorias_personalizadas WHERE id = %s", (sel_del,))
-                st.success("Excluído!"); st.rerun()
+                flash("success", "Categoria excluída com sucesso!"); st.rerun()
 
 # =================================================================
 # 10. MÓDULO 1: LANÇAMENTOS
@@ -702,7 +717,7 @@ elif menu == "📝 Lançamentos":
             if tipo == "Despesa" and pago_imediato and not gasto_continuo:
                 executar_abatimento_envelope(categoria, subgrupo, val_f, data_venc_base.month, data_venc_base.year)
 
-            st.success("Salvo com sucesso!"); st.rerun()
+            flash("success", "✅ Lançamento registrado com sucesso!"); st.rerun()
 
 # =================================================================
 # 11. MÓDULO 2: FLUXO E PRIORIDADES
@@ -853,6 +868,7 @@ elif menu == "📊 Fluxo e Prioridades":
                         eh_provisao = '(Provisão)' in str(orig_row['descricao'])
                         if orig_row['tipo'] == 'Despesa' and novo_pago == 1 and orig_row['pago'] == 0 and not eh_provisao:
                             executar_abatimento_envelope(orig_row['categoria'], orig_row['subgrupo'], novo_valor_pago, mes_selecionado, ano_selecionado)
+            flash("success", "✅ Alterações salvas com sucesso!")
             st.rerun()
 
         st.divider()
@@ -909,7 +925,7 @@ elif menu == "📊 Fluxo e Prioridades":
                     else:
                         execute_query("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, data_vencimento=%s, forma_pagamento=%s WHERE id=%s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_data, e_forma, int(sel_id)))
                         execute_query("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, forma_pagamento=%s WHERE compra_id=%s AND data_vencimento > %s AND id != %s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_forma, r_sel['compra_id'], r_sel['data_vencimento'], int(sel_id)))
-                    st.success("Sucesso!"); st.rerun()
+                    flash("success", "Lançamento atualizado com sucesso!"); st.rerun()
 
 # =================================================================
 # 12. MÓDULO 3: DEMONSTRATIVO (COM ANALÍTICO DE PROVISÕES)
@@ -1182,8 +1198,10 @@ elif menu == "🏥 Escala de Plantões":
         c_b1, c_b2 = st.columns(2)
         with c_b1:
             if st.button("💾 Salvar Exclusões Selecionadas", disabled=not confirm_del_lote):
+                n_apagados = int(edit_esc['🗑️ Apagar'].sum())
                 for i, r in edit_esc.iterrows():
                     if r['🗑️ Apagar']: execute_query("DELETE FROM lancamentos WHERE id = %s", (int(df_geren.loc[i, 'id']),))
+                flash("success", f"🗑️ {n_apagados} plantão(ões) apagado(s) com sucesso!")
                 st.rerun()
         with c_b2:
             if st.button("🚨 Apagar TUDO o que está listado acima", disabled=not confirm_del_lote):
@@ -1191,6 +1209,7 @@ elif menu == "🏥 Escala de Plantões":
                 if ids:
                     if len(ids) == 1: execute_query("DELETE FROM lancamentos WHERE id = %s", (ids[0],))
                     else: execute_query("DELETE FROM lancamentos WHERE id IN %s", (ids,))
+                    flash("success", f"🗑️ {len(ids)} plantão(ões) apagado(s) com sucesso!")
                     st.rerun()
     else: st.info("Sem plantões registrados.")
 
@@ -1199,7 +1218,7 @@ elif menu == "🏥 Escala de Plantões":
     confirm_purgar_global = st.checkbox("🚨 Confirmo que quero APAGAR O HISTÓRICO GLOBAL e irreversível de plantões do banco de dados")
     if st.button("🚨 Purgar Histórico Global de Plantões", type="primary", disabled=not confirm_purgar_global):
         execute_query("DELETE FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE 'Plantão %'")
-        st.success("Purgado."); st.rerun()
+        flash("success", "Histórico de plantões purgado."); st.rerun()
 
     st.divider()
     st.subheader("➕ Adicionar à Escala")
@@ -1240,4 +1259,5 @@ elif menu == "🏥 Escala de Plantões":
                         if curr.weekday() in dias_s: regs.append(("Entrada", cat_escolhida, loc_p, f"Plantão {loc_p} ({curr.strftime('%d/%m/%Y')})", v_t, datetime.date(a_p, m_p, reg_d), 1, 1, 0, str(uuid.uuid4()), "Outros", "Baixa 🟢", 0.0))
             if regs:
                 execute_values_query('''INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago) VALUES %s''', regs)
+                flash("success", f"✅ {len(regs)} plantão(ões) registrado(s) com sucesso!")
                 st.rerun()
