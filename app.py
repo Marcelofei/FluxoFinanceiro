@@ -126,6 +126,17 @@ def init_db():
     execute_query("ALTER TABLE lancamentos ADD COLUMN IF NOT EXISTS prioridade TEXT DEFAULT 'Baixa 🟢';")
     execute_query("ALTER TABLE lancamentos ADD COLUMN IF NOT EXISTS valor_pago NUMERIC DEFAULT 0.0;")
 
+    # Tabela leve só para enriquecer dívidas detectadas automaticamente (nome do
+    # credor e taxa, ambos opcionais e puramente informativos). O painel de
+    # Dívidas funciona sem nenhuma linha aqui -- isso só adiciona contexto.
+    execute_query('''
+        CREATE TABLE IF NOT EXISTS info_dividas (
+            compra_id TEXT PRIMARY KEY,
+            credor TEXT,
+            taxa_juros_mensal NUMERIC
+        );
+    ''')
+
 # =================================================================
 # 2. MOTOR DE GERAÇÃO LAZY / RECORRÊNCIAS CONTRATUAIS
 # =================================================================
@@ -464,6 +475,7 @@ st.sidebar.markdown("<div class='nav-eyebrow'>Visão Geral</div>", unsafe_allow_
 _nav_btn("🏠 Início", "nav_inicio")
 _nav_btn("📑 Demonstrativo", "nav_demonstrativo")
 _nav_btn("📈 Balanço Anual", "nav_balanco")
+_nav_btn("💳 Dívidas", "nav_dividas")
 
 st.sidebar.markdown("<div class='nav-eyebrow'>Lançar e Organizar</div>", unsafe_allow_html=True)
 _nav_btn("📝 Lançamentos", "nav_lancamentos")
@@ -664,6 +676,26 @@ elif menu == "⚙️ Gerenciar Categorias":
             if sel_del and st.button("🗑️ Excluir Selecionado", type="primary", key="del_save_btn"):
                 execute_query("DELETE FROM categorias_personalizadas WHERE id = %s", (sel_del,))
                 flash("success", "Categoria excluída com sucesso!"); st.rerun()
+
+    st.divider()
+    with st.expander("🧹 Limpeza de Lançamentos Antigos (tag 'Provisão')"):
+        st.caption("Itens lançados quando a Provisão ainda existia em 'Lançamentos'. Busca direto pela tag no banco, "
+                   "independente de em qual aba eles aparecem hoje.")
+        df_provisao_antiga = fetch_dataframe("SELECT id, tipo, categoria, subgrupo, descricao, valor, data_vencimento, pago FROM lancamentos WHERE descricao ILIKE %s ORDER BY data_vencimento", ('%(Provisão)%',))
+        if df_provisao_antiga.empty:
+            st.success("Nenhum lançamento com a tag 'Provisão' encontrado.")
+        else:
+            df_provisao_antiga['valor'] = df_provisao_antiga['valor'].astype(float)
+            st.warning(f"Encontrados {len(df_provisao_antiga)} lançamento(s), somando R$ {format_brl(df_provisao_antiga['valor'].sum())}.")
+            st.dataframe(df_provisao_antiga[['data_vencimento', 'tipo', 'categoria', 'subgrupo', 'descricao', 'valor', 'pago']], use_container_width=True, hide_index=True)
+            confirm_limpeza_prov = st.checkbox("⚠️ Confirmo que quero apagar TODOS os lançamentos listados acima, permanentemente", key="confirm_limpeza_prov")
+            if st.button("🚨 Apagar Todos os Lançamentos 'Provisão' Listados", type="primary", disabled=not confirm_limpeza_prov, key="btn_limpeza_prov"):
+                ids_apagar = tuple(df_provisao_antiga['id'].tolist())
+                if len(ids_apagar) == 1:
+                    execute_query("DELETE FROM lancamentos WHERE id = %s", (ids_apagar[0],))
+                else:
+                    execute_query("DELETE FROM lancamentos WHERE id IN %s", (ids_apagar,))
+                flash("success", f"🧹 {len(ids_apagar)} lançamento(s) antigo(s) apagado(s)."); st.rerun()
 
 # =================================================================
 # 10. MÓDULO 1: LANÇAMENTOS
@@ -1081,6 +1113,66 @@ elif menu == "📑 Demonstrativo":
             else:
                 st.info("Nenhum lançamento encontrado para os envelopes configurados neste mês.")
 
+        st.divider()
+        with st.expander("🔍 Conciliação (verificação de integridade dos envelopes)"):
+            st.caption("Confere se 'Gasto Realizado + Saldo Restante' ainda bate com o Valor Padrão configurado na "
+                      "categoria. Diferenças podem ser normais (ex: você mudou o Valor Padrão depois que o teto do "
+                      "mês já tinha sido gerado) — isso só te avisa pra você decidir se é esperado ou não.")
+
+            df_conciliacao = fetch_dataframe('''
+                WITH envelopes AS (
+                    SELECT categoria, subgrupo, COALESCE(valor_padrao, 0) as valor_padrao
+                    FROM categorias_personalizadas
+                    WHERE is_envelope = 1 AND tipo = 'Despesa'
+                ),
+                realizado_mes AS (
+                    SELECT categoria, subgrupo, SUM(valor_pago) as realizado
+                    FROM lancamentos
+                    WHERE tipo = 'Despesa' AND pago = 1 AND descricao NOT ILIKE %s
+                      AND EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s
+                    GROUP BY categoria, subgrupo
+                ),
+                teto_mes AS (
+                    SELECT categoria, subgrupo, SUM(valor) as saldo_atual, COUNT(*) as qtd_linhas_teto
+                    FROM lancamentos
+                    WHERE tipo = 'Despesa' AND pago = 0 AND descricao ILIKE %s
+                      AND EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s
+                    GROUP BY categoria, subgrupo
+                )
+                SELECT
+                    e.categoria, e.subgrupo, e.valor_padrao,
+                    COALESCE(r.realizado, 0) as realizado,
+                    COALESCE(t.saldo_atual, 0) as saldo_atual,
+                    COALESCE(t.qtd_linhas_teto, 0) as qtd_linhas_teto
+                FROM envelopes e
+                LEFT JOIN realizado_mes r ON r.categoria = e.categoria AND r.subgrupo = e.subgrupo
+                LEFT JOIN teto_mes t ON t.categoria = e.categoria AND t.subgrupo = e.subgrupo
+            ''', ('%(Recorrente)%', mes_selecionado, ano_selecionado, '%(Recorrente)%', mes_selecionado, ano_selecionado))
+
+            if df_conciliacao.empty:
+                st.info("Nenhuma categoria de envelope configurada ainda.")
+            else:
+                df_conciliacao['valor_padrao'] = df_conciliacao['valor_padrao'].astype(float)
+                df_conciliacao['realizado'] = df_conciliacao['realizado'].astype(float)
+                df_conciliacao['saldo_atual'] = df_conciliacao['saldo_atual'].astype(float)
+                df_conciliacao['diferenca'] = df_conciliacao['valor_padrao'] - (df_conciliacao['realizado'] + df_conciliacao['saldo_atual'])
+
+                problemas = df_conciliacao[(df_conciliacao['diferenca'].abs() > 0.01) | (df_conciliacao['qtd_linhas_teto'] > 1) | (df_conciliacao['qtd_linhas_teto'] == 0)]
+
+                if problemas.empty:
+                    st.success("✅ Tudo conciliado — nenhuma divergência encontrada nos envelopes deste mês.")
+                else:
+                    st.warning(f"⚠️ {len(problemas)} item(ns) pra revisar:")
+                    for _, p in problemas.iterrows():
+                        motivos = []
+                        if p['qtd_linhas_teto'] == 0:
+                            motivos.append("nenhum teto gerado pra este mês ainda (recorrência pode não ter rodado)")
+                        if p['qtd_linhas_teto'] > 1:
+                            motivos.append(f"{int(p['qtd_linhas_teto'])} linhas de teto simultâneas (deveria ter só 1)")
+                        if abs(p['diferenca']) > 0.01:
+                            motivos.append(f"diferença de R$ {format_brl(abs(p['diferenca']))} entre o Valor Padrão e (realizado + saldo)")
+                        st.markdown(f"**{p['categoria']} → {p['subgrupo'] or 'Geral'}** — {'; '.join(motivos)}")
+
 # =================================================================
 # 13. MÓDULO: BALANÇO ANUAL
 # =================================================================
@@ -1156,7 +1248,103 @@ elif menu == "📈 Balanço Anual":
                     st.plotly_chart(aplicar_tema_grafico(fig_sub), use_container_width=True)
 
 # =================================================================
-# 14. MÓDULO: ESCALA VISUAL DE PLANTÕES
+# 14. MÓDULO: PAINEL DE DÍVIDAS
+# =================================================================
+
+elif menu == "💳 Dívidas":
+    st.header("💳 Painel de Dívidas")
+    st.caption("Detectado automaticamente a partir de despesas lançadas como 'Parcelada' em '📝 Lançamentos'. "
+              "Compras de parcela única ou recorrências 'Fixa/Contínua' não entram aqui, porque não têm data de término.")
+
+    df_dividas = fetch_dataframe('''
+        SELECT
+            compra_id, categoria, subgrupo,
+            MIN(descricao) as descricao,
+            SUM(valor) as valor_total,
+            SUM(CASE WHEN pago = 1 THEN valor_pago ELSE 0 END) as valor_pago_total,
+            MAX(total_parcelas) as total_parcelas,
+            SUM(CASE WHEN pago = 1 THEN 1 ELSE 0 END) as parcelas_pagas,
+            MIN(data_vencimento) as data_inicio,
+            MAX(data_vencimento) as data_fim,
+            MIN(CASE WHEN pago = 0 THEN data_vencimento END) as proxima_parcela
+        FROM lancamentos
+        WHERE tipo = 'Despesa' AND total_parcelas > 1 AND total_parcelas != 999 AND compra_id IS NOT NULL
+        GROUP BY compra_id, categoria, subgrupo
+        ORDER BY data_fim ASC
+    ''')
+
+    if df_dividas.empty:
+        st.info("Nenhuma despesa parcelada com mais de 1 parcela encontrada ainda. Lance uma dívida/financiamento "
+                "em '📝 Lançamentos' com Recorrência = 'Parcelada' e ela aparece aqui automaticamente.")
+    else:
+        df_info = fetch_dataframe("SELECT * FROM info_dividas")
+        df_dividas = df_dividas.merge(df_info, on='compra_id', how='left')
+        df_dividas['valor_total'] = df_dividas['valor_total'].astype(float)
+        df_dividas['valor_pago_total'] = df_dividas['valor_pago_total'].astype(float)
+        df_dividas['saldo_devedor'] = df_dividas['valor_total'] - df_dividas['valor_pago_total']
+
+        total_divida_geral = float(df_dividas['saldo_devedor'].clip(lower=0).sum())
+        n_dividas_ativas = int((df_dividas['saldo_devedor'] > 0.01).sum())
+        n_parcelas_restantes = int((df_dividas['total_parcelas'] - df_dividas['parcelas_pagas']).clip(lower=0).sum())
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("💰 Saldo Devedor Total", f"R$ {format_brl(total_divida_geral)}")
+        c2.metric("📋 Dívidas Ativas", str(n_dividas_ativas))
+        c3.metric("📅 Parcelas Restantes (todas)", str(n_parcelas_restantes))
+
+        st.divider()
+
+        for _, d in df_dividas.sort_values('saldo_devedor', ascending=False).iterrows():
+            credor_label = d['credor'] if pd.notna(d.get('credor')) and str(d.get('credor')).strip() else d['descricao']
+            total_parc = int(d['total_parcelas']) if pd.notna(d['total_parcelas']) and d['total_parcelas'] > 0 else 1
+            parc_pagas = int(d['parcelas_pagas'])
+            progresso = min(parc_pagas / total_parc, 1.0)
+
+            with st.container(border=True):
+                c_a, c_b = st.columns([3, 1.4])
+                with c_a:
+                    st.markdown(f"**{credor_label}**")
+                    st.caption(f"{d['categoria']} → {d['subgrupo'] or 'Geral'}")
+                with c_b:
+                    if d['saldo_devedor'] <= 0.01:
+                        st.success("✅ Quitada")
+                    else:
+                        st.markdown(f"<div style='text-align:right; font-family: IBM Plex Mono, monospace; font-weight:600; font-size:1.1rem;'>R$ {format_brl(d['saldo_devedor'])}</div>", unsafe_allow_html=True)
+                        st.caption("Saldo devedor")
+
+                st.progress(progresso)
+                st.caption(f"{parc_pagas}/{total_parc} parcelas pagas")
+
+                c_x, c_y, c_z = st.columns(3)
+                c_x.caption(f"📆 Início: {pd.to_datetime(d['data_inicio']).strftime('%d/%m/%Y')}")
+                if pd.notna(d['proxima_parcela']):
+                    c_y.caption(f"⏳ Próxima: {pd.to_datetime(d['proxima_parcela']).strftime('%d/%m/%Y')}")
+                else:
+                    c_y.caption("⏳ Sem parcelas pendentes")
+                c_z.caption(f"🏁 Término previsto: {pd.to_datetime(d['data_fim']).strftime('%d/%m/%Y')}")
+
+                if pd.notna(d.get('taxa_juros_mensal')):
+                    st.caption(f"📊 Taxa informada: {float(d['taxa_juros_mensal']):.2f}% a.m. (apenas referência, não usada em cálculo)")
+
+        st.divider()
+        with st.expander("✏️ Adicionar nome do credor / taxa (opcional)"):
+            st.caption("Isso é só pra exibição — não muda nenhum valor ou parcela já lançada.")
+            opcoes_divida = {r['compra_id']: (r['credor'] if pd.notna(r.get('credor')) and str(r.get('credor')).strip() else r['descricao']) for _, r in df_dividas.iterrows()}
+            sel_divida = st.selectbox("Selecione a dívida:", options=[None] + list(opcoes_divida.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_divida[x])
+            if sel_divida:
+                linha_atual = df_dividas[df_dividas['compra_id'] == sel_divida].iloc[0]
+                credor_input = st.text_input("Nome do credor", value=linha_atual['credor'] if pd.notna(linha_atual.get('credor')) else "")
+                taxa_input = st.number_input("Taxa de juros mensal (%)", min_value=0.0, step=0.1,
+                                             value=float(linha_atual['taxa_juros_mensal']) if pd.notna(linha_atual.get('taxa_juros_mensal')) else 0.0)
+                if st.button("💾 Salvar Informações", type="primary"):
+                    execute_query('''
+                        INSERT INTO info_dividas (compra_id, credor, taxa_juros_mensal) VALUES (%s, %s, %s)
+                        ON CONFLICT (compra_id) DO UPDATE SET credor = EXCLUDED.credor, taxa_juros_mensal = EXCLUDED.taxa_juros_mensal
+                    ''', (sel_divida, credor_input.strip() or None, taxa_input if taxa_input > 0 else None))
+                    flash("success", "Informações da dívida salvas!"); st.rerun()
+
+# =================================================================
+# 15. MÓDULO: ESCALA VISUAL DE PLANTÕES
 # =================================================================
 
 elif menu == "🏥 Escala de Plantões":
