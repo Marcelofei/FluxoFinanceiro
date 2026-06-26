@@ -1261,12 +1261,13 @@ elif menu == "💳 Dívidas":
             compra_id, categoria, subgrupo,
             MIN(descricao) as descricao,
             SUM(valor) as valor_total,
-            SUM(CASE WHEN pago = 1 THEN valor_pago ELSE 0 END) as valor_pago_total,
+            SUM(CASE WHEN pago = 1 THEN valor_pago WHEN data_vencimento <= CURRENT_DATE THEN valor ELSE 0 END) as valor_pago_estimado,
             MAX(total_parcelas) as total_parcelas,
-            SUM(CASE WHEN pago = 1 THEN 1 ELSE 0 END) as parcelas_pagas,
+            SUM(CASE WHEN pago = 1 OR data_vencimento <= CURRENT_DATE THEN 1 ELSE 0 END) as parcelas_pagas_estimado,
+            SUM(CASE WHEN pago = 1 THEN 1 ELSE 0 END) as parcelas_confirmadas_app,
             MIN(data_vencimento) as data_inicio,
             MAX(data_vencimento) as data_fim,
-            MIN(CASE WHEN pago = 0 THEN data_vencimento END) as proxima_parcela
+            MIN(CASE WHEN pago = 0 AND data_vencimento > CURRENT_DATE THEN data_vencimento END) as proxima_parcela
         FROM lancamentos
         WHERE tipo = 'Despesa' AND total_parcelas > 1 AND total_parcelas != 999 AND compra_id IS NOT NULL
         GROUP BY compra_id, categoria, subgrupo
@@ -1277,15 +1278,19 @@ elif menu == "💳 Dívidas":
         st.info("Nenhuma despesa parcelada com mais de 1 parcela encontrada ainda. Lance uma dívida/financiamento "
                 "em '📝 Lançamentos' com Recorrência = 'Parcelada' e ela aparece aqui automaticamente.")
     else:
+        st.caption("💡 'Parcelas pagas' considera vencida = paga (pelo cronograma), mesmo que você não tenha marcado "
+                  "o checkbox em Fluxo e Prioridades mês a mês. O número 'confirmado no app' mostra só o que foi "
+                  "explicitamente marcado como pago.")
+
         df_info = fetch_dataframe("SELECT * FROM info_dividas")
         df_dividas = df_dividas.merge(df_info, on='compra_id', how='left')
         df_dividas['valor_total'] = df_dividas['valor_total'].astype(float)
-        df_dividas['valor_pago_total'] = df_dividas['valor_pago_total'].astype(float)
-        df_dividas['saldo_devedor'] = df_dividas['valor_total'] - df_dividas['valor_pago_total']
+        df_dividas['valor_pago_estimado'] = df_dividas['valor_pago_estimado'].astype(float)
+        df_dividas['saldo_devedor'] = df_dividas['valor_total'] - df_dividas['valor_pago_estimado']
 
         total_divida_geral = float(df_dividas['saldo_devedor'].clip(lower=0).sum())
         n_dividas_ativas = int((df_dividas['saldo_devedor'] > 0.01).sum())
-        n_parcelas_restantes = int((df_dividas['total_parcelas'] - df_dividas['parcelas_pagas']).clip(lower=0).sum())
+        n_parcelas_restantes = int((df_dividas['total_parcelas'] - df_dividas['parcelas_pagas_estimado']).clip(lower=0).sum())
 
         c1, c2, c3 = st.columns(3)
         c1.metric("💰 Saldo Devedor Total", f"R$ {format_brl(total_divida_geral)}")
@@ -1297,8 +1302,9 @@ elif menu == "💳 Dívidas":
         for _, d in df_dividas.sort_values('saldo_devedor', ascending=False).iterrows():
             credor_label = d['credor'] if pd.notna(d.get('credor')) and str(d.get('credor')).strip() else d['descricao']
             total_parc = int(d['total_parcelas']) if pd.notna(d['total_parcelas']) and d['total_parcelas'] > 0 else 1
-            parc_pagas = int(d['parcelas_pagas'])
-            progresso = min(parc_pagas / total_parc, 1.0)
+            parc_pagas_est = int(d['parcelas_pagas_estimado'])
+            parc_confirmadas = int(d['parcelas_confirmadas_app'])
+            progresso = min(parc_pagas_est / total_parc, 1.0)
 
             with st.container(border=True):
                 c_a, c_b = st.columns([3, 1.4])
@@ -1313,14 +1319,14 @@ elif menu == "💳 Dívidas":
                         st.caption("Saldo devedor")
 
                 st.progress(progresso)
-                st.caption(f"{parc_pagas}/{total_parc} parcelas pagas")
+                st.caption(f"{parc_pagas_est}/{total_parc} parcelas pagas (pelo cronograma) · {parc_confirmadas} confirmadas no app")
 
                 c_x, c_y, c_z = st.columns(3)
                 c_x.caption(f"📆 Início: {pd.to_datetime(d['data_inicio']).strftime('%d/%m/%Y')}")
                 if pd.notna(d['proxima_parcela']):
                     c_y.caption(f"⏳ Próxima: {pd.to_datetime(d['proxima_parcela']).strftime('%d/%m/%Y')}")
                 else:
-                    c_y.caption("⏳ Sem parcelas pendentes")
+                    c_y.caption("⏳ Sem parcelas futuras pendentes")
                 c_z.caption(f"🏁 Término previsto: {pd.to_datetime(d['data_fim']).strftime('%d/%m/%Y')}")
 
                 if pd.notna(d.get('taxa_juros_mensal')):
