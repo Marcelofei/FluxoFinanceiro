@@ -665,6 +665,26 @@ elif menu == "⚙️ Gerenciar Categorias":
                 execute_query("DELETE FROM categorias_personalizadas WHERE id = %s", (sel_del,))
                 flash("success", "Categoria excluída com sucesso!"); st.rerun()
 
+    st.divider()
+    with st.expander("🧹 Limpeza de Lançamentos Antigos (tag 'Provisão')"):
+        st.caption("Itens lançados quando a Provisão ainda existia em 'Lançamentos'. Busca direto pela tag no banco, "
+                   "independente de em qual aba eles aparecem hoje.")
+        df_provisao_antiga = fetch_dataframe("SELECT id, tipo, categoria, subgrupo, descricao, valor, data_vencimento, pago FROM lancamentos WHERE descricao ILIKE %s ORDER BY data_vencimento", ('%(Provisão)%',))
+        if df_provisao_antiga.empty:
+            st.success("Nenhum lançamento com a tag 'Provisão' encontrado.")
+        else:
+            df_provisao_antiga['valor'] = df_provisao_antiga['valor'].astype(float)
+            st.warning(f"Encontrados {len(df_provisao_antiga)} lançamento(s), somando R$ {format_brl(df_provisao_antiga['valor'].sum())}.")
+            st.dataframe(df_provisao_antiga[['data_vencimento', 'tipo', 'categoria', 'subgrupo', 'descricao', 'valor', 'pago']], use_container_width=True, hide_index=True)
+            confirm_limpeza_prov = st.checkbox("⚠️ Confirmo que quero apagar TODOS os lançamentos listados acima, permanentemente", key="confirm_limpeza_prov")
+            if st.button("🚨 Apagar Todos os Lançamentos 'Provisão' Listados", type="primary", disabled=not confirm_limpeza_prov, key="btn_limpeza_prov"):
+                ids_apagar = tuple(df_provisao_antiga['id'].tolist())
+                if len(ids_apagar) == 1:
+                    execute_query("DELETE FROM lancamentos WHERE id = %s", (ids_apagar[0],))
+                else:
+                    execute_query("DELETE FROM lancamentos WHERE id IN %s", (ids_apagar,))
+                flash("success", f"🧹 {len(ids_apagar)} lançamento(s) antigo(s) apagado(s)."); st.rerun()
+
 # =================================================================
 # 10. MÓDULO 1: LANÇAMENTOS
 # =================================================================
