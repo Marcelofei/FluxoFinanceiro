@@ -413,6 +413,45 @@ def aplicar_estilo_visual():
         border-radius: 12px !important;
         background: #1B2127 !important;
     }
+
+    /* -----------------------------------------------------------
+       RESPONSIVO PARA MOBILE.
+       st.columns() do Streamlit não empilha sozinho em tela estreita --
+       fica tudo espremido lado a lado. Essa regra força empilhamento
+       vertical abaixo de 640px (celular; não afeta tablet/desktop),
+       e ajusta espaçamento/tamanho de fonte pra caber melhor.
+       Não alcança a GRADE INTERNA do st.data_editor/st.dataframe --
+       isso é limite real do componente, não tem CSS que resolva.
+       ----------------------------------------------------------- */
+    @media (max-width: 640px) {
+        [data-testid="stHorizontalBlock"] {
+            flex-direction: column !important;
+        }
+        [data-testid="stHorizontalBlock"] > div {
+            width: 100% !important;
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+        }
+        .block-container {
+            padding-left: 0.9rem !important;
+            padding-right: 0.9rem !important;
+            padding-top: 1.2rem !important;
+        }
+        div[data-testid="stMetricValue"] { font-size: 1.25rem !important; }
+        h1 { font-size: 1.3rem !important; }
+        h2 { font-size: 1.15rem !important; }
+        h3 { font-size: 1.05rem !important; }
+        .stButton button {
+            min-height: 2.6rem;
+            font-size: 0.92rem !important;
+        }
+        section[data-testid="stSidebar"] .stButton button {
+            min-height: 2.4rem;
+        }
+        div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
+            font-size: 0.85rem !important;
+        }
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -841,14 +880,14 @@ elif menu == "📊 Fluxo e Prioridades":
             return row['descricao']
 
         df_view['Desc. Exibição'] = df_view.apply(format_desc, axis=1)
-        df_view.insert(0, '🗑️ Este', False)
-        df_view.insert(1, '🗑️ Futuros', False)
+        df_view.insert(0, '🗑️ Excluir', "")
 
         st.markdown("*(Dica: Modificar o 'Valor Real' preserva 100% o seu planejamento na coluna anterior).*")
         edit_df = st.data_editor(
-            df_view[['🗑️ Este', '🗑️ Futuros', 'Data', 'Alerta', 'prioridade', 'Desc. Exibição', 'valor', 'valor_pago', 'Pago']],
+            df_view[['🗑️ Excluir', 'Data', 'Alerta', 'prioridade', 'Desc. Exibição', 'valor', 'valor_pago', 'Pago']],
             use_container_width=True, hide_index=True,
             column_config={
+                "🗑️ Excluir": st.column_config.SelectboxColumn("Excluir", options=["", "Este", "Este e Futuros"], width="small"),
                 "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
                 "Alerta": st.column_config.TextColumn("Status", disabled=True),
                 "valor": st.column_config.NumberColumn("Valor Previsto", format="%.2f"),
@@ -885,11 +924,13 @@ elif menu == "📊 Fluxo e Prioridades":
 
                 nova_desc = row['Desc. Exibição'].split(' (')[0]
                 tupla_ids_reais = tuple(map(int, orig_row['ids_alvo'].split(',')))
+                excluir_futuros = row['🗑️ Excluir'] == "Este e Futuros"
+                excluir_algo = row['🗑️ Excluir'] in ("Este", "Este e Futuros")
 
-                if row['🗑️ Este'] or row['🗑️ Futuros']:
+                if excluir_algo:
                     if id_s == '-1': st.warning("Cartões consolidados não podem ser apagados aqui.")
                     elif id_s.startswith('plantao_'): execute_query("DELETE FROM lancamentos WHERE id IN %s", (tupla_ids_reais,))
-                    else: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if row['🗑️ Futuros'] else "DELETE FROM lancamentos WHERE id = %s", (orig_row['compra_id'], orig_row['data_vencimento']) if row['🗑️ Futuros'] else (tupla_ids_reais[0],))
+                    else: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if excluir_futuros else "DELETE FROM lancamentos WHERE id = %s", (orig_row['compra_id'], orig_row['data_vencimento']) if excluir_futuros else (tupla_ids_reais[0],))
                 else:
                     if id_s == '-1':
                         execute_query("UPDATE lancamentos SET pago=%s WHERE id IN %s", (novo_pago, tupla_ids_reais))
