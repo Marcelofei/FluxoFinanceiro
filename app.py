@@ -813,24 +813,30 @@ elif menu == "📊 Fluxo e Prioridades":
         df['valor'] = df['valor'].astype(float)
         df['valor_pago'] = df['valor_pago'].fillna(0.0).astype(float)
 
-        st.subheader("🔍 Filtros")
-        c_filt1, c_filt2 = st.columns(2)
-        tipos_disp = df['tipo'].unique().tolist()
-        with c_filt1: sel_tipo = st.multiselect("Filtrar por Tipo", tipos_disp, placeholder="Todos os Tipos")
-        tipos_filtro = sel_tipo if sel_tipo else tipos_disp
-        cat_disp = df[df['tipo'].isin(tipos_filtro)]['categoria'].unique().tolist()
-        with c_filt2: sel_cat = st.multiselect("Filtrar por Categoria", cat_disp, placeholder="Todas as Categorias")
-        cat_filtro = sel_cat if sel_cat else cat_disp
+        # -----------------------------------------------------------
+        # CONSOLIDAÇÃO (feita sobre TODO o mês, ANTES de qualquer filtro).
+        #
+        # CORREÇÃO: antes, a consolidação de Cartão de Crédito/Plantões
+        # rodava sobre o resultado JÁ FILTRADO por Tipo/Categoria. Se você
+        # deixasse (mesmo sem querer) um filtro de categoria ativo, marcar
+        # a linha "Fatura Consolidada" como paga só dava baixa nas compras
+        # daquela categoria filtrada -- as demais compras de crédito
+        # continuavam pago=0 no banco, e reapareciam como pendentes no
+        # Demonstrativo (que não tem filtro nenhum), mesmo você tendo
+        # "marcado tudo como pago" aqui. Agora a consolidação usa SEMPRE
+        # o mês inteiro (df_base), então marcar Pago sempre baixa 100%
+        # das compras reais, e o filtro só decide o que aparece na TELA.
+        # -----------------------------------------------------------
+        df_base = df.copy()
+        df_base['ids_alvo'] = df_base['id'].astype(str)
 
-        df_view = df[(df['tipo'].isin(tipos_filtro)) & (df['categoria'].isin(cat_filtro))].copy()
-        df_view['ids_alvo'] = df_view['id'].astype(str)
-
-        mask_cred = df_view['forma_pagamento'] == 'Crédito'
-        if mask_cred.any():
-            sum_cred = df_view[mask_cred]['valor'].sum()
-            sum_pago_cred = df_view[mask_cred]['valor_pago'].sum()
-            all_paid = (df_view[mask_cred]['pago'] == 1).all()
-            ids_lote_credito = ','.join(df_view[mask_cred]['id'].astype(str))
+        mask_cred_full = df_base['forma_pagamento'] == 'Crédito'
+        dummy_credito = None
+        if mask_cred_full.any():
+            sum_cred = df_base[mask_cred_full]['valor'].sum()
+            sum_pago_cred = df_base[mask_cred_full]['valor_pago'].sum()
+            all_paid = (df_base[mask_cred_full]['pago'] == 1).all()
+            ids_lote_credito = ','.join(df_base[mask_cred_full]['id'].astype(str))
 
             dummy_credito = pd.DataFrame([{
                 'id': '-1', 'tipo': 'Despesa', 'categoria': 'N/A', 'subgrupo': '',
@@ -839,27 +845,54 @@ elif menu == "📊 Fluxo e Prioridades":
                 'pago': 1 if all_paid else 0, 'compra_id': 'cartao_dummy',
                 'forma_pagamento': 'Crédito', 'prioridade': 'Alta 🔴', 'ids_alvo': ids_lote_credito
             }])
-            df_view = df_view[~mask_cred].copy()
-            df_view = pd.concat([df_view, dummy_credito], ignore_index=True)
+        df_base_sem_cred = df_base[~mask_cred_full].copy()
 
-        mask_plantoes = (df_view['tipo'] == 'Entrada') & df_view['descricao'].str.contains('plant', case=False, na=False)
-        if mask_plantoes.any():
-            df_plantoes = df_view[mask_plantoes].copy()
-            df_view = df_view[~mask_plantoes].copy()
-            for nome_grupo, grupo in df_plantoes.groupby(['subgrupo', 'data_vencimento']):
+        mask_plantoes_full = (df_base_sem_cred['tipo'] == 'Entrada') & df_base_sem_cred['descricao'].str.contains('plant', case=False, na=False)
+        dummies_plantao = []
+        if mask_plantoes_full.any():
+            df_plantoes_full = df_base_sem_cred[mask_plantoes_full].copy()
+            for nome_grupo, grupo in df_plantoes_full.groupby(['subgrupo', 'data_vencimento']):
                 subg_nome, dt_venc = nome_grupo
                 sum_pago_plantao = grupo['valor_pago'].sum()
                 status_lote = 1 if (grupo['pago'] == 1).all() else 0
                 ids_lote_plantao = ','.join(grupo['id'].astype(str))
 
-                dummy_plantao = pd.DataFrame([{
+                dummies_plantao.append({
                     'id': f'plantao_{subg_nome}', 'tipo': 'Entrada', 'categoria': grupo.iloc[0]['categoria'],
                     'subgrupo': subg_nome, 'descricao': f'🏥 Plantões {subg_nome} (Consolidado do Mês)',
                     'valor': grupo['valor'].sum(), 'valor_pago': sum_pago_plantao,
                     'data_vencimento': dt_venc, 'pago': status_lote, 'compra_id': 'plantao_dummy',
                     'forma_pagamento': 'Outros', 'prioridade': 'Baixa 🟢', 'ids_alvo': ids_lote_plantao
-                }])
-                df_view = pd.concat([df_view, dummy_plantao], ignore_index=True)
+                })
+        df_individuais = df_base_sem_cred[~mask_plantoes_full].copy()
+
+        df_consolidado = df_individuais.copy()
+        if dummy_credito is not None:
+            df_consolidado = pd.concat([df_consolidado, dummy_credito], ignore_index=True)
+        if dummies_plantao:
+            df_consolidado = pd.concat([df_consolidado, pd.DataFrame(dummies_plantao)], ignore_index=True)
+
+        # -----------------------------------------------------------
+        # FILTROS (aplicados por cima do dataframe já consolidado).
+        # As linhas consolidadas (Fatura/Plantões) ficam ISENTAS do filtro
+        # de categoria -- elas representam várias categorias ao mesmo tempo,
+        # então filtrar por categoria não deveria fazê-las sumir da tela
+        # (o que também contribuía pra confusão de "sumiu, então já paguei
+        # tudo"). Elas continuam respeitando o filtro de Tipo normalmente.
+        # -----------------------------------------------------------
+        st.subheader("🔍 Filtros")
+        c_filt1, c_filt2 = st.columns(2)
+        tipos_disp = df_individuais['tipo'].unique().tolist()
+        with c_filt1: sel_tipo = st.multiselect("Filtrar por Tipo", tipos_disp, placeholder="Todos os Tipos")
+        tipos_filtro = sel_tipo if sel_tipo else tipos_disp
+        cat_disp = df_individuais[df_individuais['tipo'].isin(tipos_filtro)]['categoria'].unique().tolist()
+        with c_filt2: sel_cat = st.multiselect("Filtrar por Categoria", cat_disp, placeholder="Todas as Categorias")
+        cat_filtro = sel_cat if sel_cat else cat_disp
+
+        eh_dummy = df_consolidado['id'].astype(str).isin(['-1']) | df_consolidado['id'].astype(str).str.startswith('plantao_')
+        mask_individuais_filtro = (~eh_dummy) & df_consolidado['tipo'].isin(tipos_filtro) & df_consolidado['categoria'].isin(cat_filtro)
+        mask_dummy_filtro = eh_dummy & df_consolidado['tipo'].isin(tipos_filtro)
+        df_view = df_consolidado[mask_individuais_filtro | mask_dummy_filtro].copy()
 
         df_view['id'] = df_view['id'].astype(str)
         df_view['ordem_pri'] = df_view['prioridade'].map(prioridades_map).fillna(2)
@@ -1041,6 +1074,28 @@ elif menu == "📑 Demonstrativo":
             # corretamente, mas ele fica oculto das listagens por categoria abaixo.
             df_e_visivel = df_e[df_e['categoria'] != 'Ajuste']
             df_d_visivel = df_d[df_d['categoria'] != 'Ajuste']
+
+            # -----------------------------------------------------------
+            # CORREÇÃO: 'Ajuste' contava nas métricas acima (falta_pagar/
+            # falta_receber) mas ficava invisível na lista por categoria,
+            # o que podia parecer "o total não bate com o que vejo pra
+            # marcar". Agora, se existir algum Ajuste PENDENTE (pago=0),
+            # ele aparece aqui, separado, pra você conseguir reconciliar.
+            # -----------------------------------------------------------
+            df_ajustes_pend_despesa = df_d[(df_d['categoria'] == 'Ajuste') & (df_d['pago'] == 0)]
+            df_ajustes_pend_entrada = df_e[(df_e['categoria'] == 'Ajuste') & (df_e['pago'] == 0)]
+            if not df_ajustes_pend_despesa.empty or not df_ajustes_pend_entrada.empty:
+                total_ajustes = df_ajustes_pend_despesa['valor'].sum() + df_ajustes_pend_entrada['valor'].sum()
+                with st.expander(f"🔧 Ajustes pendentes não categorizados — R$ {format_brl(total_ajustes)} (incluído nos totais acima, mas fora das categorias abaixo)", expanded=True):
+                    st.caption("Esses lançamentos nascem quando você edita o VALOR (não só o 'Pago') de uma linha "
+                              "consolidada de Cartão/Plantão em '📊 Fluxo e Prioridades'.")
+                    df_ajustes_tudo = pd.concat([df_ajustes_pend_despesa, df_ajustes_pend_entrada])
+                    st.dataframe(
+                        df_ajustes_tudo[['Data BR', 'tipo', 'descricao', 'valor']].rename(
+                            columns={'Data BR': 'Data', 'tipo': 'Tipo', 'descricao': 'Descrição', 'valor': 'Valor'}
+                        ).style.format({'Valor': lambda v: f"R$ {format_brl(v)}"}),
+                        hide_index=True, use_container_width=True
+                    )
 
             st.divider()
             st.subheader("📊 Distribuição de Despesas")
