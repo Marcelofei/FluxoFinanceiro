@@ -628,7 +628,9 @@ if menu == "🏠 Início":
     # sidebar (antes usavam sempre o mês corrente, ignorando sua seleção).
     st.caption(f"Métricas de {meses[mes_selecionado-1]}/{ano_selecionado} · agenda sempre dos próximos 7 dias")
     dt_limite = hoje + datetime.timedelta(days=7)
-    df_7d = fetch_dataframe("SELECT id, data_vencimento, tipo, categoria, subgrupo, descricao, valor, pago, forma_pagamento FROM lancamentos WHERE data_vencimento BETWEEN %s AND %s ORDER BY data_vencimento ASC, tipo", (hoje, dt_limite))
+    cols_lanc = "id, data_vencimento, tipo, categoria, subgrupo, descricao, valor, pago, forma_pagamento"
+    df_atraso = fetch_dataframe(f"SELECT {cols_lanc} FROM lancamentos WHERE pago = 0 AND data_vencimento < %s ORDER BY data_vencimento ASC, tipo", (hoje,))
+    df_7d = fetch_dataframe(f"SELECT {cols_lanc} FROM lancamentos WHERE data_vencimento BETWEEN %s AND %s ORDER BY data_vencimento ASC, tipo", (hoje, dt_limite))
     df_mes_atual = fetch_dataframe("SELECT tipo, valor, valor_pago, pago FROM lancamentos WHERE EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s", (mes_selecionado, ano_selecionado))
 
     c_inc1, c_inc2, c_inc3 = st.columns(3)
@@ -648,22 +650,21 @@ if menu == "🏠 Início":
         c_inc2.metric("⏳ Entradas a Receber (Projetado)", "R$ 0,00")
         c_inc3.metric("⚖️ Sobra Projetada", "R$ 0,00")
 
-    st.divider()
-    st.subheader("🗓️ Agenda de Vencimentos (Próximos 7 dias)")
-    if df_7d.empty:
-        st.success("Nenhuma conta vencendo ou receita prevista para os próximos 7 dias! 🎉")
-    else:
-        # CONSOLIDAÇÃO: mesma ideia do Fluxo e Prioridades -- compras de cartão
-        # e plantões viram 1 linha só, pra uma fatura com várias compras não
-        # tomar a tela inteira e esconder os dias seguintes. Isso é só visual/
-        # de conveniência aqui (não substitui o Fluxo e Prioridades, que é o
-        # lugar certo pra dar baixa detalhada e reconciliar mês inteiro).
-        df_7d['valor'] = df_7d['valor'].astype(float)
-
-        mask_cred_7d = (df_7d['tipo'] == 'Despesa') & (df_7d['forma_pagamento'] == 'Crédito')
+    # -----------------------------------------------------------------------
+    # CONSOLIDAÇÃO: mesma ideia do Fluxo e Prioridades -- compras de cartão
+    # e plantões viram 1 linha só, pra uma fatura com várias compras não
+    # tomar a tela inteira e esconder os outros vencimentos. Isso é só visual/
+    # de conveniência aqui (não substitui o Fluxo e Prioridades, que é o
+    # lugar certo pra dar baixa detalhada e reconciliar mês inteiro).
+    # Reaproveitada tanto pros Atrasados quanto pra Agenda de 7 dias.
+    # -----------------------------------------------------------------------
+    def _consolidar_lancamentos(df):
+        df = df.copy()
+        df['valor'] = df['valor'].astype(float)
+        mask_cred = (df['tipo'] == 'Despesa') & (df['forma_pagamento'] == 'Crédito')
         linhas = []
-        if mask_cred_7d.any():
-            grp = df_7d[mask_cred_7d]
+        if mask_cred.any():
+            grp = df[mask_cred]
             linhas.append({
                 'descricao': f"💳 Cartão de Crédito ({len(grp)} compra{'s' if len(grp)>1 else ''})",
                 'tipo': 'Despesa', 'valor': grp['valor'].sum(),
@@ -672,9 +673,9 @@ if menu == "🏠 Início":
                 'ids': grp['id'].astype(int).tolist(), 'categoria': None, 'subgrupo': None,
             })
 
-        mask_plant_7d = (df_7d['tipo'] == 'Entrada') & df_7d['descricao'].str.contains('plant', case=False, na=False)
-        if mask_plant_7d.any():
-            for subg_nome, grp in df_7d[mask_plant_7d].groupby('subgrupo'):
+        mask_plant = (df['tipo'] == 'Entrada') & df['descricao'].str.contains('plant', case=False, na=False)
+        if mask_plant.any():
+            for subg_nome, grp in df[mask_plant].groupby('subgrupo'):
                 linhas.append({
                     'descricao': f"🏥 Plantões {subg_nome} ({len(grp)})",
                     'tipo': 'Entrada', 'valor': grp['valor'].sum(),
@@ -683,15 +684,15 @@ if menu == "🏠 Início":
                     'ids': grp['id'].astype(int).tolist(), 'categoria': None, 'subgrupo': None,
                 })
 
-        for _, r in df_7d[~mask_cred_7d & ~mask_plant_7d].iterrows():
+        for _, r in df[~mask_cred & ~mask_plant].iterrows():
             linhas.append({
                 'descricao': r['descricao'], 'tipo': r['tipo'], 'valor': r['valor'], 'pago': int(r['pago']),
                 'data_vencimento': r['data_vencimento'], 'ids': [int(r['id'])],
                 'categoria': r['categoria'], 'subgrupo': r['subgrupo'],
             })
+        return sorted(linhas, key=lambda x: (x['data_vencimento'], x['tipo']))
 
-        linhas = sorted(linhas, key=lambda x: (x['data_vencimento'], x['tipo']))
-
+    def _exibir_linhas_com_acao(linhas, prefixo_key, atrasado=False):
         # Ação em 1 clique: dá baixa direto daqui (individual OU em lote, se
         # for uma linha consolidada), sem precisar navegar até Fluxo e Prioridades.
         for idx, r in enumerate(linhas):
@@ -699,10 +700,11 @@ if menu == "🏠 Início":
             eh_despesa = r['tipo'] == 'Despesa'
             dt_str = pd.to_datetime(r['data_vencimento']).strftime('%d/%m')
             icone = "📤" if eh_despesa else "📥"
+            cor_data = "#E0695C" if atrasado else "inherit"
 
             c_lin1, c_lin2, c_lin3 = st.columns([5.2, 1.6, 1.4])
             with c_lin1:
-                st.markdown(f"{icone} **{dt_str}** · {r['descricao']}")
+                st.markdown(f"{icone} <span style='color:{cor_data}; font-weight:600;'>{dt_str}</span> · {r['descricao']}", unsafe_allow_html=True)
             with c_lin2:
                 st.markdown(f"<div style='text-align:right; font-family: IBM Plex Mono, monospace;'>R$ {format_brl(r['valor'])}</div>", unsafe_allow_html=True)
             with c_lin3:
@@ -710,7 +712,7 @@ if menu == "🏠 Início":
                     st.markdown("✅ <span style='color:#8B94A0;'>Pago</span>" if eh_despesa else "✅ <span style='color:#8B94A0;'>Recebido</span>", unsafe_allow_html=True)
                 else:
                     rotulo_acao = "✓ Pagar" if eh_despesa else "✓ Receber"
-                    if st.button(rotulo_acao, key=f"quickpay_{idx}_{'_'.join(map(str, r['ids']))}", use_container_width=True):
+                    if st.button(rotulo_acao, key=f"{prefixo_key}_{idx}_{'_'.join(map(str, r['ids']))}", use_container_width=True):
                         ids_tupla = tuple(r['ids'])
                         if len(ids_tupla) == 1:
                             execute_query("UPDATE lancamentos SET pago=1, valor_pago=valor WHERE id=%s", (ids_tupla[0],))
@@ -721,6 +723,21 @@ if menu == "🏠 Início":
                             executar_abatimento_envelope(r['categoria'], r['subgrupo'], float(r['valor']), int(dt_v.month), int(dt_v.year))
                         flash("success", f"✅ '{r['descricao']}' marcado como {'pago' if eh_despesa else 'recebido'}!")
                         st.rerun()
+
+    st.divider()
+    if not df_atraso.empty:
+        linhas_atraso = _consolidar_lancamentos(df_atraso)
+        st.subheader(f"🚨 Atrasados ({len(linhas_atraso)})")
+        st.caption("Vencidos e ainda não marcados como pagos/recebidos — maior urgência primeiro.")
+        _exibir_linhas_com_acao(linhas_atraso, "quickpay_atraso", atrasado=True)
+        st.divider()
+
+    st.subheader("🗓️ Agenda de Vencimentos (Próximos 7 dias)")
+    if df_7d.empty:
+        st.success("Nenhuma conta vencendo ou receita prevista para os próximos 7 dias! 🎉")
+    else:
+        linhas_7d = _consolidar_lancamentos(df_7d)
+        _exibir_linhas_com_acao(linhas_7d, "quickpay_7d")
 
 # =================================================================
 # 9. MÓDULO: GERENCIAR CATEGORIAS E RECORRÊNCIAS
