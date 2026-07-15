@@ -629,7 +629,12 @@ if menu == "🏠 Início":
     st.caption(f"Métricas de {meses[mes_selecionado-1]}/{ano_selecionado} · agenda sempre dos próximos 7 dias")
     dt_limite = hoje + datetime.timedelta(days=7)
     cols_lanc = "id, data_vencimento, tipo, categoria, subgrupo, descricao, valor, pago, forma_pagamento"
-    df_atraso = fetch_dataframe(f"SELECT {cols_lanc} FROM lancamentos WHERE pago = 0 AND data_vencimento < %s ORDER BY data_vencimento ASC, tipo", (hoje,))
+    df_atraso = fetch_dataframe(
+        f"SELECT {cols_lanc} FROM lancamentos WHERE pago = 0 AND data_vencimento < %s "
+        f"AND EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s "
+        f"ORDER BY data_vencimento ASC, tipo",
+        (hoje, mes_selecionado, ano_selecionado)
+    )
     df_7d = fetch_dataframe(f"SELECT {cols_lanc} FROM lancamentos WHERE data_vencimento BETWEEN %s AND %s ORDER BY data_vencimento ASC, tipo", (hoje, dt_limite))
     df_mes_atual = fetch_dataframe("SELECT tipo, valor, valor_pago, pago FROM lancamentos WHERE EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s", (mes_selecionado, ano_selecionado))
 
@@ -727,8 +732,8 @@ if menu == "🏠 Início":
     st.divider()
     if not df_atraso.empty:
         linhas_atraso = _consolidar_lancamentos(df_atraso)
-        st.subheader(f"🚨 Atrasados ({len(linhas_atraso)})")
-        st.caption("Vencidos e ainda não marcados como pagos/recebidos — maior urgência primeiro.")
+        st.subheader(f"🚨 Atrasados em {meses[mes_selecionado-1]}/{ano_selecionado} ({len(linhas_atraso)})")
+        st.caption("Vencidos dentro do mês selecionado na sidebar e ainda não marcados como pagos/recebidos.")
         _exibir_linhas_com_acao(linhas_atraso, "quickpay_atraso", atrasado=True)
         st.divider()
 
