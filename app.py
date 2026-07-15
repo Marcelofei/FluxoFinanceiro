@@ -142,12 +142,36 @@ def init_db():
 # =================================================================
 
 def processar_recorrencias_lazy(mes, ano):
+    """
+    OTIMIZADO: (1) roda no máximo 1 vez por mês/ano por sessão (guarda em
+    session_state) em vez de a cada clique; (2) verifica todos os contratos
+    existentes numa ÚNICA query em vez de 1 query por contrato (era N+1);
+    (3) insere tudo que faltar em um único lote.
+    A guarda é invalidada quando você cria/edita categorias, então uma
+    categoria recorrente nova gera o teto do mês na hora, sem reiniciar.
+    """
+    guarda = f"rec_processado_{mes}_{ano}"
+    if st.session_state.get(guarda): return
+
     df_contratos = fetch_dataframe("SELECT * FROM categorias_personalizadas WHERE is_recorrente = 1")
-    if df_contratos.empty: return
+    if df_contratos.empty:
+        st.session_state[guarda] = True
+        return
 
     ultimo_dia_mes = calendar.monthrange(ano, mes)[1]
 
+    # UMA query pra descobrir quais contratos já geraram lançamento neste mês
+    df_exist = fetch_dataframe(
+        "SELECT DISTINCT compra_id FROM lancamentos WHERE compra_id LIKE 'rec\\_%%' AND EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s",
+        (mes, ano)
+    )
+    ja_gerados = set(df_exist['compra_id'].tolist()) if not df_exist.empty else set()
+
+    registros = []
     for _, contrato in df_contratos.iterrows():
+        compra_id_contrato = f"rec_{contrato['id']}"
+        if compra_id_contrato in ja_gerados: continue
+
         dt_inicio = pd.to_datetime(contrato['data_inicio']).date() if pd.notna(contrato['data_inicio']) else datetime.date(ano, mes, 1)
 
         # Envelope sempre nasce no último dia do mês (como Provisão funcionava antes),
@@ -159,20 +183,19 @@ def processar_recorrencias_lazy(mes, ano):
 
         if dt_limite_alvo < dt_inicio: continue
 
-        compra_id_contrato = f"rec_{contrato['id']}"
-        check_exist = fetch_dataframe(
-            "SELECT id FROM lancamentos WHERE compra_id = %s AND EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s LIMIT 1",
-            (compra_id_contrato, mes, ano)
-        )
+        val_p = float(contrato['valor_padrao'] or 0.0)
+        sufixo = "(Envelope do Mês)" if eh_envelope else "(Recorrente)"
+        desc_c = f"{contrato['categoria']} - {contrato['subgrupo'] or ''} {sufixo}"
+        registros.append((contrato['tipo'], contrato['categoria'], contrato['subgrupo'], desc_c, val_p,
+                          dt_limite_alvo, 1, 1, 0, compra_id_contrato, 'Outros', 'Média 🟡', 0.0))
 
-        if check_exist.empty:
-            val_p = float(contrato['valor_padrao'] or 0.0)
-            sufixo = "(Envelope do Mês)" if eh_envelope else "(Recorrente)"
-            desc_c = f"{contrato['categoria']} - {contrato['subgrupo'] or ''} {sufixo}"
-            execute_query('''
-                INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago)
-                VALUES (%s, %s, %s, %s, %s, %s, 1, 1, 0, %s, 'Outros', 'Média 🟡', 0.0)
-            ''', (contrato['tipo'], contrato['categoria'], contrato['subgrupo'], desc_c, val_p, dt_limite_alvo, compra_id_contrato))
+    if registros:
+        execute_values_query('''
+            INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago)
+            VALUES %s
+        ''', registros)
+
+    st.session_state[guarda] = True
 
 # =================================================================
 # 3. MOTOR DE ABATIMENTO AUTOMÁTICO DE ENVELOPES (BACKEND)
@@ -472,6 +495,7 @@ def aplicar_tema_grafico(fig):
 # 6. ESTRUTURAS DINÂMICAS E CONSTANTES
 # =================================================================
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_estrutura_dinamica():
     estrutura = {"Entrada": {}, "Despesa": {}}
     try:
@@ -484,6 +508,14 @@ def get_estrutura_dinamica():
                     if s and s not in estrutura[t][c]: estrutura[t][c].append(s)
     except Exception: pass
     return estrutura
+
+def invalidar_caches_estruturais():
+    """Chamar sempre que categorias forem criadas/editadas/excluídas: limpa o
+    cache da estrutura e as guardas de recorrência, pra que uma categoria
+    recorrente nova gere o lançamento do mês imediatamente."""
+    get_estrutura_dinamica.clear()
+    for k in [k for k in list(st.session_state.keys()) if str(k).startswith('rec_processado_')]:
+        del st.session_state[k]
 
 ESTRUTURA = get_estrutura_dinamica()
 hoje = datetime.date.today()
@@ -504,27 +536,29 @@ st.sidebar.divider()
 if "menu_atual" not in st.session_state:
     st.session_state.menu_atual = "🏠 Início"
 
-def _nav_btn(label, key):
+def _nav_btn(label, key, container=None):
+    alvo = container if container is not None else st.sidebar
     ativo = st.session_state.menu_atual == label
-    if st.sidebar.button(label, key=key, type="primary" if ativo else "secondary", use_container_width=True):
+    if alvo.button(label, key=key, type="primary" if ativo else "secondary", use_container_width=True):
         st.session_state.menu_atual = label
         st.rerun()
 
-st.sidebar.markdown("<div class='nav-eyebrow'>Visão Geral</div>", unsafe_allow_html=True)
+# Navegação organizada por frequência de uso: o dia a dia fica sempre à vista,
+# telas de consulta ocasional ficam recolhidas -- menos opções na tela, mesma função.
+st.sidebar.markdown("<div class='nav-eyebrow'>Dia a Dia</div>", unsafe_allow_html=True)
 _nav_btn("🏠 Início", "nav_inicio")
+_nav_btn("📊 Fluxo e Prioridades", "nav_fluxo")
+_nav_btn("📝 Lançamentos", "nav_lancamentos")
+
+st.sidebar.markdown("<div class='nav-eyebrow'>Análise</div>", unsafe_allow_html=True)
 _nav_btn("📑 Demonstrativo", "nav_demonstrativo")
-_nav_btn("📈 Balanço Anual", "nav_balanco")
 _nav_btn("💳 Dívidas", "nav_dividas")
 
-st.sidebar.markdown("<div class='nav-eyebrow'>Lançar e Organizar</div>", unsafe_allow_html=True)
-_nav_btn("📝 Lançamentos", "nav_lancamentos")
-_nav_btn("📊 Fluxo e Prioridades", "nav_fluxo")
-
-st.sidebar.markdown("<div class='nav-eyebrow'>Plantões</div>", unsafe_allow_html=True)
-_nav_btn("🏥 Escala de Plantões", "nav_escala")
-
-st.sidebar.markdown("<div class='nav-eyebrow'>Configuração</div>", unsafe_allow_html=True)
-_nav_btn("⚙️ Gerenciar Categorias", "nav_categorias")
+_relatorios_aberto = st.session_state.menu_atual in ("📈 Balanço Anual", "🏥 Escala de Plantões", "⚙️ Gerenciar Categorias")
+with st.sidebar.expander("📂 Relatórios e Configuração", expanded=_relatorios_aberto):
+    _nav_btn("📈 Balanço Anual", "nav_balanco", container=st)
+    _nav_btn("🏥 Escala de Plantões", "nav_escala", container=st)
+    _nav_btn("⚙️ Gerenciar Categorias", "nav_categorias", container=st)
 
 menu = st.session_state.menu_atual
 st.sidebar.divider()
@@ -564,8 +598,13 @@ def importar_csv(arquivo):
         st.error(f"Erro Crítico de Restauração: {e}")
         return False
 
-c_data = exportar_csv()
-if c_data: st.sidebar.download_button("📥 Baixar CSV", data=c_data, file_name=f"backup_{hoje.strftime('%d_%m_%Y')}.csv", mime="text/csv")
+# Backup sob demanda: o SELECT da tabela inteira só roda quando você pede,
+# não a cada interação com o app (antes, esse custo era pago em TODO clique).
+if st.sidebar.button("📥 Preparar backup (CSV)", key="btn_prep_backup"):
+    st.session_state['_backup_csv'] = exportar_csv()
+if st.session_state.get('_backup_csv') is not None:
+    st.sidebar.download_button("⬇️ Baixar backup pronto", data=st.session_state['_backup_csv'],
+                               file_name=f"backup_{hoje.strftime('%d_%m_%Y')}.csv", mime="text/csv")
 a_up = st.sidebar.file_uploader("Restaurar CSV", type="csv")
 if a_up and st.sidebar.button("🚀 Confirmar Restauração"):
     if importar_csv(a_up):
@@ -585,9 +624,12 @@ exibir_flash()
 if menu == "🏠 Início":
     st.header("🏠 Painel Executivo Imediato")
 
+    # CORREÇÃO de consistência: as métricas agora seguem o Período Ativo da
+    # sidebar (antes usavam sempre o mês corrente, ignorando sua seleção).
+    st.caption(f"Métricas de {meses[mes_selecionado-1]}/{ano_selecionado} · agenda sempre dos próximos 7 dias")
     dt_limite = hoje + datetime.timedelta(days=7)
-    df_7d = fetch_dataframe("SELECT data_vencimento, tipo, descricao, valor, pago FROM lancamentos WHERE data_vencimento BETWEEN %s AND %s ORDER BY data_vencimento ASC", (hoje, dt_limite))
-    df_mes_atual = fetch_dataframe("SELECT tipo, valor, valor_pago, pago FROM lancamentos WHERE EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s", (hoje.month, hoje.year))
+    df_7d = fetch_dataframe("SELECT id, data_vencimento, tipo, categoria, subgrupo, descricao, valor, pago FROM lancamentos WHERE data_vencimento BETWEEN %s AND %s ORDER BY data_vencimento ASC, tipo", (hoje, dt_limite))
+    df_mes_atual = fetch_dataframe("SELECT tipo, valor, valor_pago, pago FROM lancamentos WHERE EXTRACT(MONTH FROM data_vencimento) = %s AND EXTRACT(YEAR FROM data_vencimento) = %s", (mes_selecionado, ano_selecionado))
 
     c_inc1, c_inc2, c_inc3 = st.columns(3)
     if not df_mes_atual.empty:
@@ -611,20 +653,32 @@ if menu == "🏠 Início":
     if df_7d.empty:
         st.success("Nenhuma conta vencendo ou receita prevista para os próximos 7 dias! 🎉")
     else:
+        # Ação em 1 clique: dá baixa direto daqui, sem precisar navegar até
+        # Fluxo e Prioridades, achar a linha na tabela e salvar.
         df_7d['valor'] = df_7d['valor'].astype(float)
-        df_7d['Status'] = df_7d['pago'].apply(lambda x: '✅ Pago' if x == 1 else '⏳ Pendente')
-        df_7d['Data'] = pd.to_datetime(df_7d['data_vencimento']).dt.strftime('%d/%m/%Y')
+        for _, r in df_7d.iterrows():
+            eh_pago = int(r['pago']) == 1
+            eh_despesa = r['tipo'] == 'Despesa'
+            dt_str = pd.to_datetime(r['data_vencimento']).strftime('%d/%m')
+            icone = "📤" if eh_despesa else "📥"
 
-        def _cor_linha_status(row):
-            if row['Status'] == '✅ Pago':
-                return ['background-color: #17241E; color: #E8EAED'] * len(row)
-            return ['background-color: #29241A; color: #E8EAED'] * len(row)
-
-        df_7d_view = df_7d[['Data', 'tipo', 'descricao', 'valor', 'Status']].rename(
-            columns={'tipo': 'Tipo', 'descricao': 'Descrição', 'valor': 'Valor'}
-        )
-        estilo_7d = df_7d_view.style.apply(_cor_linha_status, axis=1).format({'Valor': lambda v: f"R$ {format_brl(v)}"})
-        st.dataframe(estilo_7d, use_container_width=True, hide_index=True)
+            c_lin1, c_lin2, c_lin3 = st.columns([5.2, 1.6, 1.4])
+            with c_lin1:
+                st.markdown(f"{icone} **{dt_str}** · {r['descricao']}")
+            with c_lin2:
+                st.markdown(f"<div style='text-align:right; font-family: IBM Plex Mono, monospace;'>R$ {format_brl(r['valor'])}</div>", unsafe_allow_html=True)
+            with c_lin3:
+                if eh_pago:
+                    st.markdown("✅ <span style='color:#8B94A0;'>Pago</span>" if eh_despesa else "✅ <span style='color:#8B94A0;'>Recebido</span>", unsafe_allow_html=True)
+                else:
+                    rotulo_acao = "✓ Pagar" if eh_despesa else "✓ Receber"
+                    if st.button(rotulo_acao, key=f"quickpay_{int(r['id'])}", use_container_width=True):
+                        execute_query("UPDATE lancamentos SET pago=1, valor_pago=%s WHERE id=%s", (float(r['valor']), int(r['id'])))
+                        if eh_despesa:
+                            dt_v = pd.to_datetime(r['data_vencimento'])
+                            executar_abatimento_envelope(r['categoria'], r['subgrupo'], float(r['valor']), int(dt_v.month), int(dt_v.year))
+                        flash("success", f"✅ '{r['descricao']}' marcado como {'pago' if eh_despesa else 'recebido'}!")
+                        st.rerun()
 
 # =================================================================
 # 9. MÓDULO: GERENCIAR CATEGORIAS E RECORRÊNCIAS
@@ -671,7 +725,7 @@ elif menu == "⚙️ Gerenciar Categorias":
                 dt_start_val = n_dt_start if n_rec_efetivo else None
                 execute_query("INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, data_inicio, is_envelope) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                               (ntipo, ncat.strip(), nsub.strip(), v_opt if v_opt > 0 else None, a_opt, d_opt, is_rec_val, dt_start_val, is_env_val))
-                flash("success", "Categoria adicionada com sucesso!"); st.rerun()
+                invalidar_caches_estruturais(); flash("success", "Categoria adicionada com sucesso!"); st.rerun()
 
     with tab_edit:
         if not df_custom_global.empty:
@@ -705,7 +759,7 @@ elif menu == "⚙️ Gerenciar Categorias":
                     execute_query("UPDATE categorias_personalizadas SET categoria=%s, subgrupo=%s, valor_padrao=%s, atraso_meses=%s, dia_pagamento=%s, is_recorrente=%s, is_envelope=%s WHERE id=%s",
                                   (new_cat, new_sub, v_edit if v_edit > 0 else None, a_edit, d_edit, 1 if e_rec_efetivo else 0, 1 if e_env else 0, sel_edit))
                     execute_query("UPDATE lancamentos SET categoria=%s, subgrupo=%s WHERE tipo=%s AND categoria=%s AND subgrupo=%s", (new_cat, new_sub, nó['tipo'], nó['categoria'], nó['subgrupo']))
-                    flash("success", "Categoria atualizada com sucesso!"); st.rerun()
+                    invalidar_caches_estruturais(); flash("success", "Categoria atualizada com sucesso!"); st.rerun()
         else: st.info("Nenhuma categoria encontrada.")
 
     with tab_del:
@@ -714,7 +768,7 @@ elif menu == "⚙️ Gerenciar Categorias":
             sel_del = st.selectbox("Selecione o item para excluir:", options=[None] + list(opcoes_del_local.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes_del_local[x], key="del_select_target")
             if sel_del and st.button("🗑️ Excluir Selecionado", type="primary", key="del_save_btn"):
                 execute_query("DELETE FROM categorias_personalizadas WHERE id = %s", (sel_del,))
-                flash("success", "Categoria excluída com sucesso!"); st.rerun()
+                invalidar_caches_estruturais(); flash("success", "Categoria excluída com sucesso!"); st.rerun()
 
     st.divider()
     with st.expander("🧹 Limpeza de Lançamentos Antigos (tag 'Provisão')"):
@@ -955,10 +1009,28 @@ elif menu == "📊 Fluxo e Prioridades":
                     novo_valor_pago = 0.0
                     delta_pago = 0.0 - orig_valor_pago
 
-                nova_desc = row['Desc. Exibição'].split(' (')[0]
+                # Só reescreve a descrição se você editou o texto de fato -- isso
+                # também corrige um bug latente em que salvar qualquer coisa cortava
+                # o sufixo "(1/12)" / "(Recorrente)" de TODAS as linhas, mesmo intocadas.
+                desc_editada = str(row['Desc. Exibição']) != str(orig_row['Desc. Exibição'])
+                nova_desc = row['Desc. Exibição'].split(' (')[0] if desc_editada else orig_row['descricao']
                 tupla_ids_reais = tuple(map(int, orig_row['ids_alvo'].split(',')))
                 excluir_futuros = row['🗑️ Excluir'] == "Este e Futuros"
                 excluir_algo = row['🗑️ Excluir'] in ("Este", "Este e Futuros")
+
+                # OTIMIZAÇÃO: só toca no banco nas linhas que realmente mudaram.
+                # Antes, marcar 1 checkbox rodava 1 UPDATE pra CADA linha da tabela.
+                mudou = (
+                    excluir_algo
+                    or novo_pago != int(orig_row['pago'])
+                    or abs(novo_valor - orig_valor) > 0.004
+                    or abs(novo_valor_pago - orig_valor_pago) > 0.004
+                    or str(row['prioridade']) != str(orig_row['prioridade'])
+                    or desc_editada
+                    or row['Data'] != orig_row['Data']
+                )
+                if not mudou:
+                    continue
 
                 if excluir_algo:
                     if id_s == '-1': st.warning("Cartões consolidados não podem ser apagados aqui.")
