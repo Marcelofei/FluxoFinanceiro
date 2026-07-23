@@ -139,6 +139,17 @@ def init_db():
         );
     ''')
 
+    # Linha única (id=1) guardando o valor da reserva de emergência --
+    # usada pra calcular "Meses de Sobrevivência" no Início.
+    execute_query('''
+        CREATE TABLE IF NOT EXISTS reserva_emergencia (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            valor NUMERIC DEFAULT 0,
+            atualizado_em DATE
+        );
+    ''')
+    execute_query("INSERT INTO reserva_emergencia (id, valor, atualizado_em) VALUES (1, 0, CURRENT_DATE) ON CONFLICT (id) DO NOTHING;")
+
 # =================================================================
 # 2. MOTOR DE GERAÇÃO LAZY / RECORRÊNCIAS CONTRATUAIS
 # =================================================================
@@ -269,6 +280,59 @@ def exibir_flash():
     if '_flash' in st.session_state:
         tipo, mensagem = st.session_state.pop('_flash')
         getattr(st, tipo)(mensagem)
+
+# -----------------------------------------------------------------
+# FEATURE 6 -- MESES DE SOBREVIVÊNCIA
+# -----------------------------------------------------------------
+
+def obter_reserva_emergencia():
+    df = fetch_dataframe("SELECT valor, atualizado_em FROM reserva_emergencia WHERE id = 1")
+    if df.empty: return 0.0, None
+    valor = float(df.iloc[0]['valor']) if pd.notna(df.iloc[0]['valor']) else 0.0
+    return valor, df.iloc[0]['atualizado_em']
+
+def atualizar_reserva_emergencia(novo_valor):
+    execute_query("UPDATE reserva_emergencia SET valor = %s, atualizado_em = CURRENT_DATE WHERE id = 1", (novo_valor,))
+
+def calcular_media_despesa_mensal(hoje_ref, n_meses=3):
+    """
+    Média das despesas PAGAS dos últimos N meses FECHADOS (não conta o mês
+    corrente, que ainda está em andamento e sub-representaria o gasto real).
+    'Ajuste' fica de fora -- é lançamento de apoio interno, não gasto real.
+    Retorna (média, quantidade de meses com dados encontrados).
+    """
+    primeiro_mes, primeiro_ano = hoje_ref.month - n_meses, hoje_ref.year
+    while primeiro_mes <= 0:
+        primeiro_mes += 12
+        primeiro_ano -= 1
+    data_inicio_janela = datetime.date(primeiro_ano, primeiro_mes, 1)
+    data_fim_janela = datetime.date(hoje_ref.year, hoje_ref.month, 1) - datetime.timedelta(days=1)
+    if data_fim_janela < data_inicio_janela:
+        return 0.0, 0
+
+    df = fetch_dataframe(
+        "SELECT EXTRACT(MONTH FROM data_vencimento) as mes, EXTRACT(YEAR FROM data_vencimento) as ano, SUM(valor_pago) as total "
+        "FROM lancamentos WHERE tipo = 'Despesa' AND pago = 1 AND categoria != 'Ajuste' "
+        "AND data_vencimento BETWEEN %s AND %s GROUP BY ano, mes",
+        (data_inicio_janela, data_fim_janela)
+    )
+    if df.empty: return 0.0, 0
+    return float(df['total'].astype(float).mean()), len(df)
+
+# -----------------------------------------------------------------
+# FEATURE 5 -- TRADUTOR DE DÍVIDA EM PLANTÃO
+# -----------------------------------------------------------------
+
+def calcular_valor_medio_plantao(hoje_ref, n_meses=6):
+    """Valor médio de 1 plantão, com base no seu próprio histórico recente
+    (não é um número fixo hardcoded) -- usado pra traduzir dívida em plantões."""
+    data_inicio = hoje_ref - datetime.timedelta(days=30 * n_meses)
+    df = fetch_dataframe(
+        "SELECT valor FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE %s AND data_vencimento >= %s",
+        ('Plantão %', data_inicio)
+    )
+    if df.empty: return None, 0
+    return float(df['valor'].astype(float).mean()), len(df)
 
 # =================================================================
 # 5. CONFIGURAÇÃO DA PÁGINA
@@ -545,6 +609,15 @@ def _nav_btn(label, key, container=None):
         st.session_state.menu_atual = label
         st.rerun()
 
+# Botão manual do Assistente de Configuração -- some com o que já foi
+# preenchido em sessões anteriores (fica só na sessão, não persiste), só
+# reseta o PASSO pra 1 quando acionado manualmente.
+if st.sidebar.button("🧙 Assistente de Configuração", key="btn_abrir_wizard", use_container_width=True):
+    st.session_state['wizard_ativo'] = True
+    st.session_state['wizard_passo'] = 1
+    st.rerun()
+st.sidebar.divider()
+
 # Navegação organizada por frequência de uso: o dia a dia fica sempre à vista,
 # telas de consulta ocasional ficam recolhidas -- menos opções na tela, mesma função.
 st.sidebar.markdown("<div class='nav-eyebrow'>Dia a Dia</div>", unsafe_allow_html=True)
@@ -700,10 +773,262 @@ data_contexto_ativo = datetime.date(ano_selecionado, mes_selecionado, min(hoje.d
 exibir_flash()
 
 # =================================================================
+# 7B. ASSISTENTE DE CONFIGURAÇÃO (FEATURE 14 -- ONBOARDING GUIADO)
+# =================================================================
+# Detecção automática de "primeira vez": se não existe NENHUMA categoria
+# cadastrada ainda, liga o assistente sozinho -- sem isso, a primeira tela
+# que a pessoa veria seria "⚙️ Gerenciar Categorias" com CRUD cru, exigindo
+# entender categoria/subgrupo/envelope/recorrência antes de conseguir usar
+# qualquer parte do app. Só roda essa checagem 1x por sessão (session_state).
+if 'wizard_ativo' not in st.session_state:
+    df_check_categorias = fetch_dataframe("SELECT COUNT(*) as n FROM categorias_personalizadas")
+    n_categorias_existentes = int(df_check_categorias.iloc[0]['n']) if not df_check_categorias.empty else 0
+    st.session_state['wizard_ativo'] = (n_categorias_existentes == 0)
+    st.session_state['wizard_passo'] = 1
+
+for _chave in ['wizard_hospitais', 'wizard_fixas', 'wizard_envelopes', 'wizard_dividas']:
+    if _chave not in st.session_state:
+        st.session_state[_chave] = []
+
+MAPA_ATRASO_AMIGAVEL = {"Paga no mesmo mês": 0, "Paga 1 mês depois": 1, "Paga 2 meses depois": 2, "Paga 3 meses depois": 3}
+
+def _wizard_cabecalho(passo_atual, total_passos, titulo):
+    st.header("🧙 Assistente de Configuração")
+    st.progress(passo_atual / total_passos)
+    st.caption(f"Passo {passo_atual} de {total_passos}")
+    if st.button("✖️ Pular e ir direto pro app", key="wizard_sair"):
+        st.session_state['wizard_ativo'] = False
+        st.rerun()
+    st.divider()
+    st.subheader(titulo)
+
+def _wizard_lista_com_remover(lista, chave_sessao, formatar_linha):
+    if not lista:
+        st.caption("Nada adicionado ainda.")
+        return
+    for i, item in enumerate(lista):
+        c_txt, c_del = st.columns([5, 1])
+        c_txt.write(formatar_linha(item))
+        if c_del.button("🗑️", key=f"{chave_sessao}_del_{i}"):
+            lista.pop(i)
+            st.rerun()
+
+def _wizard_navegacao(passo_atual, pode_avancar=True, texto_avancar="Próximo ➡️"):
+    st.divider()
+    c_voltar, c_avancar = st.columns(2)
+    if passo_atual > 1:
+        if c_voltar.button("⬅️ Voltar", key=f"wizard_voltar_{passo_atual}", use_container_width=True):
+            st.session_state['wizard_passo'] = passo_atual - 1
+            st.rerun()
+    if c_avancar.button(texto_avancar, type="primary", key=f"wizard_avancar_{passo_atual}", use_container_width=True, disabled=not pode_avancar):
+        st.session_state['wizard_passo'] = passo_atual + 1
+        st.rerun()
+
+def _wizard_passo1_hospitais():
+    _wizard_cabecalho(1, 5, "🏥 Em quais hospitais/locais você faz plantão?")
+    st.caption("Pra cada local, o app já sabe automaticamente quando o pagamento cai, sem você ter que lembrar toda vez.")
+
+    with st.form("wizard_form_hospital", clear_on_submit=True):
+        c1, c2, c3 = st.columns([2, 1.3, 1])
+        nome = c1.text_input("Nome do hospital/local")
+        atraso_label = c2.selectbox("Quando paga?", list(MAPA_ATRASO_AMIGAVEL.keys()), index=1)
+        dia_pgto = c3.number_input("Dia do pagamento", min_value=1, max_value=31, value=10)
+        if st.form_submit_button("➕ Adicionar Local"):
+            if nome.strip():
+                st.session_state['wizard_hospitais'].append({
+                    "nome": nome.strip(), "atraso_meses": MAPA_ATRASO_AMIGAVEL[atraso_label],
+                    "dia_pagamento": int(dia_pgto), "atraso_label": atraso_label
+                })
+                st.rerun()
+
+    st.markdown("**Locais adicionados:**")
+    _wizard_lista_com_remover(
+        st.session_state['wizard_hospitais'], 'wizard_hospitais',
+        lambda h: f"🏥 {h['nome']} -- {h['atraso_label']}, todo dia {h['dia_pagamento']}"
+    )
+    _wizard_navegacao(1)
+
+def _wizard_passo2_fixas():
+    _wizard_cabecalho(2, 5, "🏠 Quais são suas despesas fixas todo mês?")
+    st.caption("Aluguel, internet, plano de saúde... o app lança isso sozinho todo mês, sem você precisar lembrar.")
+
+    with st.form("wizard_form_fixa", clear_on_submit=True):
+        c1, c2, c3 = st.columns([2, 1.3, 1])
+        nome = c1.text_input("Nome da despesa", placeholder="Ex: Aluguel")
+        valor_txt = c2.text_input("Valor (R$)", value="0,00")
+        dia_venc = c3.number_input("Dia do vencimento", min_value=1, max_value=31, value=5)
+        if st.form_submit_button("➕ Adicionar Despesa Fixa"):
+            valor_f = parse_valor(valor_txt)
+            if nome.strip() and valor_f > 0:
+                st.session_state['wizard_fixas'].append({"nome": nome.strip(), "valor": valor_f, "dia_vencimento": int(dia_venc)})
+                st.rerun()
+
+    st.markdown("**Despesas fixas adicionadas:**")
+    _wizard_lista_com_remover(
+        st.session_state['wizard_fixas'], 'wizard_fixas',
+        lambda f: f"🏠 {f['nome']} -- R$ {format_brl(f['valor'])}, todo dia {f['dia_vencimento']}"
+    )
+    _wizard_navegacao(2)
+
+def _wizard_passo3_envelopes():
+    _wizard_cabecalho(3, 5, "🛒 Quais gastos variáveis você quer controlar com teto mensal?")
+    st.caption("Mercado, farmácia, transporte, lazer... você define um limite mensal, e o app avisa quando estourar.")
+
+    with st.form("wizard_form_envelope", clear_on_submit=True):
+        c1, c2 = st.columns([2, 1.3])
+        nome = c1.text_input("Nome do gasto", placeholder="Ex: Mercado")
+        valor_txt = c2.text_input("Teto mensal (R$)", value="0,00")
+        if st.form_submit_button("➕ Adicionar Teto"):
+            valor_f = parse_valor(valor_txt)
+            if nome.strip() and valor_f > 0:
+                st.session_state['wizard_envelopes'].append({"nome": nome.strip(), "valor": valor_f})
+                st.rerun()
+
+    st.markdown("**Tetos adicionados:**")
+    _wizard_lista_com_remover(
+        st.session_state['wizard_envelopes'], 'wizard_envelopes',
+        lambda e: f"🛒 {e['nome']} -- até R$ {format_brl(e['valor'])}/mês"
+    )
+    _wizard_navegacao(3)
+
+def _wizard_passo4_dividas():
+    _wizard_cabecalho(4, 5, "💳 Você tem alguma dívida parcelada em andamento?")
+    st.caption("Só o que FALTA pagar -- não precisa saber quantas parcelas já pagou antes de usar o app.")
+
+    with st.form("wizard_form_divida", clear_on_submit=True):
+        c1, c2 = st.columns([2, 1.3])
+        nome = c1.text_input("Nome da dívida", placeholder="Ex: Notebook, Cartão do carro")
+        valor_parcela_txt = c2.text_input("Valor da parcela (R$)", value="0,00")
+        c3, c4, c5 = st.columns([1, 1, 1.4])
+        parcelas_faltam = c3.number_input("Quantas parcelas faltam?", min_value=1, max_value=120, value=1)
+        dia_venc = c4.number_input("Dia do vencimento", min_value=1, max_value=31, value=10)
+        eh_cartao = c5.checkbox("É no cartão de crédito?")
+        if st.form_submit_button("➕ Adicionar Dívida"):
+            valor_f = parse_valor(valor_parcela_txt)
+            if nome.strip() and valor_f > 0:
+                st.session_state['wizard_dividas'].append({
+                    "nome": nome.strip(), "valor_parcela": valor_f, "parcelas_faltam": int(parcelas_faltam),
+                    "dia_vencimento": int(dia_venc), "eh_cartao": eh_cartao
+                })
+                st.rerun()
+
+    st.markdown("**Dívidas adicionadas:**")
+    _wizard_lista_com_remover(
+        st.session_state['wizard_dividas'], 'wizard_dividas',
+        lambda d: f"💳 {d['nome']} -- {d['parcelas_faltam']}x de R$ {format_brl(d['valor_parcela'])}" + (" (cartão)" if d['eh_cartao'] else "")
+    )
+    _wizard_navegacao(4, texto_avancar="Ver Resumo ➡️")
+
+def _wizard_passo5_revisao():
+    _wizard_cabecalho(5, 5, "📋 Revisão -- confere se está tudo certo")
+
+    hospitais = st.session_state['wizard_hospitais']
+    fixas = st.session_state['wizard_fixas']
+    envelopes = st.session_state['wizard_envelopes']
+    dividas = st.session_state['wizard_dividas']
+
+    if not any([hospitais, fixas, envelopes, dividas]):
+        st.info("Nada foi adicionado em nenhum passo. Pode voltar e preencher, ou sair do assistente -- "
+               "você ainda pode configurar tudo manualmente em '⚙️ Gerenciar Categorias' depois.")
+    else:
+        if hospitais:
+            st.markdown("**🏥 Locais de plantão:**")
+            for h in hospitais: st.write(f"  • {h['nome']} -- {h['atraso_label']}, todo dia {h['dia_pagamento']}")
+        if fixas:
+            st.markdown("**🏠 Despesas fixas:**")
+            for f in fixas: st.write(f"  • {f['nome']} -- R$ {format_brl(f['valor'])}, todo dia {f['dia_vencimento']}")
+        if envelopes:
+            st.markdown("**🛒 Tetos mensais (envelopes):**")
+            for e in envelopes: st.write(f"  • {e['nome']} -- até R$ {format_brl(e['valor'])}/mês")
+        if dividas:
+            st.markdown("**💳 Dívidas em andamento:**")
+            for d in dividas: st.write(f"  • {d['nome']} -- {d['parcelas_faltam']}x de R$ {format_brl(d['valor_parcela'])}")
+
+    st.divider()
+    c_voltar, c_confirmar = st.columns(2)
+    if c_voltar.button("⬅️ Voltar", key="wizard_voltar_5", use_container_width=True):
+        st.session_state['wizard_passo'] = 4
+        st.rerun()
+
+    if c_confirmar.button("✅ Finalizar e Salvar Tudo", type="primary", key="wizard_finalizar", use_container_width=True):
+        hoje_wizard = datetime.date.today()
+
+        for h in hospitais:
+            execute_query(
+                "INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, atraso_meses, dia_pagamento, is_recorrente, is_envelope, data_inicio) "
+                "VALUES ('Entrada', 'Plantões', %s, %s, %s, 0, 0, %s)",
+                (h['nome'], h['atraso_meses'], h['dia_pagamento'], hoje_wizard)
+            )
+
+        for f in fixas:
+            execute_query(
+                "INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, is_envelope, data_inicio) "
+                "VALUES ('Despesa', 'Despesas Essenciais', %s, %s, 0, %s, 1, 0, %s)",
+                (f['nome'], f['valor'], f['dia_vencimento'], hoje_wizard)
+            )
+
+        for e in envelopes:
+            execute_query(
+                "INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento, is_recorrente, is_envelope, data_inicio) "
+                "VALUES ('Despesa', 'Despesas Essenciais', %s, %s, 0, 10, 1, 1, %s)",
+                (e['nome'], e['valor'], hoje_wizard)
+            )
+
+        for d in dividas:
+            execute_query(
+                "INSERT INTO categorias_personalizadas (tipo, categoria, subgrupo, is_recorrente, is_envelope) "
+                "VALUES ('Despesa', 'Dívidas', %s, 0, 0) ON CONFLICT DO NOTHING",
+                (d['nome'],)
+            )
+            comp_id = str(uuid.uuid4())
+            dia_venc = d['dia_vencimento']
+            if dia_venc >= hoje_wizard.day:
+                primeira = datetime.date(hoje_wizard.year, hoje_wizard.month, min(dia_venc, calendar.monthrange(hoje_wizard.year, hoje_wizard.month)[1]))
+            else:
+                m_f = hoje_wizard.month % 12 + 1
+                a_f = hoje_wizard.year + (hoje_wizard.month // 12)
+                primeira = datetime.date(a_f, m_f, min(dia_venc, calendar.monthrange(a_f, m_f)[1]))
+
+            registros_divida = []
+            for i in range(d['parcelas_faltam']):
+                m_i = primeira.month - 1 + i
+                a_i = primeira.year + m_i // 12
+                m_i = m_i % 12 + 1
+                data_i = datetime.date(a_i, m_i, min(primeira.day, calendar.monthrange(a_i, m_i)[1]))
+                registros_divida.append((
+                    'Despesa', 'Dívidas', d['nome'], f"{d['nome']} ({i+1}/{d['parcelas_faltam']})", d['valor_parcela'],
+                    data_i, i + 1, d['parcelas_faltam'], 0, comp_id,
+                    'Crédito' if d['eh_cartao'] else 'Outros', 'Média 🟡', 0.0
+                ))
+            if registros_divida:
+                execute_values_query(
+                    "INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago) VALUES %s",
+                    registros_divida
+                )
+
+        invalidar_caches_estruturais()
+        for _chave in ['wizard_hospitais', 'wizard_fixas', 'wizard_envelopes', 'wizard_dividas']:
+            st.session_state[_chave] = []
+        st.session_state['wizard_ativo'] = False
+        flash("success", "🎉 Configuração inicial salva! Seu app já está pronto pra usar.")
+        st.rerun()
+
+def renderizar_wizard_configuracao():
+    passo = st.session_state.get('wizard_passo', 1)
+    if passo == 1: _wizard_passo1_hospitais()
+    elif passo == 2: _wizard_passo2_fixas()
+    elif passo == 3: _wizard_passo3_envelopes()
+    elif passo == 4: _wizard_passo4_dividas()
+    else: _wizard_passo5_revisao()
+
+# =================================================================
 # 8. MÓDULO: TELA INICIAL
 # =================================================================
 
-if menu == "🏠 Início":
+if st.session_state.get('wizard_ativo'):
+    renderizar_wizard_configuracao()
+
+elif menu == "🏠 Início":
     st.header("🏠 Painel Executivo Imediato")
 
     # CORREÇÃO de consistência: as métricas agora seguem o Período Ativo da
@@ -736,6 +1061,48 @@ if menu == "🏠 Início":
         c_inc1.metric("📥 Entradas Confirmadas (Mês)", "R$ 0,00")
         c_inc2.metric("⏳ Entradas a Receber (Projetado)", "R$ 0,00")
         c_inc3.metric("⚖️ Sobra Projetada", "R$ 0,00")
+
+    # -----------------------------------------------------------------------
+    # FEATURE 6 -- MESES DE SOBREVIVÊNCIA.
+    # "Se você parar de trabalhar hoje, seu padrão de vida dura quanto tempo?"
+    # É a métrica que a pesquisa do setor aponta que a profissão inteira
+    # ignora -- por isso fica logo no topo, não enterrada numa aba de análise.
+    # -----------------------------------------------------------------------
+    st.divider()
+    reserva_atual, reserva_atualizada_em = obter_reserva_emergencia()
+    media_despesa_mensal, n_meses_com_dados = calcular_media_despesa_mensal(hoje)
+
+    if media_despesa_mensal > 0:
+        meses_sobrevivencia = reserva_atual / media_despesa_mensal
+        if meses_sobrevivencia < 3: cor_sobrevivencia = "#E0695C"
+        elif meses_sobrevivencia < 6: cor_sobrevivencia = "#DDA251"
+        else: cor_sobrevivencia = "#3FAE8D"
+
+        st.markdown(f"""
+        <div style='background:#1B2127; border:1px solid #2A3138; border-left:4px solid {cor_sobrevivencia};
+                    border-radius:12px; padding:1rem 1.3rem; margin-bottom:0.6rem;'>
+            <div style='font-size:0.78rem; color:#8B94A0; text-transform:uppercase; letter-spacing:0.04em; font-weight:600;'>
+                🛟 Meses de Sobrevivência
+            </div>
+            <div style='font-family: "IBM Plex Mono", monospace; font-size:2rem; font-weight:700; color:{cor_sobrevivencia}; line-height:1.3;'>
+                {meses_sobrevivencia:.1f} meses
+            </div>
+            <div style='font-size:0.8rem; color:#8B94A0;'>
+                Se você parasse de trabalhar hoje, sua reserva atual (R$ {format_brl(reserva_atual)}) cobriria seu padrão de
+                vida por esse tempo -- baseado na média de despesas pagas dos últimos {n_meses_com_dados} mês(es) fechado(s).
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info("🛟 **Meses de Sobrevivência**: cadastre sua reserva de emergência abaixo e registre ao menos 1 mês fechado de despesas pagas pra essa métrica aparecer.")
+
+    with st.expander("✏️ Atualizar reserva de emergência"):
+        st.caption(f"Última atualização: {reserva_atualizada_em.strftime('%d/%m/%Y') if reserva_atualizada_em else 'nunca'}")
+        novo_valor_reserva = st.text_input("Valor atual da sua reserva de emergência (R$)", value=format_brl(reserva_atual), key="input_reserva_emergencia")
+        if st.button("💾 Salvar Reserva", type="primary", key="btn_salvar_reserva"):
+            atualizar_reserva_emergencia(parse_valor(novo_valor_reserva))
+            flash("success", "🛟 Reserva de emergência atualizada!")
+            st.rerun()
 
     # -----------------------------------------------------------------------
     # CONSOLIDAÇÃO: mesma ideia do Fluxo e Prioridades -- compras de cartão
@@ -1604,10 +1971,26 @@ elif menu == "💳 Dívidas":
         n_dividas_ativas = int((df_dividas['saldo_devedor'] > 0.01).sum())
         n_parcelas_restantes = int((df_dividas['total_parcelas'] - df_dividas['parcelas_pagas']).clip(lower=0).sum())
 
-        c1, c2, c3 = st.columns(3)
+        # FEATURE 5 -- TRADUTOR DE DÍVIDA EM PLANTÃO. Valor médio de 1 plantão
+        # calculado a partir do SEU histórico real dos últimos 6 meses (não é
+        # número fixo) -- usado só como referência de tradução, não afeta
+        # nenhum cálculo de saldo devedor ou parcela.
+        valor_medio_plantao, n_plantoes_hist = calcular_valor_medio_plantao(hoje)
+
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("💰 Saldo Devedor Total", f"R$ {format_brl(total_divida_geral)}")
         c2.metric("📋 Dívidas Ativas", str(n_dividas_ativas))
         c3.metric("📅 Parcelas Restantes (todas)", str(n_parcelas_restantes))
+        if valor_medio_plantao and valor_medio_plantao > 0:
+            c4.metric("🏥 Equivale a", f"{total_divida_geral / valor_medio_plantao:.0f} plantões")
+        else:
+            c4.metric("🏥 Equivale a", "—")
+
+        if valor_medio_plantao and valor_medio_plantao > 0:
+            st.caption(f"💡 Tradução baseada no valor médio dos seus últimos {n_plantoes_hist} plantão(ões) "
+                      f"lançados (R$ {format_brl(valor_medio_plantao)}/plantão, últimos 6 meses).")
+        else:
+            st.caption("💡 Lance ao menos 1 plantão em '🏥 Escala de Plantões' pra ver suas dívidas traduzidas em plantões.")
 
         st.divider()
 
@@ -1631,6 +2014,17 @@ elif menu == "💳 Dívidas":
 
                 st.progress(progresso)
                 st.caption(f"{parc_pagas}/{total_parc} parcelas pagas")
+
+                if d['saldo_devedor'] > 0.01 and valor_medio_plantao and valor_medio_plantao > 0:
+                    parcela_mensal = d['valor_total'] / total_parc if total_parc else 0.0
+                    plantoes_equiv = parcela_mensal / valor_medio_plantao
+                    st.markdown(
+                        f"<div style='background:#1B2127; border-left:3px solid #DDA251; border-radius:6px; "
+                        f"padding:0.4rem 0.7rem; margin:0.3rem 0; font-size:0.85rem;'>"
+                        f"🏥 Essa parcela (R$ {format_brl(parcela_mensal)}/mês) equivale a "
+                        f"<b>{plantoes_equiv:.1f} plantão(ões)/mês</b> pelo seu valor médio recente.</div>",
+                        unsafe_allow_html=True
+                    )
 
                 c_x, c_y, c_z = st.columns(3)
                 c_x.caption(f"📆 Início: {pd.to_datetime(d['data_inicio']).strftime('%d/%m/%Y')}")
