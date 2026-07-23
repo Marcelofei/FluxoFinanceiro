@@ -103,6 +103,7 @@ def init_db():
     execute_query("ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS is_recorrente INTEGER DEFAULT 0;")
     execute_query("ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS data_inicio DATE;")
     execute_query("ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS is_envelope INTEGER DEFAULT 0;")
+    execute_query("ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS is_producao_variavel INTEGER DEFAULT 0;")
 
     execute_query('''
         CREATE TABLE IF NOT EXISTS lancamentos (
@@ -125,6 +126,7 @@ def init_db():
     execute_query("ALTER TABLE lancamentos ADD COLUMN IF NOT EXISTS forma_pagamento TEXT DEFAULT 'Outros';")
     execute_query("ALTER TABLE lancamentos ADD COLUMN IF NOT EXISTS prioridade TEXT DEFAULT 'Baixa 🟢';")
     execute_query("ALTER TABLE lancamentos ADD COLUMN IF NOT EXISTS valor_pago NUMERIC DEFAULT 0.0;")
+    execute_query("ALTER TABLE lancamentos ADD COLUMN IF NOT EXISTS eh_estimativa INTEGER DEFAULT 0;")
 
     # Tabela leve só para enriquecer dívidas detectadas automaticamente (nome do
     # credor e taxa, ambos opcionais e puramente informativos). O painel de
@@ -575,6 +577,59 @@ def exportar_csv():
     df = fetch_dataframe("SELECT * FROM lancamentos")
     return df.to_csv(index=False).encode('utf-8') if not df.empty else None
 
+def validar_csv_lancamentos(df_imp):
+    """
+    Valida TODAS as linhas ANTES de qualquer coisa tocar o banco. Se algo
+    estiver errado, retorna a lista de problemas (linha + coluna + motivo)
+    e a restauração inteira é cancelada -- a tabela antiga nunca chega a
+    ser apagada. Isso resolve o problema de fundo do 'integer out of
+    range': antes, um valor ruim só era descoberto DEPOIS do TRUNCATE já
+    ter se efetivado (autocommit), sem chance de desfazer.
+    """
+    problemas = []
+    colunas_obrigatorias = ['tipo', 'categoria', 'descricao', 'valor', 'data_vencimento', 'compra_id']
+    for col in colunas_obrigatorias:
+        if col not in df_imp.columns:
+            problemas.append(f"Coluna obrigatória '{col}' não existe no CSV.")
+    if problemas: return problemas, None
+
+    df_v = df_imp.copy()
+
+    # parcela_atual / total_parcelas / pago são INTEGER no banco -- NaN vira
+    # erro de tipo lá (as 48 linhas de 'Ajuste' antigas nascem sem esses
+    # campos preenchidos). Aqui a gente já resolve isso ANTES de mandar pro
+    # Postgres: vira 1/1/pago conforme o próprio valor de 'pago' da linha.
+    for col, default in [('parcela_atual', 1), ('total_parcelas', 1)]:
+        if col not in df_v.columns:
+            df_v[col] = default
+        else:
+            df_v[col] = pd.to_numeric(df_v[col], errors='coerce').fillna(default)
+
+    if 'pago' not in df_v.columns:
+        problemas.append("Coluna obrigatória 'pago' não existe no CSV.")
+        return problemas, None
+    df_v['pago'] = pd.to_numeric(df_v['pago'], errors='coerce').fillna(0)
+
+    LIMITE_INT = 2_147_483_647
+    for col in ['parcela_atual', 'total_parcelas', 'pago']:
+        fora_do_limite = df_v[(df_v[col].abs() > LIMITE_INT)]
+        for idx, row in fora_do_limite.iterrows():
+            problemas.append(f"Linha {idx+2}: coluna '{col}' com valor {row[col]} -- fora do limite do banco (máx {LIMITE_INT}).")
+
+    # valor / valor_pago precisam ser números finitos (não texto, não infinito)
+    for col in ['valor', 'valor_pago'] if 'valor_pago' in df_v.columns else ['valor']:
+        nums = pd.to_numeric(df_v[col], errors='coerce')
+        invalidos = df_v[nums.isna() | ~pd.Series(nums).apply(lambda x: pd.notna(x) and abs(x) != float('inf'))]
+        for idx, row in invalidos.iterrows():
+            problemas.append(f"Linha {idx+2}: coluna '{col}' com valor '{row[col]}' não é um número válido.")
+
+    # data_vencimento precisa ser uma data reconhecível
+    datas = pd.to_datetime(df_v['data_vencimento'], errors='coerce')
+    for idx in df_v[datas.isna()].index:
+        problemas.append(f"Linha {idx+2}: coluna 'data_vencimento' com valor '{df_v.loc[idx, 'data_vencimento']}' não é uma data válida.")
+
+    return problemas, df_v
+
 def importar_csv(arquivo):
     try:
         df_imp = pd.read_csv(arquivo)
@@ -582,17 +637,44 @@ def importar_csv(arquivo):
         if 'prioridade' not in df_imp.columns: df_imp['prioridade'] = 'Baixa 🟢'
         if 'valor_pago' not in df_imp.columns: df_imp['valor_pago'] = df_imp['valor']
 
-        execute_query("TRUNCATE TABLE lancamentos RESTART IDENTITY")
+        problemas, df_v = validar_csv_lancamentos(df_imp)
+        if problemas:
+            st.error(f"❌ Restauração cancelada ANTES de tocar no banco -- {len(problemas)} problema(s) encontrado(s). "
+                     "Seus dados atuais continuam intactos.")
+            with st.expander("Ver detalhes dos problemas", expanded=True):
+                for p in problemas[:50]:
+                    st.write(f"• {p}")
+                if len(problemas) > 50:
+                    st.caption(f"... e mais {len(problemas) - 50} problema(s).")
+            return False
+
         registros = [(
             r['tipo'], r['categoria'], r['subgrupo'], r['descricao'], r['valor'],
-            r['data_vencimento'], r['parcela_atual'], r['total_parcelas'], r['pago'],
+            r['data_vencimento'], int(r['parcela_atual']), int(r['total_parcelas']), int(r['pago']),
             r['compra_id'], r['forma_pagamento'], r['prioridade'], r['valor_pago']
-        ) for _, r in df_imp.iterrows()]
+        ) for _, r in df_v.iterrows()]
 
-        execute_values_query('''
-            INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago)
-            VALUES %s
-        ''', registros)
+        # TRANSAÇÃO ATÔMICA DE VERDADE: TRUNCATE e INSERT agora vivem na MESMA
+        # transação. Antes, com autocommit=True, o TRUNCATE já se efetivava
+        # sozinho antes do INSERT ser tentado -- se o INSERT falhasse, a
+        # tabela ficava vazia sem chance de desfazer. Agora, se qualquer
+        # coisa falhar aqui dentro, TUDO volta ao estado anterior.
+        conn = get_connection()
+        conn.autocommit = False
+        try:
+            with conn.cursor() as cur:
+                cur.execute("TRUNCATE TABLE lancamentos RESTART IDENTITY")
+                execute_values(cur, '''
+                    INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago)
+                    VALUES %s
+                ''', registros)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            st.error(f"Erro Crítico de Restauração (revertido -- seus dados antigos foram preservados): {e}")
+            return False
+        finally:
+            conn.autocommit = True
         return True
     except Exception as e:
         st.error(f"Erro Crítico de Restauração: {e}")
@@ -1584,6 +1666,98 @@ elif menu == "💳 Dívidas":
 
 elif menu == "🏥 Escala de Plantões":
     st.header("🏥 Escala Visual de Plantões")
+
+    with st.expander("📥 Importar Plantões via CSV (não mexe em mais nada do banco)"):
+        st.caption(
+            "Diferente do 'Restaurar CSV' da sidebar (que APAGA a tabela inteira e recoloca do zero), "
+            "esta importação só ADICIONA plantões novos -- todo o resto do seu banco (despesas, outras "
+            "entradas, dívidas) fica intocado. Plantões que já existem (mesmo local + mesma data) são "
+            "detectados e ignorados, então pode importar o mesmo arquivo mais de uma vez sem duplicar."
+        )
+        st.markdown(
+            "**Formato esperado do CSV** (cabeçalho na 1ª linha, sem acento obrigatório):\n"
+            "- `data` — data do plantão, formato `DD/MM/AAAA`\n"
+            "- `local` — precisa bater com um Subgrupo já cadastrado em '⚙️ Gerenciar Categorias' (ex: Trauma, Unimed, HELP)\n"
+            "- `valor` — opcional; se ausente, usa o Valor Padrão cadastrado para aquele local"
+        )
+        csv_plantoes = st.file_uploader("Arquivo CSV de plantões", type="csv", key="upload_plantoes_csv")
+        if csv_plantoes is not None:
+            try:
+                df_imp_plant = pd.read_csv(csv_plantoes)
+                df_imp_plant.columns = [c.strip().lower() for c in df_imp_plant.columns]
+                col_data = next((c for c in df_imp_plant.columns if c in ('data', 'data_plantao', 'date')), None)
+                col_local = next((c for c in df_imp_plant.columns if c in ('local', 'hospital', 'subgrupo')), None)
+                col_valor = next((c for c in df_imp_plant.columns if c in ('valor', 'value')), None)
+
+                if not col_data or not col_local:
+                    st.error("O CSV precisa ter pelo menos as colunas 'data' e 'local'.")
+                else:
+                    df_defaults = fetch_dataframe("SELECT categoria, subgrupo, valor_padrao, atraso_meses, dia_pagamento FROM categorias_personalizadas WHERE tipo = 'Entrada'")
+                    df_existentes = fetch_dataframe("SELECT descricao FROM lancamentos WHERE tipo = 'Entrada' AND descricao LIKE 'Plantão %'")
+                    descricoes_existentes = set(df_existentes['descricao'].tolist()) if not df_existentes.empty else set()
+
+                    novos, ignorados_dup, sem_local = [], [], []
+                    for _, row in df_imp_plant.iterrows():
+                        try:
+                            data_plantao = pd.to_datetime(str(row[col_data]).strip(), format='%d/%m/%Y').date()
+                        except Exception:
+                            sem_local.append(f"{row[col_data]!r} (data inválida)")
+                            continue
+
+                        local_str = str(row[col_local]).strip()
+                        info_local = df_defaults[df_defaults['subgrupo'].str.strip().str.lower() == local_str.lower()]
+                        if info_local.empty:
+                            sem_local.append(f"{local_str} ({data_plantao.strftime('%d/%m/%Y')})")
+                            continue
+                        info_local = info_local.iloc[0]
+
+                        descricao_nova = f"Plantão {info_local['subgrupo']} ({data_plantao.strftime('%d/%m/%Y')})"
+                        if descricao_nova in descricoes_existentes:
+                            ignorados_dup.append(descricao_nova)
+                            continue
+
+                        if col_valor and pd.notna(row.get(col_valor)):
+                            valor_final = parse_valor(row[col_valor])
+                        elif pd.notna(info_local['valor_padrao']):
+                            valor_final = float(info_local['valor_padrao'])
+                        else:
+                            sem_local.append(f"{descricao_nova} (sem valor e sem Valor Padrão cadastrado)")
+                            continue
+
+                        atraso_m = int(info_local['atraso_meses']) if pd.notna(info_local['atraso_meses']) else 1
+                        dia_pgto = int(info_local['dia_pagamento']) if pd.notna(info_local['dia_pagamento']) else 10
+                        m_f = (data_plantao.month + atraso_m - 1) % 12 + 1
+                        a_f = data_plantao.year + (data_plantao.month + atraso_m - 1) // 12
+                        dia_pgto_ajustado = min(dia_pgto, calendar.monthrange(a_f, m_f)[1])
+                        data_vencto = datetime.date(a_f, m_f, dia_pgto_ajustado)
+
+                        novos.append((
+                            'Entrada', info_local['categoria'], info_local['subgrupo'], descricao_nova,
+                            valor_final, data_vencto, 1, 1, 0, str(uuid.uuid4()), 'Outros', 'Baixa 🟢', 0.0
+                        ))
+                        descricoes_existentes.add(descricao_nova)  # evita duplicata dentro do próprio arquivo
+
+                    st.divider()
+                    c_res1, c_res2, c_res3 = st.columns(3)
+                    c_res1.metric("✅ Novos a importar", len(novos))
+                    c_res2.metric("↩️ Já existiam (ignorados)", len(ignorados_dup))
+                    c_res3.metric("⚠️ Com problema", len(sem_local))
+
+                    if sem_local:
+                        with st.container(border=True):
+                            st.caption("Linhas com problema (local não encontrado, data inválida, ou sem valor):")
+                            for s in sem_local: st.write(f"• {s}")
+
+                    if novos and st.button(f"➕ Confirmar Importação de {len(novos)} Plantão(ões) Novo(s)", type="primary"):
+                        execute_values_query('''
+                            INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, data_vencimento, parcela_atual, total_parcelas, pago, compra_id, forma_pagamento, prioridade, valor_pago)
+                            VALUES %s
+                        ''', novos)
+                        flash("success", f"✅ {len(novos)} plantão(ões) importado(s) — nenhum outro dado foi alterado.")
+                        st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao ler o CSV: {e}")
+
     c_m, c_a = st.columns(2)
     with c_m: cal_mes = st.selectbox("Mês do Calendário", range(1, 13), format_func=lambda x: meses[x-1], index=hoje.month-1)
     with c_a: cal_ano = st.selectbox("Ano do Calendário", range(hoje.year-1, hoje.year+2), index=1)
