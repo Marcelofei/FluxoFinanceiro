@@ -8,6 +8,7 @@ import calendar
 import uuid
 import os
 import io
+import re
 
 # =================================================================
 # 1. INFRAESTRUTURA E CONEXÃO (SINGLETON ROBUSTO E ANTI-DDoS)
@@ -996,7 +997,7 @@ def _wizard_passo5_revisao():
                 m_i = m_i % 12 + 1
                 data_i = datetime.date(a_i, m_i, min(primeira.day, calendar.monthrange(a_i, m_i)[1]))
                 registros_divida.append((
-                    'Despesa', 'Dívidas', d['nome'], f"{d['nome']} ({i+1}/{d['parcelas_faltam']})", d['valor_parcela'],
+                    'Despesa', 'Dívidas', d['nome'], d['nome'], d['valor_parcela'],
                     data_i, i + 1, d['parcelas_faltam'], 0, comp_id,
                     'Crédito' if d['eh_cartao'] else 'Outros', 'Média 🟡', 0.0
                 ))
@@ -1302,6 +1303,26 @@ elif menu == "⚙️ Gerenciar Categorias":
                 else:
                     execute_query("DELETE FROM lancamentos WHERE id IN %s", (ids_apagar,))
                 flash("success", f"🧹 {len(ids_apagar)} lançamento(s) antigo(s) apagado(s)."); st.rerun()
+
+    with st.expander("🧹 Corrigir Descrição Duplicada de Parcelas (bug do Assistente de Configuração)"):
+        st.caption("Se você criou dívidas pelo '🧙 Assistente de Configuração' antes desta correção, a descrição "
+                  "pode ter ficado duplicada (ex: 'Empréstimo Dimas 2 (1/3) (1/3)'). Esta ferramenta identifica e "
+                  "remove só o texto repetido -- não mexe em valor, data ou número de parcelas.")
+        df_desc_duplicada = fetch_dataframe(
+            r"SELECT id, descricao FROM lancamentos WHERE descricao ~ '\(\d+/\d+\) \(\d+/\d+\)$' ORDER BY id"
+        )
+        if df_desc_duplicada.empty:
+            st.success("Nenhuma descrição duplicada encontrada.")
+        else:
+            st.warning(f"Encontrado(s) {len(df_desc_duplicada)} lançamento(s) com descrição duplicada.")
+            df_preview = df_desc_duplicada.copy()
+            df_preview['descrição corrigida (prévia)'] = df_preview['descricao'].apply(lambda d: re.sub(r'(\s*\(\d+/\d+\))+$', '', d).strip())
+            st.dataframe(df_preview.rename(columns={'descricao': 'descrição atual'}), use_container_width=True, hide_index=True)
+            if st.button("🔧 Corrigir Todas Automaticamente", type="primary", key="btn_corrigir_desc_dup"):
+                for _, row in df_desc_duplicada.iterrows():
+                    nova_desc = re.sub(r'(\s*\(\d+/\d+\))+$', '', row['descricao']).strip()
+                    execute_query("UPDATE lancamentos SET descricao = %s WHERE id = %s", (nova_desc, row['id']))
+                flash("success", f"🧹 {len(df_desc_duplicada)} descrição(ões) corrigida(s)."); st.rerun()
 
 # =================================================================
 # 10. MÓDULO 1: LANÇAMENTOS
