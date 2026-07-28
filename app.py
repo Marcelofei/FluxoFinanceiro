@@ -349,159 +349,212 @@ init_db()
 def aplicar_estilo_visual():
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+    /* =============================================================
+       PALETA -- extraída do layout feito no Claude Design.
+       Fundo azul-petróleo bem escuro, acento ciano (não mais teal),
+       alerta laranja, sucesso verde -- tudo em OKLCH, igual ao mockup.
+       ============================================================= */
     :root, .stApp {
-        --background-color: #12161B !important;
-        --secondary-background-color: #1B2127 !important;
-        --text-color: #E8EAED !important;
-        --primary-color: #3FAE8D !important;
+        --bg-page: oklch(15% 0.008 250);
+        --bg-sidebar: oklch(13% 0.008 250);
+        --bg-card: oklch(19% 0.01 250);
+        --border: oklch(30% 0.01 250 / 0.55);
+        --border-strong: oklch(30% 0.01 250 / 0.7);
+        --text-primary: oklch(93% 0.004 250);
+        --text-heading: oklch(96% 0.003 250);
+        --text-muted: oklch(60% 0.01 250);
+        --text-faint: oklch(45% 0.01 250);
+        --accent: oklch(72% 0.1 210);
+        --accent-strong: oklch(80% 0.09 210);
+        --accent-tint: oklch(72% 0.1 210 / 0.14);
+        --danger: oklch(68% 0.13 25);
+        --danger-text: oklch(74% 0.11 25);
+        --danger-tint: oklch(68% 0.13 25 / 0.08);
+        --danger-border: oklch(68% 0.13 25 / 0.3);
+        --success: oklch(72% 0.11 155);
+        --success-tint: oklch(72% 0.11 155 / 0.14);
+        --success-border: oklch(72% 0.11 155 / 0.4);
+
+        --background-color: var(--bg-page) !important;
+        --secondary-background-color: var(--bg-card) !important;
+        --text-color: var(--text-primary) !important;
+        --primary-color: var(--accent) !important;
     }
     html, body, .stApp,
     [data-testid="stAppViewContainer"],
     [data-testid="stMain"],
     [data-testid="stHeader"],
     .main {
-        background-color: #12161B !important;
+        background-color: var(--bg-page) !important;
     }
     [data-testid="stHeader"] {
         background-color: rgba(0,0,0,0) !important;
     }
     .stApp {
-        color: #E8EAED;
+        color: var(--text-primary);
     }
 
     html, body, [class*="css"] {
-        font-family: 'Manrope', sans-serif;
+        font-family: 'Inter', system-ui, sans-serif;
     }
     h1, h2, h3, h4, h5, h6 {
-        font-family: 'Manrope', sans-serif !important;
-        font-weight: 700 !important;
-        color: #E8EAED !important;
-        letter-spacing: -0.01em;
+        font-family: 'Inter', system-ui, sans-serif !important;
+        font-weight: 600 !important;
+        color: var(--text-heading) !important;
+        letter-spacing: -0.015em;
+    }
+    /* Números tabulares (mesma largura por dígito) em vez de fonte mono --
+       é a mesma técnica usada no mockup (.num{font-variant-numeric:tabular-nums}) */
+    div[data-testid="stMetricValue"], .num-tabular {
+        font-variant-numeric: tabular-nums;
     }
 
     div[data-testid="stMetric"], div[data-testid="metric-container"] {
-        background: #1B2127 !important;
-        border: 1px solid #2A3138;
+        background: var(--bg-card) !important;
+        border: 1px solid var(--border);
         border-radius: 14px;
-        padding: 0.9rem 1.1rem 0.8rem 1.1rem;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+        padding: 1.1rem 1.2rem;
+        box-shadow: none;
     }
     div[data-testid="stMetricValue"] {
-        font-family: 'IBM Plex Mono', monospace !important;
+        font-family: 'Inter', system-ui, sans-serif !important;
         font-weight: 600 !important;
-        color: #E8EAED !important;
+        color: var(--text-primary) !important;
+        letter-spacing: -0.01em;
     }
     div[data-testid="stMetricLabel"] {
-        font-weight: 600 !important;
-        color: #8B94A0 !important;
-        font-size: 0.78rem !important;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
+        font-weight: 500 !important;
+        color: var(--text-muted) !important;
+        font-size: 0.8rem !important;
+        text-transform: none;
+        letter-spacing: 0;
     }
     div[data-testid="stMetricLabel"] p {
-        color: #8B94A0 !important;
+        color: var(--text-muted) !important;
     }
 
     .stApp label, .stApp .stMarkdown, .stApp .stMarkdown p,
     .stApp [data-testid="stWidgetLabel"] p,
     .stApp [data-testid="stWidgetLabel"] {
-        color: #E8EAED !important;
+        color: var(--text-primary) !important;
     }
     .stApp [data-testid="stCaptionContainer"] {
-        color: #8B94A0 !important;
+        color: var(--text-muted) !important;
     }
 
     section[data-testid="stSidebar"] {
-        background: #0E1216 !important;
-        border-right: 1px solid #2A3138;
+        background: var(--bg-sidebar) !important;
+        border-right: 1px solid var(--border);
     }
     section[data-testid="stSidebar"] * {
-        color: #E8EAED !important;
+        color: var(--text-primary) !important;
     }
 
+    /* Botões secundários (a maioria) -- estilo discreto com borda fina,
+       igual ao mockup (nada de preenchimento sólido chamativo). */
     .stButton button,
     .stButton button[kind="secondary"],
     .stButton button:not([kind="primary"]) {
-        background-color: #1B2127 !important;
-        border: 1px solid #2A3138 !important;
-        color: #E8EAED !important;
+        background-color: var(--bg-card) !important;
+        border: 1px solid var(--border-strong) !important;
+        color: var(--text-primary) !important;
+        border-radius: 9px !important;
+        font-weight: 500 !important;
     }
     .stButton button *,
     .stButton button[kind="secondary"] *,
     .stButton button:not([kind="primary"]) * {
-        color: #E8EAED !important;
+        color: var(--text-primary) !important;
     }
     .stButton button:hover,
     .stButton button:not([kind="primary"]):hover {
-        background-color: #20262C !important;
-        border-color: #3FAE8D !important;
-        color: #E8EAED !important;
+        background-color: oklch(22% 0.012 250) !important;
+        border-color: var(--accent) !important;
+        color: var(--text-primary) !important;
     }
 
+    /* Botões primários (ação principal / item de menu ativo) -- usa o
+       acento do mockup só que em preenchimento sólido, pra manter clareza
+       de qual é a ação/página principal (o mockup usa esse acento como
+       destaque translúcido; adaptei pra preenchimento sólido porque
+       Streamlit precisa de contraste forte pra sinalizar 'isso é o principal'). */
     .stButton button[kind="primary"] {
-        background-color: #3FAE8D !important;
-        border: 1px solid #3FAE8D !important;
-        color: #0E1216 !important;
+        background-color: var(--accent) !important;
+        border: 1px solid var(--accent) !important;
+        color: oklch(15% 0.008 250) !important;
+        border-radius: 9px !important;
+        font-weight: 500 !important;
     }
     .stButton button[kind="primary"] * {
-        color: #0E1216 !important;
+        color: oklch(15% 0.008 250) !important;
     }
     .stButton button[kind="primary"]:hover {
-        background-color: #379A7C !important;
-        border-color: #379A7C !important;
-        color: #0E1216 !important;
+        background-color: var(--accent-strong) !important;
+        border-color: var(--accent-strong) !important;
+        color: oklch(15% 0.008 250) !important;
     }
     .stButton button[kind="primary"]:hover * {
-        color: #0E1216 !important;
+        color: oklch(15% 0.008 250) !important;
     }
 
     section[data-testid="stSidebar"] .stButton button {
         width: 100%;
         text-align: left;
         justify-content: flex-start;
-        border-radius: 8px;
+        border-radius: 8px !important;
         font-weight: 500;
-        padding: 0.45rem 0.8rem;
+        padding: 0.5rem 0.8rem;
+    }
+    /* Item de navegação ativo na sidebar: tinta translúcida do acento,
+       igual ao navItem() do mockup -- não preenchimento sólido, porque
+       aqui o botão é só rótulo de página, não uma ação a confirmar. */
+    section[data-testid="stSidebar"] .stButton button[kind="primary"] {
+        background-color: var(--accent-tint) !important;
+        border: 1px solid transparent !important;
+        color: var(--text-heading) !important;
+    }
+    section[data-testid="stSidebar"] .stButton button[kind="primary"] * {
+        color: var(--text-heading) !important;
     }
 
     .nav-eyebrow {
-        font-size: 0.72rem;
-        font-weight: 700;
-        letter-spacing: 0.08em;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
-        color: #8B94A0 !important;
-        margin: 1.1rem 0 0.4rem 0.15rem;
+        color: var(--text-faint) !important;
+        margin: 1.1rem 0 0.4rem 0.3rem;
     }
 
     .stTabs [data-baseweb="tab-list"] {
         gap: 4px;
     }
     .stTabs [data-baseweb="tab"] {
-        font-weight: 600;
-        color: #8B94A0 !important;
+        font-weight: 500;
+        color: var(--text-muted) !important;
     }
     .stTabs [data-baseweb="tab"] p {
-        color: #8B94A0 !important;
+        color: var(--text-muted) !important;
     }
     .stTabs [aria-selected="true"] {
-        color: #3FAE8D !important;
+        color: var(--accent-strong) !important;
     }
     .stTabs [aria-selected="true"] p {
-        color: #3FAE8D !important;
+        color: var(--accent-strong) !important;
     }
 
     div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
-        border-radius: 10px;
+        border-radius: 12px;
         overflow: hidden;
-        border: 1px solid #2A3138;
+        border: 1px solid var(--border);
     }
 
     div[data-testid="stExpander"], div[data-testid="stForm"] {
-        border: 1px solid #2A3138 !important;
-        border-radius: 12px !important;
-        background: #1B2127 !important;
+        border: 1px solid var(--border) !important;
+        border-radius: 14px !important;
+        background: var(--bg-card) !important;
     }
 
     /* -----------------------------------------------------------
@@ -548,13 +601,16 @@ def aplicar_estilo_visual():
 aplicar_estilo_visual()
 
 def aplicar_tema_grafico(fig):
+    # Plotly não entende oklch() nativamente -- estes hex são a conversão
+    # matemática exata (OKLab -> sRGB) das mesmas cores usadas no CSS,
+    # não uma aproximação visual.
     fig.update_layout(
-        paper_bgcolor="#1B2127",
-        plot_bgcolor="#1B2127",
-        font=dict(family="Manrope, sans-serif", color="#E8EAED"),
-        legend=dict(font=dict(color="#E8EAED")),
-        xaxis=dict(gridcolor="#2A3138", linecolor="#2A3138", color="#8B94A0"),
-        yaxis=dict(gridcolor="#2A3138", linecolor="#2A3138", color="#8B94A0"),
+        paper_bgcolor="#101418",
+        plot_bgcolor="#101418",
+        font=dict(family="Inter, sans-serif", color="#E6E8EA"),
+        legend=dict(font=dict(color="#E6E8EA")),
+        xaxis=dict(gridcolor="#2A2E33", linecolor="#2A2E33", color="#7C8186"),
+        yaxis=dict(gridcolor="#2A2E33", linecolor="#2A2E33", color="#7C8186"),
     )
     return fig
 
@@ -594,8 +650,8 @@ prioridades_map = {"Alta 🔴": 0, "Média 🟡": 1, "Baixa 🟢": 2}
 # =================================================================
 
 st.sidebar.markdown(
-    "<div style='font-weight:800; font-size:1.05rem; color:#E8EAED; margin-bottom:0.2rem;'>💰 Gestão Financeira</div>"
-    "<div style='font-size:0.8rem; color:#8B94A0; margin-bottom:0.4rem;'>Painel de controle financeiro</div>",
+    "<div style='font-weight:700; font-size:1.05rem; color:oklch(96% 0.003 250); margin-bottom:0.2rem;'>💰 Gestão Financeira</div>"
+    "<div style='font-size:0.8rem; color:oklch(60% 0.01 250); margin-bottom:0.4rem;'>Painel de controle financeiro</div>",
     unsafe_allow_html=True
 )
 st.sidebar.divider()
@@ -1075,20 +1131,20 @@ elif menu == "🏠 Início":
 
     if media_despesa_mensal > 0:
         meses_sobrevivencia = reserva_atual / media_despesa_mensal
-        if meses_sobrevivencia < 3: cor_sobrevivencia = "#E0695C"
-        elif meses_sobrevivencia < 6: cor_sobrevivencia = "#DDA251"
-        else: cor_sobrevivencia = "#3FAE8D"
+        if meses_sobrevivencia < 3: cor_sobrevivencia = "oklch(74% 0.11 25)"
+        elif meses_sobrevivencia < 6: cor_sobrevivencia = "oklch(78% 0.12 85)"
+        else: cor_sobrevivencia = "oklch(72% 0.11 155)"
 
         st.markdown(f"""
-        <div style='background:#1B2127; border:1px solid #2A3138; border-left:4px solid {cor_sobrevivencia};
-                    border-radius:12px; padding:1rem 1.3rem; margin-bottom:0.6rem;'>
-            <div style='font-size:0.78rem; color:#8B94A0; text-transform:uppercase; letter-spacing:0.04em; font-weight:600;'>
+        <div style='background:oklch(19% 0.01 250); border:1px solid oklch(30% 0.01 250 / 0.55); border-left:4px solid {cor_sobrevivencia};
+                    border-radius:14px; padding:1rem 1.3rem; margin-bottom:0.6rem;'>
+            <div style='font-size:0.78rem; color:oklch(60% 0.01 250); text-transform:uppercase; letter-spacing:0.04em; font-weight:600;'>
                 🛟 Meses de Sobrevivência
             </div>
-            <div style='font-family: "IBM Plex Mono", monospace; font-size:2rem; font-weight:700; color:{cor_sobrevivencia}; line-height:1.3;'>
+            <div style='font-family: "Inter", sans-serif; font-variant-numeric: tabular-nums; font-size:2rem; font-weight:600; color:{cor_sobrevivencia}; line-height:1.3;'>
                 {meses_sobrevivencia:.1f} meses
             </div>
-            <div style='font-size:0.8rem; color:#8B94A0;'>
+            <div style='font-size:0.8rem; color:oklch(60% 0.01 250);'>
                 Se você parasse de trabalhar hoje, sua reserva atual (R$ {format_brl(reserva_atual)}) cobriria seu padrão de
                 vida por esse tempo -- baseado na média de despesas pagas dos últimos {n_meses_com_dados} mês(es) fechado(s).
             </div>
@@ -1155,16 +1211,16 @@ elif menu == "🏠 Início":
             eh_despesa = r['tipo'] == 'Despesa'
             dt_str = pd.to_datetime(r['data_vencimento']).strftime('%d/%m')
             icone = "📤" if eh_despesa else "📥"
-            cor_data = "#E0695C" if atrasado else "inherit"
+            cor_data = "oklch(74% 0.11 25)" if atrasado else "inherit"
 
             c_lin1, c_lin2, c_lin3 = st.columns([5.2, 1.6, 1.4])
             with c_lin1:
                 st.markdown(f"{icone} <span style='color:{cor_data}; font-weight:600;'>{dt_str}</span> · {r['descricao']}", unsafe_allow_html=True)
             with c_lin2:
-                st.markdown(f"<div style='text-align:right; font-family: IBM Plex Mono, monospace;'>R$ {format_brl(r['valor'])}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align:right; font-family: Inter, sans-serif; font-variant-numeric: tabular-nums;'>R$ {format_brl(r['valor'])}</div>", unsafe_allow_html=True)
             with c_lin3:
                 if eh_pago:
-                    st.markdown("✅ <span style='color:#8B94A0;'>Pago</span>" if eh_despesa else "✅ <span style='color:#8B94A0;'>Recebido</span>", unsafe_allow_html=True)
+                    st.markdown("✅ <span style='color:oklch(60% 0.01 250);'>Pago</span>" if eh_despesa else "✅ <span style='color:oklch(60% 0.01 250);'>Recebido</span>", unsafe_allow_html=True)
                 else:
                     rotulo_acao = "✓ Pagar" if eh_despesa else "✓ Receber"
                     if st.button(rotulo_acao, key=f"{prefixo_key}_{idx}_{'_'.join(map(str, r['ids']))}", use_container_width=True):
@@ -1722,8 +1778,8 @@ elif menu == "📑 Demonstrativo":
 
                 def _cor_linha_demonstrativo(row):
                     if row['Status'] == '✅ Pago':
-                        return ['background-color: #17241E; color: #E8EAED'] * len(row)
-                    return ['background-color: #29241A; color: #E8EAED'] * len(row)
+                        return ['background-color: oklch(72% 0.11 155 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
+                    return ['background-color: oklch(78% 0.12 85 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
 
                 estilo = tabela.style.apply(_cor_linha_demonstrativo, axis=1).format({
                     'Planejado': lambda v: f"R$ {format_brl(v)}",
@@ -1801,10 +1857,10 @@ elif menu == "📑 Demonstrativo":
 
                 def _cor_linha_envelope(row):
                     if row['Métrica de Saúde'].startswith('🔴'):
-                        return ['background-color: #2A1B19; color: #E8EAED'] * len(row)
+                        return ['background-color: oklch(68% 0.13 25 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
                     if row['Métrica de Saúde'].startswith('🟡'):
-                        return ['background-color: #29241A; color: #E8EAED'] * len(row)
-                    return ['background-color: #17241E; color: #E8EAED'] * len(row)
+                        return ['background-color: oklch(78% 0.12 85 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
+                    return ['background-color: oklch(72% 0.11 155 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
 
                 estilo_env = df_matriz.style.apply(_cor_linha_envelope, axis=1).format({
                     'Orçamento Inicial (Teto)': lambda v: f"R$ {format_brl(v)}",
@@ -1923,13 +1979,13 @@ elif menu == "📈 Balanço Anual":
             with tab_graf1:
                 fig_evol = px.bar(mensal, x='Mes', y=['Entrada', 'Despesa'],
                                   barmode='group', title="Balanço FP&A Híbrido (Realizado + Projetado)",
-                                  color_discrete_map={'Entrada': '#3FAE8D', 'Despesa': '#E0695C'},
+                                  color_discrete_map={'Entrada': '#68B986', 'Despesa': '#DD766F'},
                                   labels={'value': 'Valor (R$)', 'variable': 'Fluxo'})
                 fig_evol.update_layout(legend_title_text='Fluxo')
                 st.plotly_chart(aplicar_tema_grafico(fig_evol), use_container_width=True)
 
                 fig_acum = px.area(mensal, x='Mes', y='Acumulado', title="Fluxo de Caixa Acumulado (Híbrido)",
-                                   color_discrete_sequence=['#3FAE8D'], markers=True)
+                                   color_discrete_sequence=['#4AB6C7'], markers=True)
                 st.plotly_chart(aplicar_tema_grafico(fig_acum), use_container_width=True)
 
             with tab_graf2:
@@ -1945,7 +2001,7 @@ elif menu == "📈 Balanço Anual":
                     df_sub_ano = df_ano[df_ano['tipo'] == 'Despesa'].groupby('subgrupo')['hibrido_fpa'].sum().sort_values(ascending=False).head(12).reset_index()
                     fig_sub = px.bar(df_sub_ano, x='hibrido_fpa', y='subgrupo', orientation='h',
                                      title="Top 12 Centros de Custo do Ano",
-                                     color='hibrido_fpa', color_continuous_scale=['#29241A', '#DDA251', '#E0695C'])
+                                     color='hibrido_fpa', color_continuous_scale=['#2A2E33', '#DBB155', '#DD766F'])
                     fig_sub.update_layout(yaxis={'categoryorder':'total ascending'})
                     st.plotly_chart(aplicar_tema_grafico(fig_sub), use_container_width=True)
 
@@ -2030,7 +2086,7 @@ elif menu == "💳 Dívidas":
                     if d['saldo_devedor'] <= 0.01:
                         st.success("✅ Quitada")
                     else:
-                        st.markdown(f"<div style='text-align:right; font-family: IBM Plex Mono, monospace; font-weight:600; font-size:1.1rem;'>R$ {format_brl(d['saldo_devedor'])}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align:right; font-family: Inter, sans-serif; font-variant-numeric: tabular-nums; font-weight:600; font-size:1.1rem;'>R$ {format_brl(d['saldo_devedor'])}</div>", unsafe_allow_html=True)
                         st.caption("Saldo devedor")
 
                 st.progress(progresso)
@@ -2040,7 +2096,7 @@ elif menu == "💳 Dívidas":
                     parcela_mensal = d['valor_total'] / total_parc if total_parc else 0.0
                     plantoes_equiv = parcela_mensal / valor_medio_plantao
                     st.markdown(
-                        f"<div style='background:#1B2127; border-left:3px solid #DDA251; border-radius:6px; "
+                        f"<div style='background:oklch(19% 0.01 250); border-left:3px solid oklch(78% 0.12 85); border-radius:6px; "
                         f"padding:0.4rem 0.7rem; margin:0.3rem 0; font-size:0.85rem;'>"
                         f"🏥 Essa parcela (R$ {format_brl(parcela_mensal)}/mês) equivale a "
                         f"<b>{plantoes_equiv:.1f} plantão(ões)/mês</b> pelo seu valor médio recente.</div>",
@@ -2185,18 +2241,18 @@ elif menu == "🏥 Escala de Plantões":
         df_m_cal = df_t[(pd.to_datetime(df_t['d_p']).dt.month == cal_mes) & (pd.to_datetime(df_t['d_p']).dt.year == cal_ano)].copy()
 
     cols = st.columns(7)
-    for i, dia in enumerate(["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]): cols[i].markdown(f"<div style='text-align: center; font-weight: 700; padding: 6px; font-family: Manrope, sans-serif; color:#8B94A0; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; border-bottom: 2px solid #3FAE8D;'>{dia}</div>", unsafe_allow_html=True)
+    for i, dia in enumerate(["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]): cols[i].markdown(f"<div style='text-align: center; font-weight: 600; padding: 6px; font-family: Inter, sans-serif; color:oklch(60% 0.01 250); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; border-bottom: 2px solid oklch(72% 0.1 210);'>{dia}</div>", unsafe_allow_html=True)
     for week in calendar.monthcalendar(cal_ano, cal_mes):
         w_cols = st.columns(7)
         for i, day in enumerate(week):
             with w_cols[i]:
                 if day != 0:
                     cd = datetime.date(cal_ano, cal_mes, day)
-                    bg = "background-color: rgba(63, 174, 141, 0.14);" if cd == hoje else "background-color: #1B2127;"
-                    brdr = "border: 2px solid #3FAE8D;" if cd == hoje else "border: 1px solid #2A3138;"
-                    html = f"<div style='{bg} {brdr} border-radius: 10px; padding: 6px; min-height: 90px; margin-top: 6px;'><div style='text-align:right; font-weight:600; font-family: Manrope, sans-serif; color:#E8EAED; font-size:0.85rem;'>{day}</div>"
+                    bg = "background-color: oklch(72% 0.1 210 / 0.14);" if cd == hoje else "background-color: oklch(19% 0.01 250);"
+                    brdr = "border: 2px solid oklch(72% 0.1 210);" if cd == hoje else "border: 1px solid oklch(30% 0.01 250 / 0.55);"
+                    html = f"<div style='{bg} {brdr} border-radius: 10px; padding: 6px; min-height: 90px; margin-top: 6px;'><div style='text-align:right; font-weight:600; font-family: Inter, sans-serif; color:oklch(93% 0.004 250); font-size:0.85rem;'>{day}</div>"
                     if not df_m_cal.empty:
-                        for _, s in df_m_cal[df_m_cal['d_p'] == cd].iterrows(): html += f"<div style='background-color:#3FAE8D; color:#0E1216; font-size:10px; font-weight:600; padding:2px 4px; border-radius:4px; margin-top:2px; white-space:nowrap; overflow:hidden;'>🏥 {s['subgrupo']}</div>"
+                        for _, s in df_m_cal[df_m_cal['d_p'] == cd].iterrows(): html += f"<div style='background-color:oklch(72% 0.1 210); color:oklch(15% 0.008 250); font-size:10px; font-weight:600; padding:2px 4px; border-radius:4px; margin-top:2px; white-space:nowrap; overflow:hidden;'>🏥 {s['subgrupo']}</div>"
                     st.markdown(html + "</div>", unsafe_allow_html=True)
 
     st.divider()
