@@ -1192,12 +1192,16 @@ elif menu == "🏠 Início":
 
         mask_plant = (df['tipo'] == 'Entrada') & df['descricao'].str.contains('plant', case=False, na=False)
         if mask_plant.any():
-            for subg_nome, grp in df[mask_plant].groupby('subgrupo'):
+            # Mesma lógica do Fluxo e Prioridades: agrupa por categoria (hospital),
+            # não por subgrupo (turno) -- Semana/FDS/USG existem só pra calcular o
+            # valor certo de cada plantão, mas o pagamento cai junto por hospital.
+            for nome_grupo, grp in df[mask_plant].groupby(['categoria', 'data_vencimento']):
+                cat_nome, dt_venc = nome_grupo
                 linhas.append({
-                    'descricao': f"🏥 Plantões {subg_nome} ({len(grp)})",
+                    'descricao': f"🏥 Plantões {cat_nome} ({len(grp)})",
                     'tipo': 'Entrada', 'valor': grp['valor'].sum(),
                     'pago': 1 if (grp['pago'] == 1).all() else 0,
-                    'data_vencimento': grp['data_vencimento'].min(),
+                    'data_vencimento': dt_venc,
                     'ids': grp['id'].astype(int).tolist(), 'categoria': None, 'subgrupo': None,
                 })
 
@@ -1501,15 +1505,22 @@ elif menu == "📊 Fluxo e Prioridades":
         dummies_plantao = []
         if mask_plantoes_full.any():
             df_plantoes_full = df_base_sem_cred[mask_plantoes_full].copy()
-            for nome_grupo, grupo in df_plantoes_full.groupby(['subgrupo', 'data_vencimento']):
-                subg_nome, dt_venc = nome_grupo
+            # CONSOLIDAÇÃO POR CATEGORIA (hospital), não por subgrupo. Hospitais que
+            # pagam turnos diferentes (Semana/FDS/USG) com valores diferentes usam
+            # subgrupos distintos só pra efeito de cálculo do valor -- mas o pagamento
+            # cai como 1 valor único do hospital inteiro. Cada hospital já é sua
+            # própria categoria (ex: "Trauma", "Unimed"), então agrupar por categoria
+            # em vez de subgrupo junta Semana+FDS+USG automaticamente, sem precisar de
+            # nenhuma configuração nova -- e continua separando hospitais diferentes.
+            for nome_grupo, grupo in df_plantoes_full.groupby(['categoria', 'data_vencimento']):
+                cat_nome, dt_venc = nome_grupo
                 sum_pago_plantao = grupo['valor_pago'].sum()
                 status_lote = 1 if (grupo['pago'] == 1).all() else 0
                 ids_lote_plantao = ','.join(grupo['id'].astype(str))
 
                 dummies_plantao.append({
-                    'id': f'plantao_{subg_nome}', 'tipo': 'Entrada', 'categoria': grupo.iloc[0]['categoria'],
-                    'subgrupo': subg_nome, 'descricao': f'🏥 Plantões {subg_nome} (Consolidado do Mês)',
+                    'id': f'plantao_{cat_nome}_{dt_venc}', 'tipo': 'Entrada', 'categoria': cat_nome,
+                    'subgrupo': '', 'descricao': f'🏥 Plantões {cat_nome} (Consolidado do Mês)',
                     'valor': grupo['valor'].sum(), 'valor_pago': sum_pago_plantao,
                     'data_vencimento': dt_venc, 'pago': status_lote, 'compra_id': 'plantao_dummy',
                     'forma_pagamento': 'Outros', 'prioridade': 'Baixa 🟢', 'ids_alvo': ids_lote_plantao
@@ -1632,23 +1643,34 @@ elif menu == "📊 Fluxo e Prioridades":
                     if id_s == '-1': st.warning("Cartões consolidados não podem ser apagados aqui.")
                     elif id_s.startswith('plantao_'): execute_query("DELETE FROM lancamentos WHERE id IN %s", (tupla_ids_reais,))
                     else: execute_query("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s" if excluir_futuros else "DELETE FROM lancamentos WHERE id = %s", (orig_row['compra_id'], orig_row['data_vencimento']) if excluir_futuros else (tupla_ids_reais[0],))
+                elif id_s == '-1' or id_s.startswith('plantao_'):
+                    # CORREÇÃO: antes, editar o valor de uma linha consolidada criava um
+                    # lançamento "Ajuste" SEPARADO com a diferença -- mas a diferença era
+                    # calculada contra o que estava pago ANTES (geralmente R$0), então o
+                    # valor digitado acabava se somando ao planejado em vez de substituí-lo
+                    # (ex: digitar R$1.160 num grupo com R$1.160 planejado virava R$2.320
+                    # no banco). Agora o valor digitado é distribuído direto nas linhas
+                    # REAIS do grupo -- o total final bate exatamente com o que você digitou,
+                    # sem criar nenhum lançamento "fantasma" à parte.
+                    execute_query("UPDATE lancamentos SET pago=%s WHERE id IN %s", (novo_pago, tupla_ids_reais))
+                    if novo_pago == 1:
+                        execute_query("UPDATE lancamentos SET valor_pago=valor WHERE id IN %s AND valor_pago=0", (tupla_ids_reais,))
+                        df_check_grupo = fetch_dataframe("SELECT id, valor_pago FROM lancamentos WHERE id IN %s ORDER BY id", (tupla_ids_reais,))
+                        soma_atual_grupo = float(df_check_grupo['valor_pago'].astype(float).sum())
+                        ajuste_pago_necessario = novo_valor_pago - soma_atual_grupo
+                        if abs(ajuste_pago_necessario) > 0.004:
+                            id_alvo_ajuste = int(df_check_grupo.iloc[-1]['id'])
+                            execute_query("UPDATE lancamentos SET valor_pago = valor_pago + %s WHERE id = %s", (ajuste_pago_necessario, id_alvo_ajuste))
+                    elif novo_pago == 0:
+                        execute_query("UPDATE lancamentos SET valor_pago=0 WHERE id IN %s", (tupla_ids_reais,))
+                    if abs(delta) > 0.004:
+                        id_alvo_planejado = int(tupla_ids_reais[-1])
+                        execute_query("UPDATE lancamentos SET valor = valor + %s WHERE id = %s", (delta, id_alvo_planejado))
                 else:
-                    if id_s == '-1':
-                        execute_query("UPDATE lancamentos SET pago=%s WHERE id IN %s", (novo_pago, tupla_ids_reais))
-                        if novo_pago == 1: execute_query("UPDATE lancamentos SET valor_pago=valor WHERE id IN %s AND valor_pago=0", (tupla_ids_reais,))
-                        elif novo_pago == 0: execute_query("UPDATE lancamentos SET valor_pago=0 WHERE id IN %s", (tupla_ids_reais,))
-                        if delta != 0 or delta_pago != 0: execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, valor_pago, data_vencimento, pago, forma_pagamento, prioridade) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Despesa', 'Ajuste', '', '💳 Ajuste de Fatura Consolidada', delta, delta_pago, row['Data'], novo_pago, 'Outros', row['prioridade']))
-                    elif id_s.startswith('plantao_'):
-                        subg = id_s.replace('plantao_', '')
-                        execute_query("UPDATE lancamentos SET pago=%s WHERE id IN %s", (novo_pago, tupla_ids_reais))
-                        if novo_pago == 1: execute_query("UPDATE lancamentos SET valor_pago=valor WHERE id IN %s AND valor_pago=0", (tupla_ids_reais,))
-                        elif novo_pago == 0: execute_query("UPDATE lancamentos SET valor_pago=0 WHERE id IN %s", (tupla_ids_reais,))
-                        if delta != 0 or delta_pago != 0: execute_query("INSERT INTO lancamentos (tipo, categoria, subgrupo, descricao, valor, valor_pago, data_vencimento, pago, forma_pagamento, prioridade) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", ('Entrada', 'Ajuste', subg, f'🏥 Ajuste de Plantão {subg}', delta, delta_pago, row['Data'], novo_pago, 'Outros', row['prioridade']))
-                    else:
-                        execute_query("UPDATE lancamentos SET pago=%s, prioridade=%s, descricao=%s, valor=%s, valor_pago=%s, data_vencimento=%s WHERE id=%s", (novo_pago, row['prioridade'], nova_desc, novo_valor, novo_valor_pago, row['Data'], tupla_ids_reais[0]))
+                    execute_query("UPDATE lancamentos SET pago=%s, prioridade=%s, descricao=%s, valor=%s, valor_pago=%s, data_vencimento=%s WHERE id=%s", (novo_pago, row['prioridade'], nova_desc, novo_valor, novo_valor_pago, row['Data'], tupla_ids_reais[0]))
 
-                        if orig_row['tipo'] == 'Despesa' and novo_pago == 1 and orig_row['pago'] == 0:
-                            executar_abatimento_envelope(orig_row['categoria'], orig_row['subgrupo'], novo_valor_pago, mes_selecionado, ano_selecionado)
+                    if orig_row['tipo'] == 'Despesa' and novo_pago == 1 and orig_row['pago'] == 0:
+                        executar_abatimento_envelope(orig_row['categoria'], orig_row['subgrupo'], novo_valor_pago, mes_selecionado, ano_selecionado)
             flash("success", "✅ Alterações salvas com sucesso!")
             st.rerun()
 
@@ -1779,8 +1801,9 @@ elif menu == "📑 Demonstrativo":
                 fig.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(aplicar_tema_grafico(fig), use_container_width=True)
 
-            def exibir_demonstrativo(dataframe):
+            def exibir_demonstrativo(dataframe, chave):
                 if dataframe.empty: return
+                dataframe = dataframe.sort_values('data_vencimento').copy()
                 dataframe['Desc. Exibição'] = dataframe.apply(lambda r: f"{r['descricao']} ({int(r['parcela_atual'])}/{int(r['total_parcelas'])})" if pd.notna(r.get('total_parcelas')) and r['total_parcelas'] > 1 and r['total_parcelas'] != 999 else r['descricao'], axis=1)
                 dataframe['Status'] = dataframe['pago'].apply(lambda x: '✅ Pago' if x == 1 else '⏳ Pendente')
 
@@ -1797,19 +1820,25 @@ elif menu == "📑 Demonstrativo":
                     'Planejado': lambda v: f"R$ {format_brl(v)}",
                     'Pago/Real': lambda v: f"R$ {format_brl(v)}"
                 })
-                st.dataframe(estilo, hide_index=True, use_container_width=True)
+                # CORREÇÃO: sem uma key= única, o Streamlit pode reciclar o componente
+                # visual de uma tabela anterior nesse mesmo loop (categorias/subgrupos
+                # com número de linhas diferente), deixando "linhas fantasma" com só a
+                # cor/ícone da tabela anterior aparecendo. A key garante que cada tabela
+                # seja tratada como um componente genuinamente novo.
+                st.dataframe(estilo, hide_index=True, use_container_width=True, key=f"demo_tabela_{chave}")
 
             c1, c2 = st.columns(2)
             with c1:
                 st.subheader("🟢 Entradas Detalhadas")
+                # CONSOLIDADO POR CATEGORIA (não por subgrupo): subgrupos como
+                # "Trauma Semana"/"Trauma FDS"/"Trauma USG" existem só pra calcular o
+                # valor certo de cada plantão -- na visualização, tudo do mesmo hospital
+                # aparece junto numa tabela só, sem quebrar por turno. A descrição de
+                # cada lançamento individual continua indicando de qual turno ele é.
                 for cat in sorted(df_e_visivel['categoria'].unique(), key=lambda x: str(x).lower()):
                     df_c = df_e_visivel[df_e_visivel['categoria'] == cat]
                     with st.expander(f"{cat} - R$ {format_brl(df_c['valor'].sum())}"):
-                        for sub in df_c['subgrupo'].unique():
-                            df_s = df_c[df_c['subgrupo'] == sub].copy()
-                            if df_s.empty: continue
-                            st.markdown(f"**🔹 {sub if sub else 'Geral'}**")
-                            exibir_demonstrativo(df_s)
+                        exibir_demonstrativo(df_c, chave=f"e_{cat}")
             with c2:
                 st.subheader("🔴 Despesas Detalhadas")
                 for cat in ordenar_categorias_com_prioridade(df_d_visivel['categoria'].unique()):
@@ -1819,7 +1848,7 @@ elif menu == "📑 Demonstrativo":
                             df_s = df_c[df_c['subgrupo'] == sub].copy()
                             if df_s.empty: continue
                             st.markdown(f"**🔹 {sub if sub else 'Geral'}**")
-                            exibir_demonstrativo(df_s)
+                            exibir_demonstrativo(df_s, chave=f"d_{cat}_{sub}")
         else:
             st.info("Sem lançamentos neste período.")
 
