@@ -1107,17 +1107,23 @@ elif menu == "🏠 Início":
         df_mes_atual['valor'] = df_mes_atual['valor'].astype(float)
         df_mes_atual['valor_pago'] = df_mes_atual['valor_pago'].astype(float)
 
+        # FÓRMULA PADRONIZADA (mesma em Início e Demonstrativo, veja calcular_confirmado_pendente()):
+        # Confirmado = soma de valor_pago onde pago=1 (o que já é fato)
+        # Pendente   = soma de valor onde pago=0 (o que ainda não aconteceu)
+        # Antes, a despesa "confirmada" usava o valor PLANEJADO mesmo quando já paga --
+        # inconsistente com a entrada, que já usava valor_pago corretamente.
         ent_confirmadas = df_mes_atual[(df_mes_atual['tipo'] == 'Entrada') & (df_mes_atual['pago'] == 1)]['valor_pago'].sum()
         ent_projetadas = df_mes_atual[(df_mes_atual['tipo'] == 'Entrada') & (df_mes_atual['pago'] == 0)]['valor'].sum()
-        desp_totais = df_mes_atual[df_mes_atual['tipo'] == 'Despesa']['valor'].sum()
+        desp_confirmadas = df_mes_atual[(df_mes_atual['tipo'] == 'Despesa') & (df_mes_atual['pago'] == 1)]['valor_pago'].sum()
+        desp_pendentes = df_mes_atual[(df_mes_atual['tipo'] == 'Despesa') & (df_mes_atual['pago'] == 0)]['valor'].sum()
 
         c_inc1.metric("📥 Entradas Confirmadas (Mês)", f"R$ {format_brl(ent_confirmadas)}")
-        c_inc2.metric("⏳ Entradas a Receber (Projetado)", f"R$ {format_brl(ent_projetadas)}")
-        c_inc3.metric("⚖️ Sobra Projetada", f"R$ {format_brl((ent_confirmadas + ent_projetadas) - desp_totais)}")
+        c_inc2.metric("⏳ Entradas Pendentes (Mês)", f"R$ {format_brl(ent_projetadas)}")
+        c_inc3.metric("⚖️ Sobra Projetada (Mês)", f"R$ {format_brl((ent_confirmadas + ent_projetadas) - (desp_confirmadas + desp_pendentes))}")
     else:
         c_inc1.metric("📥 Entradas Confirmadas (Mês)", "R$ 0,00")
-        c_inc2.metric("⏳ Entradas a Receber (Projetado)", "R$ 0,00")
-        c_inc3.metric("⚖️ Sobra Projetada", "R$ 0,00")
+        c_inc2.metric("⏳ Entradas Pendentes (Mês)", "R$ 0,00")
+        c_inc3.metric("⚖️ Sobra Projetada (Mês)", "R$ 0,00")
 
     # -----------------------------------------------------------------------
     # FEATURE 6 -- MESES DE SOBREVIVÊNCIA.
@@ -1724,12 +1730,18 @@ elif menu == "📑 Demonstrativo":
             c_m2.metric("Despesa Total (Planejada)", f"R$ {format_brl(df_d['valor'].sum())}")
             c_m3.metric("Orçamento Base-Zero (ZBB)", f"R$ {format_brl(df_e['valor'].sum() - df_d['valor'].sum())}")
 
-            falta_receber = df_e['valor'].sum() - df_e[df_e['pago'] == 1]['valor'].sum()
-            falta_pagar = df_d['valor'].sum() - df_d[df_d['pago'] == 1]['valor'].sum()
+            # FÓRMULA PADRONIZADA -- mesma definição de "Pendente" usada no Início:
+            # soma direta de 'valor' onde pago=0. Antes, aqui era calculado como
+            # "Total - Pago" usando SEMPRE a coluna 'valor' (nunca valor_pago) --
+            # se você tivesse ajustado o valor realmente pago/recebido pra um número
+            # diferente do planejado, esse número divergia do que o Início mostrava
+            # pro mesmo mês. Agora as duas telas calculam exatamente igual.
+            falta_receber = df_e[df_e['pago'] == 0]['valor'].sum()
+            falta_pagar = df_d[df_d['pago'] == 0]['valor'].sum()
 
             c_res1, c_res2 = st.columns(2)
-            c_res1.metric("⏳ Restante a Receber (Efetivo)", f"R$ {format_brl(falta_receber)}")
-            c_res2.metric("🚨 Restante a Pagar (Efetivo)", f"R$ {format_brl(falta_pagar)}")
+            c_res1.metric("⏳ Entradas Pendentes (Mês)", f"R$ {format_brl(falta_receber)}")
+            c_res2.metric("🚨 Despesas Pendentes (Mês)", f"R$ {format_brl(falta_pagar)}")
 
             # "Ajuste" é um lançamento de apoio interno (gerado ao editar cartão/plantão
             # consolidado em Fluxo e Prioridades) -- os valores acima já o incluem
