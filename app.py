@@ -696,9 +696,17 @@ menu = st.session_state.menu_atual
 st.sidebar.divider()
 
 st.sidebar.markdown("<div class='nav-eyebrow'>Período Ativo</div>", unsafe_allow_html=True)
+# CORREÇÃO: antes, o "index=" era passado toda vez que a página recarregava --
+# em alguns casos (como clicar num botão de navegação, que força um rerun) isso
+# reafirmava o mês/ano padrão por cima da sua escolha, mesmo a caixa de seleção
+# mostrando visualmente o valor certo. Agora o valor padrão só é definido UMA
+# vez (se a chave ainda não existir); depois disso, o Streamlit nunca mais
+# tenta sobrescrever, só confia no que está guardado.
+if "sb_mes" not in st.session_state: st.session_state["sb_mes"] = hoje.month
+if "sb_ano" not in st.session_state: st.session_state["sb_ano"] = hoje.year
 col_sb1, col_sb2 = st.sidebar.columns(2)
-with col_sb1: mes_selecionado = st.selectbox("Mês", range(1, 13), format_func=lambda x: meses[x-1], index=hoje.month-1, key="sb_mes")
-with col_sb2: ano_selecionado = st.selectbox("Ano", range(hoje.year-2, hoje.year+5), index=2, key="sb_ano")
+with col_sb1: mes_selecionado = st.selectbox("Mês", range(1, 13), format_func=lambda x: meses[x-1], key="sb_mes")
+with col_sb2: ano_selecionado = st.selectbox("Ano", range(hoje.year-2, hoje.year+5), key="sb_ano")
 
 st.sidebar.divider()
 st.sidebar.markdown("<div class='nav-eyebrow'>Backup</div>", unsafe_allow_html=True)
@@ -1145,7 +1153,7 @@ elif menu == "🏠 Início":
         <div style='background:oklch(19% 0.01 250); border:1px solid oklch(30% 0.01 250 / 0.55); border-left:4px solid {cor_sobrevivencia};
                     border-radius:14px; padding:1rem 1.3rem; margin-bottom:0.6rem;'>
             <div style='font-size:0.78rem; color:oklch(60% 0.01 250); text-transform:uppercase; letter-spacing:0.04em; font-weight:600;'>
-                🛟 Meses de Sobrevivência
+                🛟 Meses de Sobrevivência <span style='opacity:0.7; font-weight:400; text-transform:none;'>(sempre sobre hoje, {hoje.strftime('%d/%m/%Y')} -- não muda com o mês selecionado)</span>
             </div>
             <div style='font-family: "Inter", sans-serif; font-variant-numeric: tabular-nums; font-size:2rem; font-weight:600; color:{cor_sobrevivencia}; line-height:1.3;'>
                 {meses_sobrevivencia:.1f} meses
@@ -1254,7 +1262,16 @@ elif menu == "🏠 Início":
         st.divider()
 
     st.subheader("🗓️ Agenda de Vencimentos (Próximos 7 dias)")
-    if df_7d.empty:
+    if mes_selecionado != hoje.month or ano_selecionado != hoje.year:
+        # Essa seção é sempre sobre os 7 dias reais a partir de hoje -- não existe
+        # "próximos 7 dias" de um mês diferente do atual. Antes ela aparecia mesmo
+        # assim, mostrando dados de hoje enquanto o resto da tela mostrava o mês
+        # selecionado -- o que parecia "o mês voltou sozinho". Agora fica claro
+        # que ela só faz sentido quando você está no mês corrente.
+        st.caption(f"🗓️ Essa agenda é sempre sobre os 7 dias reais a partir de hoje ({hoje.strftime('%d/%m/%Y')}) -- "
+                  f"por isso fica oculta enquanto {meses[mes_selecionado-1]}/{ano_selecionado} estiver selecionado. "
+                  f"Volte pro mês atual na sidebar pra vê-la.")
+    elif df_7d.empty:
         st.success("Nenhuma conta vencendo ou receita prevista para os próximos 7 dias! 🎉")
     else:
         linhas_7d = _consolidar_lancamentos(df_7d)
