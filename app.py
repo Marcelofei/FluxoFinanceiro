@@ -552,6 +552,18 @@ def float_seguro(valor, padrao=0.0):
     except (TypeError, ValueError, OverflowError):
         return float(padrao)
 
+def resolver_valor_real(novo_pago, valor_planejado, valor_real_informado):
+    """
+    Regra do Fluxo: ao marcar como pago/recebido, valor real vazio/zero assume
+    automaticamente o planejado. Se houver valor real informado, ele prevalece
+    sem alterar o planejamento. Ao estornar, o realizado volta a zero.
+    """
+    if not bool(novo_pago):
+        return 0.0
+    planejado = max(float_seguro(valor_planejado), 0.0)
+    real = float_seguro(valor_real_informado, 0.0)
+    return planejado if abs(real) <= 0.004 else real
+
 def ordenar_categorias_com_prioridade(categorias, prioridade="despesas essenciais"):
     """Ordena uma lista de categorias colocando a categoria prioritária primeiro
     (comparação sem diferenciar maiúsculas/minúsculas), e o resto em ordem alfabética."""
@@ -1557,55 +1569,6 @@ def _marcar_ids(ids, pago=True, data_pagamento=None):
         else:
             cur.execute("UPDATE lancamentos SET pago=0, valor_pago=0, data_pagamento=NULL WHERE id = ANY(%s)", (ids,))
 
-def _ajustar_valor_real_ids(ids, total_real, data_pagamento=None):
-    """
-    Ajusta somente o realizado (valor_pago), sem mexer no planejamento (valor).
-
-    Para um lançamento individual, grava o total diretamente. Para um lote
-    consolidado (ex.: Hospital Help), distribui o total proporcionalmente ao
-    valor planejado de cada lançamento e mantém o centavo residual na última
-    linha. Assim o total realizado do lote fica exatamente igual ao informado.
-    """
-    ids = [int(x) for x in ids]
-    total_real = round(float_seguro(total_real), 2)
-    if not ids:
-        raise ValueError("Nenhum lançamento encontrado para ajustar.")
-    if total_real < 0:
-        raise ValueError("O valor realizado não pode ser negativo.")
-
-    with transaction() as cur:
-        cur.execute("SELECT id, COALESCE(valor,0) FROM lancamentos WHERE id = ANY(%s) ORDER BY id", (ids,))
-        linhas = cur.fetchall()
-        if not linhas:
-            raise ValueError("Os lançamentos selecionados não existem mais no banco.")
-
-        data_final = data_pagamento or hoje
-        if len(linhas) == 1:
-            cur.execute(
-                "UPDATE lancamentos SET pago=1, valor_pago=%s, data_pagamento=%s WHERE id=%s",
-                (total_real, data_final, int(linhas[0][0]))
-            )
-            return
-
-        pesos = [max(float_seguro(v), 0.0) for _, v in linhas]
-        soma_pesos = sum(pesos)
-        if soma_pesos <= 0:
-            pesos = [1.0] * len(linhas)
-            soma_pesos = float(len(linhas))
-
-        acumulado = 0.0
-        for pos, ((lanc_id, _), peso) in enumerate(zip(linhas, pesos)):
-            if pos == len(linhas) - 1:
-                valor_linha = round(total_real - acumulado, 2)
-            else:
-                valor_linha = round(total_real * peso / soma_pesos, 2)
-                acumulado = round(acumulado + valor_linha, 2)
-            cur.execute(
-                "UPDATE lancamentos SET pago=1, valor_pago=%s, data_pagamento=%s WHERE id=%s",
-                (valor_linha, data_final, int(lanc_id))
-            )
-
-
 def _consolidar_operacional(df):
     cols_saida = ['id_ui','tipo','categoria','descricao','valor','valor_pago','pago','data_vencimento','data_pagamento','prioridade','ids','consolidado','ordem_pri','atrasado','ordem_atraso']
     if df.empty: return pd.DataFrame(columns=cols_saida)
@@ -1870,55 +1833,14 @@ elif menu == "📊 Fluxo e Prioridades":
         if cats_sel_rapidas: vis_rapida = vis_rapida[vis_rapida['categoria'].isin(cats_sel_rapidas)]
         _render_linhas_operacionais(vis_rapida, 'fluxo_rapido')
 
-        pagos_ajuste = ops_rapido[ops_rapido['pago'] == 1].copy() if not ops_rapido.empty else pd.DataFrame()
-        with st.expander("💰 Corrigir valor realmente pago/recebido", expanded=False):
-            st.caption("O Planejado permanece intacto. Aqui você corrige apenas o Realizado — por exemplo: planejado R$ 24.000, recebido R$ 26.000.")
-            if pagos_ajuste.empty:
-                st.info("Nenhum lançamento pago/recebido neste período para ajustar.")
-            else:
-                op_real = {
-                    str(r['id_ui']): f"{r['descricao']} · Planejado R$ {format_brl(r['valor'])} · Real R$ {format_brl(r['valor_pago'])}"
-                    for _, r in pagos_ajuste.iterrows()
-                }
-                sel_real = st.selectbox(
-                    "Lançamento ou lote",
-                    [None] + list(op_real.keys()),
-                    format_func=lambda x: "Selecione..." if x is None else op_real[x],
-                    key="fluxo_ajuste_real_sel"
-                )
-                if sel_real is not None:
-                    alvo_real = pagos_ajuste[pagos_ajuste['id_ui'].astype(str) == str(sel_real)].iloc[0]
-                    ar1, ar2, ar3 = st.columns(3)
-                    ar1.metric("Planejado", f"R$ {format_brl(alvo_real['valor'])}")
-                    ar2.metric("Real atual", f"R$ {format_brl(alvo_real['valor_pago'])}")
-                    diferenca_real = float_seguro(alvo_real['valor_pago']) - float_seguro(alvo_real['valor'])
-                    ar3.metric("Diferença", f"R$ {format_brl(diferenca_real)}")
-                    novo_real = st.number_input(
-                        "Novo valor realmente pago/recebido (R$)",
-                        min_value=0.0,
-                        value=float_seguro(alvo_real['valor_pago']),
-                        step=50.0,
-                        format="%.2f",
-                        key="fluxo_ajuste_real_valor"
-                    )
-                    data_real = st.date_input(
-                        "Data efetiva",
-                        value=alvo_real['data_pagamento'] if pd.notna(alvo_real.get('data_pagamento')) else hoje,
-                        format="DD/MM/YYYY",
-                        key="fluxo_ajuste_real_data"
-                    )
-                    if st.button("Salvar somente o valor realizado", type="primary", key="fluxo_ajuste_real_salvar", use_container_width=True):
-                        try:
-                            _ajustar_valor_real_ids(alvo_real['ids'], novo_real, data_real)
-                        except Exception as e:
-                            st.error(f"Não foi possível ajustar o valor realizado: {e}")
-                        else:
-                            flash("success", f"Valor realizado atualizado para R$ {format_brl(novo_real)}. O planejado foi preservado.")
-                            st.rerun()
+        st.caption(
+            "No editor abaixo, Planejado e Pago/Recebido são independentes. "
+            "Se você marcar como pago/recebido sem informar o valor real, o app assume automaticamente o valor planejado."
+        )
 
         st.caption("Para editar séries futuras, datas, forma de pagamento ou excluir em lote, abra o painel completo abaixo.")
 
-        with st.expander("✏️ Edição completa, consolidações e ferramentas avançadas", expanded=False):
+        with st.expander("✏️ Editar valores, pagamentos e lançamentos", expanded=True):
             # -----------------------------------------------------------
             # CONSOLIDAÇÃO (feita sobre TODO o mês, ANTES de qualquer filtro).
             #
@@ -2048,7 +1970,11 @@ elif menu == "📊 Fluxo e Prioridades":
             df_view['Desc. Exibição'] = df_view.apply(format_desc, axis=1)
             df_view.insert(0, '🗑️ Excluir', "")
 
-            st.markdown("*(Planejado e Real são independentes: alterar 'Valor Pago/Real' não modifica o 'Valor Previsto' e atualiza os indicadores realizados do app.)*")
+            st.markdown(
+                "*Edite **Planejado** e **Pago/Recebido** separadamente. "
+                "Ao marcar **Pago**, se o valor real estiver 0/vazio, o app usa automaticamente o Planejado. "
+                "Se o real for diferente, informe o valor recebido/pago e o Planejado será preservado.*"
+            )
             edit_df = st.data_editor(
                 df_view[['🗑️ Excluir', 'Data', 'Data Pagamento', 'Alerta', 'prioridade', 'Desc. Exibição', 'valor', 'valor_pago', 'Pago']],
                 use_container_width=True, hide_index=True,
@@ -2057,8 +1983,8 @@ elif menu == "📊 Fluxo e Prioridades":
                     "Data": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
                     "Data Pagamento": st.column_config.DateColumn("Pago em", format="DD/MM/YYYY"),
                     "Alerta": st.column_config.TextColumn("Status", disabled=True),
-                    "valor": st.column_config.NumberColumn("Valor Previsto", format="%.2f"),
-                    "valor_pago": st.column_config.NumberColumn("Valor Pago/Real", format="%.2f"),
+                    "valor": st.column_config.NumberColumn("Planejado", format="%.2f"),
+                    "valor_pago": st.column_config.NumberColumn("Pago/Recebido", format="%.2f"),
                     "prioridade": st.column_config.SelectboxColumn("Prioridade", options=["Alta 🔴", "Média 🟡", "Baixa 🟢"]),
                     "Desc. Exibição": st.column_config.TextColumn("Descrição", disabled=False)
                 }
@@ -2066,7 +1992,7 @@ elif menu == "📊 Fluxo e Prioridades":
 
             edit_df['tipo'] = df_view['tipo'].values
             edit_df['ordem_pri'] = df_view['ordem_pri'].values
-            edit_df['eh_orcamento'] = df_view['eh_orcamento'].fillna(0).astype(int).values
+            edit_df['eh_orcamento'] = pd.to_numeric(df_view['eh_orcamento'], errors='coerce').fillna(0).astype(int).values
 
             if st.button("Salvar Alterações Rápidas", type="primary"):
                 try:
@@ -2074,16 +2000,15 @@ elif menu == "📊 Fluxo e Prioridades":
                         for i, row in edit_df.iterrows():
                             orig_row = df_view.loc[i]
                             id_s = str(orig_row['id'])
-                            novo_pago = 1 if row['Pago'] else 0
-                            novo_valor = float(row['valor'])
-                            novo_valor_pago = float(row['valor_pago']) if pd.notna(row['valor_pago']) else 0.0
-                            orig_valor = float(orig_row['valor'])
-                            orig_valor_pago = float(orig_row['valor_pago'])
-
-                            if novo_pago == 1 and novo_valor_pago == 0.0:
-                                novo_valor_pago = novo_valor
-                            elif novo_pago == 0:
-                                novo_valor_pago = 0.0
+                            novo_pago = 1 if bool(row['Pago']) else 0
+                            novo_valor = float_seguro(row.get('valor'))
+                            novo_valor_pago = resolver_valor_real(
+                                novo_pago,
+                                novo_valor,
+                                row.get('valor_pago')
+                            )
+                            orig_valor = float_seguro(orig_row.get('valor'))
+                            orig_valor_pago = float_seguro(orig_row.get('valor_pago'))
 
                             orig_data_pgto = None
                             if pd.notna(orig_row.get('data_pagamento')):
@@ -2132,8 +2057,9 @@ elif menu == "📊 Fluxo e Prioridades":
                                     (novo_pago, nova_data_pgto, tupla_ids_reais)
                                 )
                                 if novo_pago == 1:
-                                    # Distribui o total REAL proporcionalmente ao planejamento do lote.
-                                    # O valor planejado permanece independente.
+                                    # Se o usuário deixou o real em 0/vazio, resolver_valor_real() já
+                                    # trouxe o total planejado. Se digitou outro valor, distribuímos
+                                    # esse realizado entre as linhas reais sem tocar no planejamento.
                                     cur.execute("SELECT id, COALESCE(valor,0) FROM lancamentos WHERE id IN %s ORDER BY id", (tupla_ids_reais,))
                                     linhas_grupo = cur.fetchall()
                                     pesos = [max(float_seguro(v), 0.0) for _, v in linhas_grupo]
