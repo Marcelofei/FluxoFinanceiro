@@ -1,4 +1,5 @@
 import streamlit as st
+APP_BUILD = "fluxo-inline-v2"
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
@@ -1021,6 +1022,7 @@ st.sidebar.markdown(
     "<div style='font-size:.78rem; color:oklch(60% 0.01 250); margin:.15rem 0 .55rem;'>Seu dinheiro, sem ruído.</div>",
     unsafe_allow_html=True,
 )
+st.sidebar.caption("Build fluxo-inline-v2")
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
@@ -1569,6 +1571,49 @@ def _marcar_ids(ids, pago=True, data_pagamento=None):
         else:
             cur.execute("UPDATE lancamentos SET pago=0, valor_pago=0, data_pagamento=NULL WHERE id = ANY(%s)", (ids,))
 
+def _registrar_pagamento_ids(ids, valor_real_total=None, data_pagamento=None):
+    """
+    Marca um lançamento/lote como pago ou recebido sem alterar o planejado.
+    Se valor_real_total vier vazio/zero, usa a soma dos valores planejados.
+    Em lotes consolidados, distribui o realizado proporcionalmente entre as
+    linhas reais para que os relatórios somem exatamente o total informado.
+    """
+    ids = [int(x) for x in ids]
+    if not ids:
+        return 0.0
+    data_ref = data_pagamento or hoje
+    with transaction() as cur:
+        cur.execute("SELECT id, COALESCE(valor,0) FROM lancamentos WHERE id = ANY(%s) ORDER BY id", (ids,))
+        linhas = cur.fetchall()
+        if not linhas:
+            raise ValueError("Nenhum lançamento real encontrado para este pagamento.")
+
+        planejados = [max(float_seguro(v), 0.0) for _, v in linhas]
+        total_planejado = round(sum(planejados), 2)
+        total_real = float_seguro(valor_real_total, 0.0)
+        if abs(total_real) <= 0.004:
+            total_real = total_planejado
+        if total_real < 0:
+            raise ValueError("O valor pago/recebido não pode ser negativo.")
+
+        soma_pesos = sum(planejados)
+        if soma_pesos <= 0:
+            planejados = [1.0] * len(linhas)
+            soma_pesos = float(len(linhas))
+
+        acumulado = 0.0
+        for pos, ((lanc_id, _), peso) in enumerate(zip(linhas, planejados)):
+            if pos == len(linhas) - 1:
+                valor_linha = round(total_real - acumulado, 2)
+            else:
+                valor_linha = round(total_real * peso / soma_pesos, 2)
+                acumulado = round(acumulado + valor_linha, 2)
+            cur.execute(
+                "UPDATE lancamentos SET pago=1, valor_pago=%s, data_pagamento=%s WHERE id=%s",
+                (valor_linha, data_ref, int(lanc_id))
+            )
+    return total_real
+
 def _consolidar_operacional(df):
     cols_saida = ['id_ui','tipo','categoria','descricao','valor','valor_pago','pago','data_vencimento','data_pagamento','prioridade','ids','consolidado','ordem_pri','atrasado','ordem_atraso']
     if df.empty: return pd.DataFrame(columns=cols_saida)
@@ -1631,30 +1676,51 @@ def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_edita
     if df_ops.empty:
         st.info("Nada para mostrar neste filtro.")
         return
+
     dados = df_ops.head(max_linhas) if max_linhas else df_ops
     for i, r in dados.iterrows():
         atrasado = bool(r['atrasado'])
-        status = "🔴" if atrasado else ("✅" if int_seguro(r.get('pago')) == 1 else "🟡")
+        pago = int_seguro(r.get('pago')) == 1
+        status = "🔴" if atrasado else ("✅" if pago else "🟡")
         data_txt = pd.to_datetime(r['data_vencimento']).strftime('%d/%m')
-        valor_mostrar = float(r['valor_pago']) if int_seguro(r.get('pago')) == 1 and float(r['valor_pago']) > 0 else float(r['valor'])
+        planejado = float_seguro(r.get('valor'))
+        realizado = float_seguro(r.get('valor_pago'))
+        valor_mostrar = realizado if pago and realizado > 0 else planejado
+
+        # A lista principal fica enxuta; detalhes financeiros aparecem só quando necessários.
         if permitir_editar:
-            c1, c2, c3, c4 = st.columns([4.6, 1.5, 1.25, .9])
+            c1, c2, c3, c4 = st.columns([4.8, 1.45, 1.25, .85])
         else:
-            c1, c2, c3 = st.columns([5.2, 1.6, 1.35])
+            c1, c2, c3 = st.columns([5.25, 1.55, 1.25])
             c4 = None
-        c1.markdown(f"<div class='ux-row'>{status} <b>{data_txt}</b> · {r['descricao']}<br><span class='ux-muted'>{r['categoria'] or ''}</span></div>", unsafe_allow_html=True)
-        c2.markdown(f"<div style='text-align:right;padding:.8rem .1rem;font-variant-numeric:tabular-nums;'>R$ {format_brl(valor_mostrar)}</div>", unsafe_allow_html=True)
-        if int_seguro(r.get('pago')) == 1:
+
+        categoria_txt = '' if pd.isna(r.get('categoria')) else str(r.get('categoria') or '')
+        valor_label = "recebido" if r['tipo'] == 'Entrada' and pago else ("pago" if pago else "planejado")
+        c1.markdown(
+            f"<div class='ux-row'>{status} <b>{data_txt}</b> · {r['descricao']}"
+            f"<br><span class='ux-muted'>{categoria_txt}</span></div>",
+            unsafe_allow_html=True
+        )
+        c2.markdown(
+            f"<div style='text-align:right;padding:.56rem .1rem 0;font-variant-numeric:tabular-nums;'>"
+            f"<b>R$ {format_brl(valor_mostrar)}</b><br><span class='ux-muted'>{valor_label}</span></div>",
+            unsafe_allow_html=True
+        )
+
+        chave_acao = f"{prefixo}:{r['id_ui']}"
+        if pago:
             if c3.button("↩ Estornar", key=f"{prefixo}_est_{i}_{r['id_ui']}", use_container_width=True):
                 _marcar_ids(r['ids'], pago=False)
-                flash('success', 'Status atualizado.')
+                if st.session_state.get('_pagamento_aberto') == chave_acao:
+                    st.session_state.pop('_pagamento_aberto', None)
+                flash('success', 'Pagamento/recebimento estornado. O valor planejado foi preservado.')
                 st.rerun()
         else:
             rotulo = "✓ Pagar" if r['tipo'] == 'Despesa' else "✓ Receber"
             if c3.button(rotulo, key=f"{prefixo}_pay_{i}_{r['id_ui']}", type="primary" if atrasado else "secondary", use_container_width=True):
-                _marcar_ids(r['ids'], pago=True, data_pagamento=hoje)
-                flash('success', f"{r['descricao']} atualizado.")
+                st.session_state['_pagamento_aberto'] = chave_acao
                 st.rerun()
+
         if c4 is not None:
             if bool(r.get('consolidado')):
                 c4.caption("lote")
@@ -1662,6 +1728,60 @@ def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_edita
                 st.session_state['fluxo_editar_id'] = int(r['ids'][0])
                 st.session_state['fluxo_editor_aberto'] = True
                 st.rerun()
+
+        # Caixa de pagamento aparece somente para o item cujo botão foi clicado.
+        if (not pago) and st.session_state.get('_pagamento_aberto') == chave_acao:
+            acao_nome = "pagamento" if r['tipo'] == 'Despesa' else "recebimento"
+            with st.container(border=True):
+                st.markdown(f"**Confirmar {acao_nome} · {r['descricao']}**")
+                st.caption(
+                    f"Planejado: R$ {format_brl(planejado)} · "
+                    "deixe o valor abaixo em branco para usar automaticamente o planejado."
+                )
+                with st.form(f"form_pagamento_{prefixo}_{i}_{r['id_ui']}"):
+                    f1, f2 = st.columns([1.4, 1])
+                    valor_txt = f1.text_input(
+                        "Valor efetivamente pago" if r['tipo'] == 'Despesa' else "Valor efetivamente recebido",
+                        value="",
+                        placeholder=f"Em branco = R$ {format_brl(planejado)}",
+                        key=f"valor_pag_{prefixo}_{i}_{r['id_ui']}"
+                    )
+                    data_real = f2.date_input(
+                        "Data", value=hoje, format="DD/MM/YYYY",
+                        key=f"data_pag_{prefixo}_{i}_{r['id_ui']}"
+                    )
+                    b1, b2 = st.columns(2)
+                    confirmar = b1.form_submit_button(
+                        "Confirmar pagamento" if r['tipo'] == 'Despesa' else "Confirmar recebimento",
+                        type="primary", use_container_width=True
+                    )
+                    cancelar = b2.form_submit_button("Cancelar", use_container_width=True)
+
+                if cancelar:
+                    st.session_state.pop('_pagamento_aberto', None)
+                    st.rerun()
+
+                if confirmar:
+                    valor_informado = parse_valor(valor_txt) if str(valor_txt).strip() else 0.0
+                    try:
+                        total_real = _registrar_pagamento_ids(
+                            r['ids'], valor_real_total=valor_informado, data_pagamento=data_real
+                        )
+                    except Exception as e:
+                        st.error(f"Não foi possível registrar o {acao_nome}: {e}")
+                    else:
+                        st.session_state.pop('_pagamento_aberto', None)
+                        diferenca = total_real - planejado
+                        if abs(diferenca) > 0.004:
+                            sinal = "+" if diferenca > 0 else "-"
+                            msg = (
+                                f"{acao_nome.capitalize()} registrado: R$ {format_brl(total_real)} "
+                                f"({sinal} R$ {format_brl(abs(diferenca))} vs. planejado)."
+                            )
+                        else:
+                            msg = f"{acao_nome.capitalize()} registrado por R$ {format_brl(total_real)}."
+                        flash('success', msg)
+                        st.rerun()
 
 
 def _dados_mes():
@@ -1809,6 +1929,7 @@ elif menu == "📝 Lançamentos":
 
 elif menu == "📊 Fluxo e Prioridades":
     cabecalho_pagina("📋 Fluxo do Mês", "Ações rápidas primeiro; a edição completa continua disponível abaixo.", "fluxo")
+    st.caption("Pagamento inline ativo: clique em Pagar/Receber para informar o valor real; vazio = planejado.")
     df = fetch_dataframe("SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC", (inicio_periodo, fim_periodo))
 
     if df.empty: st.warning("Sem dados.")
@@ -1833,14 +1954,9 @@ elif menu == "📊 Fluxo e Prioridades":
         if cats_sel_rapidas: vis_rapida = vis_rapida[vis_rapida['categoria'].isin(cats_sel_rapidas)]
         _render_linhas_operacionais(vis_rapida, 'fluxo_rapido')
 
-        st.caption(
-            "No editor abaixo, Planejado e Pago/Recebido são independentes. "
-            "Se você marcar como pago/recebido sem informar o valor real, o app assume automaticamente o valor planejado."
-        )
+        st.caption("Use a lista acima para pagar/receber. Abra as ferramentas avançadas apenas para edições estruturais, séries ou exclusões em lote.")
 
-        st.caption("Para editar séries futuras, datas, forma de pagamento ou excluir em lote, abra o painel completo abaixo.")
-
-        with st.expander("✏️ Editar valores, pagamentos e lançamentos", expanded=True):
+        with st.expander("⚙️ Edição avançada e ferramentas", expanded=False):
             # -----------------------------------------------------------
             # CONSOLIDAÇÃO (feita sobre TODO o mês, ANTES de qualquer filtro).
             #
