@@ -1,5 +1,5 @@
 import streamlit as st
-APP_BUILD = "fluxo-inline-v2"
+APP_BUILD = "fluxo-selecao-v3"
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
@@ -1022,7 +1022,7 @@ st.sidebar.markdown(
     "<div style='font-size:.78rem; color:oklch(60% 0.01 250); margin:.15rem 0 .55rem;'>Seu dinheiro, sem ruído.</div>",
     unsafe_allow_html=True,
 )
-st.sidebar.caption("Build fluxo-inline-v2")
+st.sidebar.caption("Build fluxo-selecao-v3")
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
@@ -1672,12 +1672,50 @@ def _consolidar_operacional(df):
     return out
 
 
-def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_editar=False):
+def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_editar=False, permitir_selecao=False):
     if df_ops.empty:
         st.info("Nada para mostrar neste filtro.")
         return
 
     dados = df_ops.head(max_linhas) if max_linhas else df_ops
+
+    # Seleção rápida para simular combinações de pagamento/recebimento.
+    # O total usa exatamente o valor exibido na linha: planejado se pendente,
+    # realizado se já pago/recebido. Assim o resumo nunca diverge da lista.
+    if permitir_selecao:
+        selecionados = []
+        for _, sr in dados.iterrows():
+            skey = f"{prefixo}_sel_{sr['id_ui']}"
+            if bool(st.session_state.get(skey, False)):
+                s_pago = int_seguro(sr.get('pago')) == 1
+                s_plan = float_seguro(sr.get('valor'))
+                s_real = float_seguro(sr.get('valor_pago'))
+                s_valor = s_real if s_pago and s_real > 0 else s_plan
+                selecionados.append((sr, s_valor, skey))
+
+        if selecionados:
+            total_sel = sum(v for _, v, _ in selecionados)
+            desp_sel = sum(v for rsel, v, _ in selecionados if rsel['tipo'] == 'Despesa')
+            ent_sel = sum(v for rsel, v, _ in selecionados if rsel['tipo'] == 'Entrada')
+            with st.container(border=True):
+                rs1, rs2, rs3 = st.columns([1.1, 1.7, 1.1])
+                rs1.metric("Selecionados", len(selecionados))
+                rs2.metric("Total selecionado", f"R$ {format_brl(total_sel)}")
+                if rs3.button("Limpar seleção", key=f"{prefixo}_limpar_selecao", use_container_width=True):
+                    for _, _, chave_sel in selecionados:
+                        st.session_state[chave_sel] = False
+                    st.rerun()
+                if desp_sel > 0 and ent_sel > 0:
+                    st.caption(
+                        f"Despesas: R$ {format_brl(desp_sel)} · "
+                        f"Entradas: R$ {format_brl(ent_sel)} · "
+                        f"Saldo líquido: R$ {format_brl(ent_sel - desp_sel)}"
+                    )
+                elif desp_sel > 0:
+                    st.caption(f"Despesas selecionadas: R$ {format_brl(desp_sel)}")
+                elif ent_sel > 0:
+                    st.caption(f"Entradas selecionadas: R$ {format_brl(ent_sel)}")
+
     for i, r in dados.iterrows():
         atrasado = bool(r['atrasado'])
         pago = int_seguro(r.get('pago')) == 1
@@ -1688,11 +1726,24 @@ def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_edita
         valor_mostrar = realizado if pago and realizado > 0 else planejado
 
         # A lista principal fica enxuta; detalhes financeiros aparecem só quando necessários.
-        if permitir_editar:
+        csel = None
+        if permitir_selecao and permitir_editar:
+            csel, c1, c2, c3, c4 = st.columns([.42, 4.38, 1.45, 1.25, .85])
+        elif permitir_selecao:
+            csel, c1, c2, c3 = st.columns([.42, 4.83, 1.55, 1.25])
+            c4 = None
+        elif permitir_editar:
             c1, c2, c3, c4 = st.columns([4.8, 1.45, 1.25, .85])
         else:
             c1, c2, c3 = st.columns([5.25, 1.55, 1.25])
             c4 = None
+
+        if csel is not None:
+            csel.checkbox(
+                f"Selecionar {r['descricao']}",
+                key=f"{prefixo}_sel_{r['id_ui']}",
+                label_visibility="collapsed"
+            )
 
         categoria_txt = '' if pd.isna(r.get('categoria')) else str(r.get('categoria') or '')
         valor_label = "recebido" if r['tipo'] == 'Entrada' and pago else ("pago" if pago else "planejado")
@@ -1929,7 +1980,7 @@ elif menu == "📝 Lançamentos":
 
 elif menu == "📊 Fluxo e Prioridades":
     cabecalho_pagina("📋 Fluxo do Mês", "Ações rápidas primeiro; a edição completa continua disponível abaixo.", "fluxo")
-    st.caption("Pagamento inline ativo: clique em Pagar/Receber para informar o valor real; vazio = planejado.")
+    st.caption("Selecione lançamentos para somar cenários de pagamento. Para dar baixa, clique em Pagar/Receber; valor real vazio = planejado.")
     df = fetch_dataframe("SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC", (inicio_periodo, fim_periodo))
 
     if df.empty: st.warning("Sem dados.")
@@ -1952,7 +2003,7 @@ elif menu == "📊 Fluxo e Prioridades":
         elif filtro_rapido == "Pagos": vis_rapida = vis_rapida[vis_rapida['pago']==1]
         elif filtro_rapido == "Atrasados": vis_rapida = vis_rapida[vis_rapida['atrasado']]
         if cats_sel_rapidas: vis_rapida = vis_rapida[vis_rapida['categoria'].isin(cats_sel_rapidas)]
-        _render_linhas_operacionais(vis_rapida, 'fluxo_rapido')
+        _render_linhas_operacionais(vis_rapida, 'fluxo_rapido', permitir_selecao=True)
 
         st.caption("Use a lista acima para pagar/receber. Abra as ferramentas avançadas apenas para edições estruturais, séries ou exclusões em lote.")
 
