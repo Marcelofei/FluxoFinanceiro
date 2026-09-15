@@ -967,9 +967,42 @@ st.markdown("""
 .ux-danger { color:var(--danger-text); }
 .ux-success { color:var(--success); }
 [data-testid="stSidebar"] .stExpander { background:transparent !important; border:0 !important; }
+.ux-kpi { background:var(--bg-card); border:1px solid var(--border); border-radius:14px; padding:1rem 1.05rem; min-height:108px; }
+.ux-kpi-label { color:var(--text-muted); font-size:.78rem; font-weight:550; }
+.ux-kpi-value { margin-top:.3rem; font-size:1.42rem; font-weight:680; font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+.ux-kpi-note { margin-top:.2rem; color:var(--text-muted); font-size:.75rem; }
+.ux-positive { color:var(--success) !important; }
+.ux-negative { color:var(--danger-text) !important; }
+.ux-accent { color:var(--accent-strong) !important; }
+.ux-flow-desc { font-weight:620; line-height:1.2; }
+.ux-flow-date { font-variant-numeric:tabular-nums; font-weight:620; margin-right:.35rem; }
+.ux-flow-category { color:var(--text-muted); font-size:.76rem; margin-top:.18rem; }
+.ux-flow-paid { opacity:.63; }
+.ux-flow-overdue { color:var(--danger-text); }
+.ux-flow-pending { color:var(--text-primary); }
+.ux-flow-value-main { font-variant-numeric:tabular-nums; font-weight:680; font-size:1rem; white-space:nowrap; }
+.ux-flow-value-sub { color:var(--text-muted); font-size:.72rem; white-space:nowrap; }
+.ux-group-icon { color:var(--text-muted); font-size:.8rem; margin-right:.3rem; }
+.ux-empty { text-align:center; border:1px dashed var(--border-strong); border-radius:14px; padding:1.35rem 1rem; color:var(--text-muted); background:var(--bg-card); }
+.ux-empty b { color:var(--text-primary); }
+.ux-empty-icon { font-size:1.35rem; color:var(--success); margin-bottom:.25rem; }
+.ux-payment-box { border-left:3px solid var(--accent); padding-left:.85rem; margin:.35rem 0 .65rem; }
 @media (max-width:640px) {
   .ux-value { font-size:1.1rem; }
   .ux-card, .ux-card-strong { padding:.8rem .85rem; }
+  .ux-kpi { min-height:88px; padding:.8rem .85rem; }
+  .ux-kpi-value { font-size:1.16rem; }
+  .ux-flow-category { display:none; }
+  .ux-flow-value-main { font-size:.95rem; }
+  /* No Fluxo, mantém descrição e valor lado a lado; o botão desce inteiro. */
+  [data-testid="stHorizontalBlock"]:has(.ux-flow-row-anchor) {
+      flex-direction:row !important; flex-wrap:wrap !important; align-items:center !important; gap:.2rem !important;
+  }
+  [data-testid="stHorizontalBlock"]:has(.ux-flow-row-anchor) > div { min-width:0 !important; }
+  [data-testid="stHorizontalBlock"]:has(.ux-flow-row-anchor) > div:nth-child(1) { flex:0 0 34px !important; width:34px !important; }
+  [data-testid="stHorizontalBlock"]:has(.ux-flow-row-anchor) > div:nth-child(2) { flex:1 1 calc(100% - 154px) !important; width:auto !important; }
+  [data-testid="stHorizontalBlock"]:has(.ux-flow-row-anchor) > div:nth-child(3) { flex:0 0 112px !important; width:112px !important; }
+  [data-testid="stHorizontalBlock"]:has(.ux-flow-row-anchor) > div:nth-child(4) { flex:1 1 100% !important; width:100% !important; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1017,12 +1050,30 @@ def cabecalho_pagina(titulo, subtitulo=None, chave_periodo=None):
         render_periodo_topo(chave_periodo)
 
 
+def render_kpi(rotulo, valor, nota=None, tom="neutral"):
+    classe = {"positive":"ux-positive", "negative":"ux-negative", "accent":"ux-accent"}.get(tom, "")
+    nota_html = f"<div class='ux-kpi-note'>{nota}</div>" if nota else ""
+    st.markdown(
+        f"<div class='ux-kpi'><div class='ux-kpi-label'>{rotulo}</div>"
+        f"<div class='ux-kpi-value {classe}'>R$ {format_brl(valor)}</div>{nota_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_empty_state(titulo, texto, icone="✓"):
+    st.markdown(
+        f"<div class='ux-empty'><div class='ux-empty-icon'>{icone}</div>"
+        f"<b>{titulo}</b><br><span>{texto}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
 st.sidebar.markdown(
     "<div style='font-weight:700; font-size:1.08rem; color:oklch(96% 0.003 250);'>💰 Gestão Financeira</div>"
     "<div style='font-size:.78rem; color:oklch(60% 0.01 250); margin:.15rem 0 .55rem;'>Seu dinheiro, sem ruído.</div>",
     unsafe_allow_html=True,
 )
-st.sidebar.caption("Build fluxo-selecao-v3")
+st.sidebar.caption("Build ux-decisao-v4")
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
@@ -1630,7 +1681,7 @@ def _consolidar_operacional(df):
         datas_pg = pd.to_datetime(grp['data_pagamento'], errors='coerce').dropna() if 'data_pagamento' in grp.columns else pd.Series(dtype='datetime64[ns]')
         data_pg = datas_pg.max().date() if all_paid and not datas_pg.empty else None
         linhas.append({
-            'id_ui':'cartao', 'tipo':'Despesa', 'categoria':'Cartão de Crédito', 'descricao':f"💳 Fatura do cartão · {len(grp)} compra(s)",
+            'id_ui':'cartao', 'tipo':'Despesa', 'categoria':'Cartão de Crédito', 'descricao':"💳 Fatura do cartão",
             'valor':float(grp['valor'].sum()), 'valor_pago':float(grp['valor_pago'].sum()), 'pago':1 if all_paid else 0,
             'data_vencimento':pd.to_datetime(grp['data_vencimento']).min().date(), 'data_pagamento':data_pg, 'prioridade':'Alta 🔴',
             'ids':grp['id'].astype(int).tolist(), 'consolidado':True,
@@ -1650,7 +1701,7 @@ def _consolidar_operacional(df):
             datas_pg = pd.to_datetime(grp['data_pagamento'], errors='coerce').dropna() if 'data_pagamento' in grp.columns else pd.Series(dtype='datetime64[ns]')
             data_pg = datas_pg.max().date() if all_paid and not datas_pg.empty else None
             linhas.append({
-                'id_ui':f"plant_{hospital}_{dt}", 'tipo':'Entrada', 'categoria':hospital, 'descricao':f"🏥 {hospital} · {len(grp)} plantão(ões)",
+                'id_ui':f"plant_{hospital}_{dt}", 'tipo':'Entrada', 'categoria':hospital, 'descricao':f"🏥 {hospital}",
                 'valor':float(grp['valor'].sum()), 'valor_pago':float(grp['valor_pago'].sum()), 'pago':1 if all_paid else 0,
                 'data_vencimento':pd.to_datetime(dt).date(), 'data_pagamento':data_pg, 'prioridade':'Baixa 🟢',
                 'ids':grp['id'].astype(int).tolist(), 'consolidado':True,
@@ -1674,14 +1725,11 @@ def _consolidar_operacional(df):
 
 def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_editar=False, permitir_selecao=False):
     if df_ops.empty:
-        st.info("Nada para mostrar neste filtro.")
+        render_empty_state("Nada pendente aqui", "Não há lançamentos que correspondam a este filtro.")
         return
 
     dados = df_ops.head(max_linhas) if max_linhas else df_ops
 
-    # Seleção rápida para simular combinações de pagamento/recebimento.
-    # O total usa exatamente o valor exibido na linha: planejado se pendente,
-    # realizado se já pago/recebido. Assim o resumo nunca diverge da lista.
     if permitir_selecao:
         selecionados = []
         for _, sr in dados.iterrows():
@@ -1706,11 +1754,7 @@ def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_edita
                         st.session_state[chave_sel] = False
                     st.rerun()
                 if desp_sel > 0 and ent_sel > 0:
-                    st.caption(
-                        f"Despesas: R$ {format_brl(desp_sel)} · "
-                        f"Entradas: R$ {format_brl(ent_sel)} · "
-                        f"Saldo líquido: R$ {format_brl(ent_sel - desp_sel)}"
-                    )
+                    st.caption(f"Despesas: R$ {format_brl(desp_sel)} · Entradas: R$ {format_brl(ent_sel)} · Diferença: R$ {format_brl(ent_sel - desp_sel)}")
                 elif desp_sel > 0:
                     st.caption(f"Despesas selecionadas: R$ {format_brl(desp_sel)}")
                 elif ent_sel > 0:
@@ -1719,44 +1763,54 @@ def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_edita
     for i, r in dados.iterrows():
         atrasado = bool(r['atrasado'])
         pago = int_seguro(r.get('pago')) == 1
-        status = "🔴" if atrasado else ("✅" if pago else "🟡")
         data_txt = pd.to_datetime(r['data_vencimento']).strftime('%d/%m')
         planejado = float_seguro(r.get('valor'))
         realizado = float_seguro(r.get('valor_pago'))
-        valor_mostrar = realizado if pago and realizado > 0 else planejado
+        consolidado = bool(r.get('consolidado'))
 
-        # A lista principal fica enxuta; detalhes financeiros aparecem só quando necessários.
-        csel = None
         if permitir_selecao and permitir_editar:
-            csel, c1, c2, c3, c4 = st.columns([.42, 4.38, 1.45, 1.25, .85])
+            csel, c1, c2, c3, c4 = st.columns([.38, 4.42, 1.45, 1.25, .72])
         elif permitir_selecao:
-            csel, c1, c2, c3 = st.columns([.42, 4.83, 1.55, 1.25])
+            csel, c1, c2, c3 = st.columns([.38, 4.87, 1.50, 1.25])
             c4 = None
         elif permitir_editar:
-            c1, c2, c3, c4 = st.columns([4.8, 1.45, 1.25, .85])
+            csel = None
+            c1, c2, c3, c4 = st.columns([4.85, 1.48, 1.25, .72])
         else:
-            c1, c2, c3 = st.columns([5.25, 1.55, 1.25])
+            csel = None
+            c1, c2, c3 = st.columns([5.28, 1.55, 1.25])
             c4 = None
 
         if csel is not None:
-            csel.checkbox(
-                f"Selecionar {r['descricao']}",
-                key=f"{prefixo}_sel_{r['id_ui']}",
-                label_visibility="collapsed"
-            )
+            csel.checkbox(f"Selecionar {r['descricao']}", key=f"{prefixo}_sel_{r['id_ui']}", label_visibility="collapsed")
 
         categoria_txt = '' if pd.isna(r.get('categoria')) else str(r.get('categoria') or '')
-        valor_label = "recebido" if r['tipo'] == 'Entrada' and pago else ("pago" if pago else "planejado")
+        grupo_icon = "<span class='ux-group-icon' title='Agrupado'>▦</span>" if consolidado else ""
+        estado_class = "ux-flow-paid" if pago else ("ux-flow-overdue" if atrasado else "ux-flow-pending")
+        status_icon = "✓" if pago else ("●" if atrasado else "○")
+        status_text = "Pago" if (pago and r['tipo']=='Despesa') else ("Recebido" if pago else ("Atrasado" if atrasado else "Pendente"))
         c1.markdown(
-            f"<div class='ux-row'>{status} <b>{data_txt}</b> · {r['descricao']}"
-            f"<br><span class='ux-muted'>{categoria_txt}</span></div>",
-            unsafe_allow_html=True
+            f"<span class='ux-flow-row-anchor'></span><div class='{estado_class}'>"
+            f"<div class='ux-flow-desc'>{grupo_icon}<span class='ux-flow-date'>{data_txt}</span>{r['descricao']}</div>"
+            f"<div class='ux-flow-category'>{status_icon} {status_text}"
+            + (f" · {categoria_txt}" if categoria_txt else "") + "</div></div>",
+            unsafe_allow_html=True,
         )
-        c2.markdown(
-            f"<div style='text-align:right;padding:.56rem .1rem 0;font-variant-numeric:tabular-nums;'>"
-            f"<b>R$ {format_brl(valor_mostrar)}</b><br><span class='ux-muted'>{valor_label}</span></div>",
-            unsafe_allow_html=True
-        )
+
+        if pago:
+            principal = realizado if realizado > 0 else planejado
+            sub = f"Planejado R$ {format_brl(planejado)}" if abs(principal-planejado) > 0.004 else "Realizado"
+            c2.markdown(
+                f"<div class='ux-flow-paid' style='text-align:right;padding-top:.25rem;'>"
+                f"<div class='ux-flow-value-main ux-positive'>R$ {format_brl(principal)}</div>"
+                f"<div class='ux-flow-value-sub'>{sub}</div></div>", unsafe_allow_html=True
+            )
+        else:
+            c2.markdown(
+                f"<div style='text-align:right;padding-top:.25rem;'>"
+                f"<div class='ux-flow-value-main'>R$ {format_brl(planejado)}</div>"
+                f"<div class='ux-flow-value-sub'>Planejado</div></div>", unsafe_allow_html=True
+            )
 
         chave_acao = f"{prefixo}:{r['id_ui']}"
         if pago:
@@ -1764,71 +1818,57 @@ def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_edita
                 _marcar_ids(r['ids'], pago=False)
                 if st.session_state.get('_pagamento_aberto') == chave_acao:
                     st.session_state.pop('_pagamento_aberto', None)
-                flash('success', 'Pagamento/recebimento estornado. O valor planejado foi preservado.')
+                flash('success', 'Baixa desfeita. O valor planejado foi preservado.')
                 st.rerun()
         else:
-            rotulo = "✓ Pagar" if r['tipo'] == 'Despesa' else "✓ Receber"
+            rotulo = "Pagar" if r['tipo'] == 'Despesa' else "Receber"
             if c3.button(rotulo, key=f"{prefixo}_pay_{i}_{r['id_ui']}", type="primary" if atrasado else "secondary", use_container_width=True):
                 st.session_state['_pagamento_aberto'] = chave_acao
                 st.rerun()
 
         if c4 is not None:
-            if bool(r.get('consolidado')):
-                c4.caption("lote")
-            elif c4.button("Editar", key=f"{prefixo}_edit_{i}_{r['id_ui']}", use_container_width=True):
+            if consolidado:
+                c4.caption("▦")
+            elif c4.button("✎", key=f"{prefixo}_edit_{i}_{r['id_ui']}", use_container_width=True, help="Editar lançamento"):
                 st.session_state['fluxo_editar_id'] = int(r['ids'][0])
                 st.session_state['fluxo_editor_aberto'] = True
                 st.rerun()
 
-        # Caixa de pagamento aparece somente para o item cujo botão foi clicado.
         if (not pago) and st.session_state.get('_pagamento_aberto') == chave_acao:
             acao_nome = "pagamento" if r['tipo'] == 'Despesa' else "recebimento"
             with st.container(border=True):
-                st.markdown(f"**Confirmar {acao_nome} · {r['descricao']}**")
-                st.caption(
-                    f"Planejado: R$ {format_brl(planejado)} · "
-                    "deixe o valor abaixo em branco para usar automaticamente o planejado."
-                )
+                st.markdown("<div class='ux-payment-box'>", unsafe_allow_html=True)
+                st.markdown(f"**{r['descricao']}**")
+                st.caption(f"Planejado: R$ {format_brl(planejado)}")
                 with st.form(f"form_pagamento_{prefixo}_{i}_{r['id_ui']}"):
-                    f1, f2 = st.columns([1.4, 1])
+                    f1, f2 = st.columns([1.5, 1])
                     valor_txt = f1.text_input(
-                        "Valor efetivamente pago" if r['tipo'] == 'Despesa' else "Valor efetivamente recebido",
-                        value="",
-                        placeholder=f"Em branco = R$ {format_brl(planejado)}",
-                        key=f"valor_pag_{prefixo}_{i}_{r['id_ui']}"
+                        "Valor real (opcional)", value="",
+                        placeholder=f"Vazio = R$ {format_brl(planejado)}",
+                        key=f"valor_pag_{prefixo}_{i}_{r['id_ui']}",
+                        help="Se deixar vazio, o app considera que o valor real foi igual ao planejado."
                     )
-                    data_real = f2.date_input(
-                        "Data", value=hoje, format="DD/MM/YYYY",
-                        key=f"data_pag_{prefixo}_{i}_{r['id_ui']}"
-                    )
-                    b1, b2 = st.columns(2)
-                    confirmar = b1.form_submit_button(
-                        "Confirmar pagamento" if r['tipo'] == 'Despesa' else "Confirmar recebimento",
-                        type="primary", use_container_width=True
-                    )
+                    data_real = f2.date_input("Data", value=hoje, format="DD/MM/YYYY", key=f"data_pag_{prefixo}_{i}_{r['id_ui']}")
+                    b1, b2 = st.columns([1.4,1])
+                    confirmar = b1.form_submit_button("Confirmar pagamento" if r['tipo']=='Despesa' else "Confirmar recebimento", type="primary", use_container_width=True)
                     cancelar = b2.form_submit_button("Cancelar", use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
 
                 if cancelar:
                     st.session_state.pop('_pagamento_aberto', None)
                     st.rerun()
-
                 if confirmar:
                     valor_informado = parse_valor(valor_txt) if str(valor_txt).strip() else 0.0
                     try:
-                        total_real = _registrar_pagamento_ids(
-                            r['ids'], valor_real_total=valor_informado, data_pagamento=data_real
-                        )
+                        total_real = _registrar_pagamento_ids(r['ids'], valor_real_total=valor_informado, data_pagamento=data_real)
                     except Exception as e:
                         st.error(f"Não foi possível registrar o {acao_nome}: {e}")
                     else:
                         st.session_state.pop('_pagamento_aberto', None)
                         diferenca = total_real - planejado
                         if abs(diferenca) > 0.004:
-                            sinal = "+" if diferenca > 0 else "-"
-                            msg = (
-                                f"{acao_nome.capitalize()} registrado: R$ {format_brl(total_real)} "
-                                f"({sinal} R$ {format_brl(abs(diferenca))} vs. planejado)."
-                            )
+                            sinal = "+" if diferenca > 0 else "−"
+                            msg = f"{acao_nome.capitalize()} registrado: R$ {format_brl(total_real)} ({sinal} R$ {format_brl(abs(diferenca))} em relação ao planejado)."
                         else:
                             msg = f"{acao_nome.capitalize()} registrado por R$ {format_brl(total_real)}."
                         flash('success', msg)
@@ -1852,7 +1892,7 @@ elif menu == "🏠 Início":
     cabecalho_pagina(f"🏠 Visão de {meses[mes_selecionado-1]}", "O que já aconteceu, o que ainda falta e o que exige sua atenção.", "inicio")
     df_mes = _dados_mes()
     if df_mes.empty:
-        st.info("Ainda não há lançamentos neste mês.")
+        render_empty_state("Seu mês ainda está vazio", "Comece registrando uma entrada, despesa ou plantão.", "＋")
         c1, c2 = st.columns(2)
         if c1.button("＋ Criar primeiro lançamento", type="primary", use_container_width=True):
             st.session_state.menu_atual = "📝 Lançamentos"; st.rerun()
@@ -1869,11 +1909,12 @@ elif menu == "🏠 Início":
         despesa_projetada = _total_despesa_projetada(df_mes)
         saldo_proj = recebido + a_receber - despesa_projetada
 
+        resultado_atual = recebido - pago
         m1,m2,m3,m4 = st.columns(4)
-        m1.metric("✅ Já recebi", f"R$ {format_brl(recebido)}")
-        m2.metric("💸 Já paguei", f"R$ {format_brl(pago)}")
-        m3.metric("⏳ Ainda vou receber", f"R$ {format_brl(a_receber)}")
-        m4.metric("🎯 Saldo projetado", f"R$ {format_brl(saldo_proj)}")
+        with m1: render_kpi("Recebido", recebido, "Entradas já confirmadas", "accent")
+        with m2: render_kpi("Pago", pago, "Despesas já confirmadas")
+        with m3: render_kpi("Resultado até agora", resultado_atual, "Recebido − pago", "positive" if resultado_atual >= 0 else "negative")
+        with m4: render_kpi("Resultado projetado", saldo_proj, f"Inclui R$ {format_brl(a_receber)} ainda a receber", "positive" if saldo_proj >= 0 else "negative")
 
         st.markdown("<div class='ux-section-title'>Ações rápidas</div>", unsafe_allow_html=True)
         a1,a2,a3 = st.columns(3)
@@ -1980,10 +2021,11 @@ elif menu == "📝 Lançamentos":
 
 elif menu == "📊 Fluxo e Prioridades":
     cabecalho_pagina("📋 Fluxo do Mês", "Ações rápidas primeiro; a edição completa continua disponível abaixo.", "fluxo")
-    st.caption("Selecione lançamentos para somar cenários de pagamento. Para dar baixa, clique em Pagar/Receber; valor real vazio = planejado.")
+    st.caption("Escolha o que quer analisar, selecione lançamentos para somar e dê baixa direto na própria linha.")
     df = fetch_dataframe("SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC", (inicio_periodo, fim_periodo))
 
-    if df.empty: st.warning("Sem dados.")
+    if df.empty:
+        render_empty_state("Nenhum lançamento neste mês", "Quando você registrar uma entrada ou despesa, ela aparecerá aqui.", "○")
     else:
         df['valor'] = df['valor'].astype(float)
         df['valor_pago'] = df['valor_pago'].fillna(0.0).astype(float)
@@ -1992,10 +2034,12 @@ elif menu == "📊 Fluxo e Prioridades":
         # não exige abrir uma planilha com todas as colunas.
         ops_rapido = _consolidar_operacional(df)
         filtro_rapido = st.radio("Mostrar", ["Todos","A pagar","A receber","Pagos","Atrasados"], horizontal=True, label_visibility="collapsed", key="fluxo_rapido_status")
-        fr1, fr2 = st.columns(2)
-        tipos_rapidos = fr1.multiselect("Tipo", ["Despesa","Entrada"], placeholder="Entradas e despesas", key="fluxo_rapido_tipos")
+        tipos_rapidos, cats_sel_rapidas = [], []
         cats_rapidas = sorted([x for x in ops_rapido['categoria'].dropna().unique().tolist() if x]) if not ops_rapido.empty else []
-        cats_sel_rapidas = fr2.multiselect("Categoria", cats_rapidas, placeholder="Todas as categorias", key="fluxo_rapido_cats")
+        with st.expander("Filtros", expanded=False):
+            fr1, fr2 = st.columns(2)
+            tipos_rapidos = fr1.multiselect("Entradas ou despesas", ["Despesa","Entrada"], placeholder="Todos", key="fluxo_rapido_tipos")
+            cats_sel_rapidas = fr2.multiselect("Categoria", cats_rapidas, placeholder="Todas", key="fluxo_rapido_cats")
         vis_rapida = ops_rapido.copy()
         if tipos_rapidos: vis_rapida = vis_rapida[vis_rapida['tipo'].isin(tipos_rapidos)]
         if filtro_rapido == "A pagar": vis_rapida = vis_rapida[(vis_rapida['tipo']=='Despesa') & (vis_rapida['pago']==0)]
@@ -2005,9 +2049,9 @@ elif menu == "📊 Fluxo e Prioridades":
         if cats_sel_rapidas: vis_rapida = vis_rapida[vis_rapida['categoria'].isin(cats_sel_rapidas)]
         _render_linhas_operacionais(vis_rapida, 'fluxo_rapido', permitir_selecao=True)
 
-        st.caption("Use a lista acima para pagar/receber. Abra as ferramentas avançadas apenas para edições estruturais, séries ou exclusões em lote.")
+        st.caption("Edições excepcionais, séries e exclusões em lote ficam fora do uso diário.")
 
-        with st.expander("⚙️ Edição avançada e ferramentas", expanded=False):
+        with st.expander("🛠️ Ferramentas avançadas", expanded=False):
             # -----------------------------------------------------------
             # CONSOLIDAÇÃO (feita sobre TODO o mês, ANTES de qualquer filtro).
             #
@@ -2037,7 +2081,7 @@ elif menu == "📊 Fluxo e Prioridades":
 
                 dummy_credito = pd.DataFrame([{
                     'id': '-1', 'tipo': 'Despesa', 'categoria': 'N/A', 'subgrupo': '',
-                    'descricao': '💳 Cartão de Crédito (Fatura Consolidada)', 'valor': sum_cred,
+                    'descricao': '💳 Fatura do cartão', 'valor': sum_cred,
                     'valor_pago': sum_pago_cred, 'data_vencimento': datetime.date(ano_selecionado, mes_selecionado, 10),
                     'pago': 1 if all_paid else 0, 'compra_id': 'cartao_dummy',
                     'forma_pagamento': 'Crédito', 'prioridade': 'Alta 🔴', 'ids_alvo': ids_lote_credito,
@@ -2073,7 +2117,7 @@ elif menu == "📊 Fluxo e Prioridades":
 
                     dummies_plantao.append({
                         'id': f'plantao_{cat_nome}_{dt_venc}', 'tipo': 'Entrada', 'categoria': cat_nome,
-                        'subgrupo': '', 'descricao': f'🏥 Plantões {cat_nome} (Consolidado do Mês)',
+                        'subgrupo': '', 'descricao': f'🏥 {cat_nome}',
                         'valor': grupo['valor'].sum(), 'valor_pago': sum_pago_plantao,
                         'data_vencimento': dt_venc, 'pago': status_lote, 'compra_id': 'plantao_dummy',
                         'forma_pagamento': 'Outros', 'prioridade': 'Baixa 🟢', 'ids_alvo': ids_lote_plantao,
@@ -2122,7 +2166,7 @@ elif menu == "📊 Fluxo e Prioridades":
 
             def calcular_alerta_atraso(row):
                 if int_seguro(row.get('eh_orcamento')) == 1:
-                    return "🧮 Orçamento derivado"
+                    return "🎯 Limite mensal"
                 if not row['Pago'] and row['Data'] < hoje:
                     dias = (hoje - row['Data']).days
                     return f"🔴 Atrasado há {dias} dias"
@@ -2292,7 +2336,7 @@ elif menu == "📊 Fluxo e Prioridades":
                     st.code(texto_wpp, language="markdown")
 
             st.divider()
-            st.subheader("✏️ Edição Estrutural Avançada")
+            st.subheader("✏️ Alterar lançamento e série")
             mask_individuais = (~df['forma_pagamento'].isin(['Crédito'])) & (~(df['tipo'] == 'Entrada') & ~df['descricao'].str.contains('Plantão', na=False))
             df_edit = df[mask_individuais].copy() if not df.empty else df
             opcoes = {r['id']: f"{pd.to_datetime(r['data_vencimento']).strftime('%d/%m/%Y')} | {r['descricao']} (R$ {format_brl(r['valor'])})" for _, r in df_edit.iterrows()}
@@ -2318,7 +2362,7 @@ elif menu == "📊 Fluxo e Prioridades":
                         e_sub = st.selectbox("Subgrupo", subs_disp, index=idx_sub)
                         e_escopo = st.radio("Aplicar alteração estrutural em:", ["Apenas neste lançamento", "Neste e em todos os futuros da mesma compra"])
 
-                    if st.button("💾 Confirmar Mudança Estrutural", type="primary"):
+                    if st.button("💾 Salvar alteração", type="primary"):
                         v_final = parse_valor(e_val)
                         if v_final <= 0:
                             st.error("O valor deve ser maior que zero.")
@@ -2346,7 +2390,7 @@ elif menu == "📑 Demonstrativo":
 
     with tab_res:
         if df.empty:
-            st.info("Sem dados neste período.")
+            render_empty_state("Sem movimentação neste período", "Escolha outro mês ou registre novos lançamentos.", "○")
         else:
             df_res = df.copy()
             df_res['valor'] = pd.to_numeric(df_res['valor'], errors='coerce').fillna(0.0)
@@ -2416,7 +2460,7 @@ elif menu == "📑 Demonstrativo":
             df_ajustes_pend_entrada = df_e[(df_e['categoria'] == 'Ajuste') & (df_e['pago'] == 0)]
             if not df_ajustes_pend_despesa.empty or not df_ajustes_pend_entrada.empty:
                 total_ajustes = df_ajustes_pend_despesa['valor'].sum() + df_ajustes_pend_entrada['valor'].sum()
-                with st.expander(f"🔧 Ajustes pendentes não categorizados — R$ {format_brl(total_ajustes)} (incluído nos totais acima, mas fora das categorias abaixo)", expanded=True):
+                with st.expander(f"🔧 Lançamentos sem categoria — R$ {format_brl(total_ajustes)}", expanded=True):
                     st.caption("Esses lançamentos nascem quando você edita o VALOR (não só o 'Pago') de uma linha "
                               "consolidada de Cartão/Plantão em '📊 Fluxo e Prioridades'.")
                     df_ajustes_tudo = pd.concat([df_ajustes_pend_despesa, df_ajustes_pend_entrada])
@@ -2548,7 +2592,7 @@ elif menu == "📑 Demonstrativo":
                 st.info("Nenhum lançamento encontrado para os envelopes configurados neste mês.")
 
         st.divider()
-        with st.expander("🔍 Conciliação (verificação de integridade dos envelopes)"):
+        with st.expander("🔍 Verificar limites mensais"):
             st.caption("Confere se 'Gasto Realizado + Saldo Restante' ainda bate com o Valor Padrão configurado na "
                       "categoria. Diferenças podem ser normais (ex: você mudou o Valor Padrão depois que o teto do "
                       "mês já tinha sido gerado) — isso só te avisa pra você decidir se é esperado ou não.")
@@ -2614,13 +2658,13 @@ elif menu == "📑 Demonstrativo":
 elif menu == "📈 Balanço Anual":
     cabecalho_pagina("📈 Balanço Anual", "Veja evolução mensal e compare com o ano anterior.")
     anos=fetch_dataframe("SELECT DISTINCT EXTRACT(YEAR FROM COALESCE(data_pagamento,data_vencimento))::int ano FROM lancamentos ORDER BY ano DESC")
-    if anos.empty: st.info('Sem dados suficientes.')
+    if anos.empty: render_empty_state('Ainda não há histórico anual', 'Registre movimentações em mais períodos para comparar o ano.', '○')
     else:
         lista=anos['ano'].astype(int).tolist(); ano_balanco=st.selectbox('Ano',lista,index=0)
         for m in range(1,13): processar_recorrencias_lazy(m,ano_balanco)
         ia,fa=limites_ano(ano_balanco)
         dfy=fetch_dataframe("SELECT * FROM lancamentos WHERE (pago=1 AND data_pagamento >= %s AND data_pagamento < %s) OR (pago=0 AND data_vencimento >= %s AND data_vencimento < %s)",(ia,fa,ia,fa))
-        if dfy.empty: st.info('Sem dados no ano.')
+        if dfy.empty: render_empty_state('Nenhuma movimentação neste ano', 'Escolha outro ano ou registre novos lançamentos.', '○')
         else:
             dfy['valor']=pd.to_numeric(dfy['valor'],errors='coerce').fillna(0); dfy['valor_pago']=pd.to_numeric(dfy['valor_pago'],errors='coerce').fillna(0)
             dfy['data_h']=dfy.apply(lambda r:r['data_pagamento'] if int_seguro(r.get('pago'))==1 and pd.notna(r['data_pagamento']) else r['data_vencimento'],axis=1)
