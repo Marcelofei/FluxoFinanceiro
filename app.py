@@ -1068,12 +1068,36 @@ def render_empty_state(titulo, texto, icone="✓"):
     )
 
 
+def _altura_tabela(qtd_linhas, max_altura=430):
+    """Evita áreas vazias grandes/brancas no st.dataframe em tabelas pequenas."""
+    qtd = max(int(qtd_linhas or 0), 1)
+    return min(max_altura, 42 + (qtd * 36))
+
+
+def _totais_planejado_real(dataframe):
+    """Retorna planejado, realizado e diferença sem misturar os conceitos."""
+    if dataframe is None or dataframe.empty:
+        return 0.0, 0.0, 0.0
+    planejado = float(pd.to_numeric(dataframe['valor'], errors='coerce').fillna(0).sum())
+    pagos = dataframe[dataframe['pago'].fillna(0).astype(int) == 1]
+    realizado = float(pd.to_numeric(pagos['valor_pago'], errors='coerce').fillna(0).sum())
+    return planejado, realizado, realizado - planejado
+
+
+def _rotulo_comparativo(dataframe, tipo):
+    planejado, realizado, diferenca = _totais_planejado_real(dataframe)
+    nome_real = 'Recebido' if tipo == 'Entrada' else 'Pago'
+    sinal = '+' if diferenca > 0 else ''
+    return (f"Planejado R$ {format_brl(planejado)} · {nome_real} R$ {format_brl(realizado)} "
+            f"· Dif. {sinal}R$ {format_brl(diferenca)}")
+
+
 st.sidebar.markdown(
     "<div style='font-weight:700; font-size:1.08rem; color:oklch(96% 0.003 250);'>💰 Gestão Financeira</div>"
     "<div style='font-size:.78rem; color:oklch(60% 0.01 250); margin:.15rem 0 .55rem;'>Seu dinheiro, sem ruído.</div>",
     unsafe_allow_html=True,
 )
-st.sidebar.caption("Build ux-decisao-v4")
+st.sidebar.caption("Build demonstrativo-v5")
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
@@ -2474,10 +2498,24 @@ elif menu == "📑 Demonstrativo":
             st.divider()
             st.subheader("📊 Distribuição de Despesas")
             if not df_d_visivel.empty:
-                df_grp = df_d_visivel.groupby('categoria')['valor'].sum().reset_index()
-                fig = px.pie(df_grp, values='valor', names='categoria', hole=0.4)
-                fig.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(aplicar_tema_grafico(fig), use_container_width=True)
+                modo_grafico = st.radio(
+                    "Visualizar", ["Realizado", "Planejado"], horizontal=True,
+                    key="demo_distribuicao_modo", label_visibility="collapsed"
+                )
+                df_graf = df_d_visivel.copy()
+                if modo_grafico == "Realizado":
+                    df_graf = df_graf[df_graf['pago'] == 1].copy()
+                    df_graf['base_grafico'] = pd.to_numeric(df_graf['valor_pago'], errors='coerce').fillna(0.0)
+                else:
+                    df_graf['base_grafico'] = pd.to_numeric(df_graf['valor'], errors='coerce').fillna(0.0)
+                df_grp = df_graf.groupby('categoria')['base_grafico'].sum().reset_index()
+                df_grp = df_grp[df_grp['base_grafico'] > 0]
+                if not df_grp.empty:
+                    fig = px.pie(df_grp, values='base_grafico', names='categoria', hole=0.4)
+                    fig.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(aplicar_tema_grafico(fig), use_container_width=True)
+                else:
+                    st.caption("Ainda não há despesas realizadas neste período." if modo_grafico == "Realizado" else "Sem despesas planejadas neste período.")
 
             def exibir_demonstrativo(dataframe, chave):
                 if dataframe.empty: return
@@ -2504,7 +2542,7 @@ elif menu == "📑 Demonstrativo":
                 # com número de linhas diferente), deixando "linhas fantasma" com só a
                 # cor/ícone da tabela anterior aparecendo. A key garante que cada tabela
                 # seja tratada como um componente genuinamente novo.
-                st.dataframe(estilo, hide_index=True, use_container_width=True, key=f"demo_tabela_{chave}")
+                st.dataframe(estilo, hide_index=True, use_container_width=True, height=_altura_tabela(len(tabela)), key=f"demo_tabela_{chave}")
 
             c1, c2 = st.columns(2)
             with c1:
@@ -2516,17 +2554,17 @@ elif menu == "📑 Demonstrativo":
                 # cada lançamento individual continua indicando de qual turno ele é.
                 for cat in sorted(df_e_visivel['categoria'].unique(), key=lambda x: str(x).lower()):
                     df_c = df_e_visivel[df_e_visivel['categoria'] == cat]
-                    with st.expander(f"{cat} - R$ {format_brl(df_c['valor'].sum())}"):
+                    with st.expander(f"{cat} · {_rotulo_comparativo(df_c, 'Entrada')}"):
                         exibir_demonstrativo(df_c, chave=f"e_{cat}")
             with c2:
                 st.subheader("🔴 Despesas Detalhadas")
                 for cat in ordenar_categorias_com_prioridade(df_d_visivel['categoria'].unique()):
                     df_c = df_d_visivel[df_d_visivel['categoria'] == cat]
-                    with st.expander(f"{cat} - R$ {format_brl(df_c['valor'].sum())}"):
+                    with st.expander(f"{cat} · {_rotulo_comparativo(df_c, 'Despesa')}"):
                         for sub in df_c['subgrupo'].unique():
                             df_s = df_c[df_c['subgrupo'] == sub].copy()
                             if df_s.empty: continue
-                            st.markdown(f"**🔹 {sub if sub else 'Geral'}**")
+                            st.markdown(f"**🔹 {sub if sub else 'Geral'}**  ·  {_rotulo_comparativo(df_s, 'Despesa')}")
                             exibir_demonstrativo(df_s, chave=f"d_{cat}_{sub}")
         else:
             st.info("Sem lançamentos neste período.")
@@ -2566,9 +2604,9 @@ elif menu == "📑 Demonstrativo":
                 matriz_envelopes.append({
                     "Categoria": cat,
                     "Subgrupo": sub if sub else "Geral",
-                    "Orçamento Inicial (Teto)": orcamento_inicial,
-                    "Gasto Realizado (Acumulado)": realizado,
-                    "Saldo Restante Livre": disponivel,
+                    "Limite mensal": orcamento_inicial,
+                    "Gasto realizado": realizado,
+                    "Disponível no limite": disponivel,
                     "Métrica de Saúde": status_txt
                 })
 
@@ -2583,11 +2621,11 @@ elif menu == "📑 Demonstrativo":
                     return ['background-color: oklch(72% 0.11 155 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
 
                 estilo_env = df_matriz.style.apply(_cor_linha_envelope, axis=1).format({
-                    'Orçamento Inicial (Teto)': lambda v: f"R$ {format_brl(v)}",
-                    'Gasto Realizado (Acumulado)': lambda v: f"R$ {format_brl(v)}",
-                    'Saldo Restante Livre': lambda v: f"R$ {format_brl(v)}"
+                    'Limite mensal': lambda v: f"R$ {format_brl(v)}",
+                    'Gasto realizado': lambda v: f"R$ {format_brl(v)}",
+                    'Disponível no limite': lambda v: f"R$ {format_brl(v)}"
                 })
-                st.dataframe(estilo_env, use_container_width=True, hide_index=True)
+                st.dataframe(estilo_env, use_container_width=True, hide_index=True, height=_altura_tabela(len(df_matriz)), key="demo_limites_tabela")
             else:
                 st.info("Nenhum lançamento encontrado para os envelopes configurados neste mês.")
 
