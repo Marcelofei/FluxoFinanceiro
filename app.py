@@ -1179,7 +1179,7 @@ st.sidebar.markdown(
     "<div style='font-size:.78rem; color:oklch(60% 0.01 250); margin:.15rem 0 .55rem;'>Seu dinheiro, sem ruído.</div>",
     unsafe_allow_html=True,
 )
-st.sidebar.caption("Build demonstrativo-dark-v6")
+st.sidebar.caption("Build limites-coerentes-v7")
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
@@ -2128,13 +2128,21 @@ elif menu == "📝 Lançamentos":
 elif menu == "📊 Fluxo e Prioridades":
     cabecalho_pagina("📋 Fluxo do Mês", "Ações rápidas primeiro; a edição completa continua disponível abaixo.", "fluxo")
     st.caption("Escolha o que quer analisar, selecione lançamentos para somar e dê baixa direto na própria linha.")
-    df = fetch_dataframe("SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC", (inicio_periodo, fim_periodo))
+    df_todos_fluxo = fetch_dataframe("SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC", (inicio_periodo, fim_periodo))
+    if not df_todos_fluxo.empty:
+        if 'eh_orcamento' not in df_todos_fluxo.columns:
+            df_todos_fluxo['eh_orcamento'] = 0
+        df_todos_fluxo['eh_orcamento'] = pd.to_numeric(df_todos_fluxo['eh_orcamento'], errors='coerce').fillna(0).astype(int)
+    # Limite mensal é orçamento, não conta. Ele não deve aparecer no Fluxo nem
+    # aceitar baixa como se fosse uma despesa real. O acompanhamento fica em
+    # Demonstrativo > Limites mensais e entra apenas no planejamento/projeção.
+    df = df_todos_fluxo[df_todos_fluxo['eh_orcamento'] == 0].copy() if not df_todos_fluxo.empty else pd.DataFrame()
 
     if df.empty:
-        render_empty_state("Nenhum lançamento neste mês", "Quando você registrar uma entrada ou despesa, ela aparecerá aqui.", "○")
+        render_empty_state("Nenhuma conta ou entrada neste mês", "Limites mensais ficam no Demonstrativo; aqui aparecem apenas lançamentos reais.", "○")
     else:
-        df['valor'] = df['valor'].astype(float)
-        df['valor_pago'] = df['valor_pago'].fillna(0.0).astype(float)
+        df['valor'] = pd.to_numeric(df['valor'], errors='coerce').fillna(0.0)
+        df['valor_pago'] = pd.to_numeric(df['valor_pago'], errors='coerce').fillna(0.0)
 
         # Camada operacional simples: mantém o editor completo abaixo, mas o uso diário
         # não exige abrir uma planilha com todas as colunas.
@@ -2510,7 +2518,7 @@ elif menu == "📑 Demonstrativo":
             r1,r2,r3 = st.columns(3)
             r1.metric("Receitas planejadas", f"R$ {format_brl(rec_plan)}")
             r2.metric("Despesas planejadas", f"R$ {format_brl(desp_plan)}")
-            r3.metric("Saldo planejado", f"R$ {format_brl(rec_plan-desp_plan)}")
+            r3.metric("Resultado planejado", f"R$ {format_brl(rec_plan-desp_plan)}")
             q1,q2,q3 = st.columns(3)
             q1.metric("Recebido", f"R$ {format_brl(rec_real)}")
             q2.metric("Pago", f"R$ {format_brl(desp_real)}")
@@ -2525,15 +2533,25 @@ elif menu == "📑 Demonstrativo":
 
     with tab_dem:
         if not df.empty:
-            df['valor'] = df['valor'].astype(float)
-            df['valor_pago'] = df['valor_pago'].fillna(0.0).astype(float)
+            df['valor'] = pd.to_numeric(df['valor'], errors='coerce').fillna(0.0)
+            df['valor_pago'] = pd.to_numeric(df['valor_pago'], errors='coerce').fillna(0.0)
+            if 'eh_orcamento' not in df.columns:
+                df['eh_orcamento'] = 0
+            df['eh_orcamento'] = pd.to_numeric(df['eh_orcamento'], errors='coerce').fillna(0).astype(int)
             df['Data BR'] = pd.to_datetime(df['data_vencimento']).dt.strftime('%d/%m/%Y')
-            df_e, df_d = df[df['tipo'] == 'Entrada'], df[df['tipo'] == 'Despesa']
 
+            # A aba Detalhamento é operacional: mostra somente fatos/compromissos reais.
+            # Limites mensais são planejamento e ficam exclusivamente na aba própria.
+            df_operacional = df[df['eh_orcamento'] == 0].copy()
+            df_e = df_operacional[df_operacional['tipo'] == 'Entrada']
+            df_d = df_operacional[df_operacional['tipo'] == 'Despesa']
+
+            receita_planejada = float(df_e['valor'].sum())
+            despesa_planejada = _total_despesa_planejada(df)
             c_m1, c_m2, c_m3 = st.columns(3)
-            c_m1.metric("Receita Total (Planejada)", f"R$ {format_brl(df_e['valor'].sum())}")
-            c_m2.metric("Despesa Total (Planejada)", f"R$ {format_brl(df_d['valor'].sum())}")
-            c_m3.metric("Orçamento Base-Zero (ZBB)", f"R$ {format_brl(df_e['valor'].sum() - df_d['valor'].sum())}")
+            c_m1.metric("Receitas planejadas", f"R$ {format_brl(receita_planejada)}")
+            c_m2.metric("Despesas planejadas", f"R$ {format_brl(despesa_planejada)}")
+            c_m3.metric("Resultado planejado", f"R$ {format_brl(receita_planejada - despesa_planejada)}")
 
             # FÓRMULA PADRONIZADA -- mesma definição de "Pendente" usada no Início:
             # soma direta de 'valor' onde pago=0. Antes, aqui era calculado como
@@ -2541,9 +2559,9 @@ elif menu == "📑 Demonstrativo":
             # se você tivesse ajustado o valor realmente pago/recebido pra um número
             # diferente do planejado, esse número divergia do que o Início mostrava
             # pro mesmo mês. Agora as duas telas calculam exatamente igual.
-            falta_receber = df_e[df_e['pago'] == 0]['valor'].sum()
-            _df_falta_pagar = df_d[df_d['pago'] == 0].copy()
-            falta_pagar = _df_falta_pagar.apply(lambda r: max(float(r['valor']), 0.0) if int_seguro(r.get('eh_orcamento')) == 1 else float(r['valor']), axis=1).sum()
+            falta_receber = float(df_e[df_e['pago'] == 0]['valor'].sum())
+            # Pendente = conta real ainda não paga. Limite mensal nunca é dívida/conta.
+            falta_pagar = float(df_d[df_d['pago'] == 0]['valor'].sum())
 
             c_res1, c_res2 = st.columns(2)
             c_res1.metric("⏳ Entradas Pendentes (Mês)", f"R$ {format_brl(falta_receber)}")
@@ -2601,7 +2619,7 @@ elif menu == "📑 Demonstrativo":
                 if dataframe.empty: return
                 dataframe = dataframe.sort_values('data_vencimento').copy()
                 dataframe['Desc. Exibição'] = dataframe.apply(lambda r: f"{r['descricao']} ({int_seguro(r.get('parcela_atual'), 1)}/{int_seguro(r.get('total_parcelas'), 1)})" if pd.notna(r.get('total_parcelas')) and r['total_parcelas'] > 1 and r['total_parcelas'] != 999 else r['descricao'], axis=1)
-                dataframe['Status'] = dataframe.apply(lambda r: '🧮 Orçamento' if int_seguro(r.get('eh_orcamento')) == 1 else ('✅ Pago' if r['pago'] == 1 else '⏳ Pendente'), axis=1)
+                dataframe['Status'] = dataframe.apply(lambda r: '✅ Pago' if int_seguro(r.get('pago')) == 1 else '⏳ Pendente', axis=1)
                 dataframe['Pago em'] = pd.to_datetime(dataframe['data_pagamento'], errors='coerce').dt.strftime('%d/%m/%Y').fillna('—')
 
                 tabela = dataframe[['Data BR', 'Desc. Exibição', 'valor', 'valor_pago', 'Pago em', 'prioridade', 'Status']].rename(
@@ -2641,26 +2659,40 @@ elif menu == "📑 Demonstrativo":
 
     with tab_env:
         st.subheader("🎯 Limites mensais")
-        st.markdown("Comparação em tempo real entre o limite mensal e o que já foi gasto.")
+        st.markdown("Comparação entre o limite definido e as despesas reais já pagas. Limites não são contas a pagar e nunca entram como realizado.")
 
-        df_envelopes_config = fetch_dataframe("SELECT categoria, subgrupo FROM categorias_personalizadas WHERE is_envelope = 1 AND tipo = 'Despesa'")
+        df_envelopes_config = fetch_dataframe("SELECT categoria, subgrupo, valor_padrao FROM categorias_personalizadas WHERE is_envelope = 1 AND tipo = 'Despesa'")
 
         if df_envelopes_config.empty:
             st.info("Nenhuma categoria está configurada como 'Envelope Virtual' atualmente. Vá a '⚙️ Gerenciar Categorias' para ativar.")
         elif df.empty:
-            st.info("Sem transações no período ativo.")
+            st.info("Sem dados de limites no período ativo.")
         else:
             matriz_envelopes = []
-            for _, combo in df_envelopes_config.drop_duplicates().iterrows():
+            for _, combo in df_envelopes_config.drop_duplicates(subset=['categoria','subgrupo']).iterrows():
                 cat, sub = combo['categoria'], combo['subgrupo']
-                df_pago = df[(df['categoria'] == cat) & (df['subgrupo'] == sub) & (df['pago'] == 1)]
-                df_teto = df[(df['categoria'] == cat) & (df['subgrupo'] == sub) & (df['pago'] == 0)]
+                sub_alvo = _sub_norm(sub)
+                mask_combo = (df['categoria'] == cat) & (df['subgrupo'].apply(_sub_norm) == sub_alvo)
+                eh_orc = pd.to_numeric(df['eh_orcamento'], errors='coerce').fillna(0).astype(int)
 
-                realizado = float(df_pago['valor_pago'].sum())
-                disponivel = float(df_teto['valor'].sum())  # pode ser negativo se estourou o teto
-                orcamento_inicial = realizado + disponivel
+                # Realizado vem SOMENTE de despesas reais pagas.
+                df_pago = df[mask_combo & (df['tipo'] == 'Despesa') & (df['pago'] == 1) & (eh_orc == 0)]
+                # Disponível vem SOMENTE da linha de limite derivada pela VIEW.
+                df_teto = df[mask_combo & (eh_orc == 1)]
 
-                if realizado == 0 and disponivel == 0:
+                realizado = float(pd.to_numeric(df_pago['valor_pago'], errors='coerce').fillna(0.0).sum())
+                valor_padrao_cfg = float_seguro(combo.get('valor_padrao'))
+                if not df_teto.empty:
+                    disponivel = float(pd.to_numeric(df_teto['valor'], errors='coerce').fillna(0.0).sum())
+                    snapshots = pd.to_numeric(df_teto['valor_orcamento'], errors='coerce') if 'valor_orcamento' in df_teto.columns else pd.Series(dtype=float)
+                    orcamento_inicial = float(snapshots.dropna().sum()) if not snapshots.dropna().empty else valor_padrao_cfg
+                    if orcamento_inicial <= 0:
+                        orcamento_inicial = realizado + disponivel
+                else:
+                    orcamento_inicial = valor_padrao_cfg
+                    disponivel = orcamento_inicial - realizado
+
+                if orcamento_inicial == 0 and realizado == 0:
                     continue
 
                 if disponivel > 0 and orcamento_inicial > 0:
