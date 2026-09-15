@@ -10,6 +10,7 @@ import calendar
 import uuid
 import os
 import io
+import html
 import re
 
 # UX COMPLETA SOBRE BASE FUNCIONAL PRÉ-UX — esta versão mantém as capacidades avançadas da versão pré-UX
@@ -966,6 +967,24 @@ st.markdown("""
 .ux-badge-accent { display:inline-block; background:var(--accent-tint); border-radius:999px; padding:.12rem .48rem; font-size:.72rem; color:var(--accent-strong); }
 .ux-danger { color:var(--danger-text); }
 .ux-success { color:var(--success); }
+
+/* Tabelas de leitura do Demonstrativo: HTML próprio para evitar que o grid
+   interno do st.dataframe force células brancas no tema escuro. */
+.ux-table-wrap { width:100%; overflow-x:auto; border:1px solid #2a3036; border-radius:10px; background:#101418; margin:.35rem 0 .75rem 0; }
+.ux-dark-table { width:100%; border-collapse:separate; border-spacing:0; min-width:720px; background:#101418; color:#e6e8ea; font-size:.82rem; }
+.ux-dark-table th { background:#23282f; color:#c2c8ce; font-weight:600; text-align:left; padding:.58rem .65rem; border-bottom:1px solid #343a40; border-right:1px solid #343a40; white-space:nowrap; }
+.ux-dark-table th:last-child, .ux-dark-table td:last-child { border-right:0; }
+.ux-dark-table td { background:#101418; color:#e6e8ea; padding:.55rem .65rem; border-bottom:1px solid #272d33; border-right:1px solid #272d33; vertical-align:middle; white-space:nowrap; }
+.ux-dark-table tbody tr:last-child td { border-bottom:0; }
+.ux-dark-table tbody tr:hover td { background:#182027; }
+.ux-dark-table tr.ux-row-paid td { background:#111c18; }
+.ux-dark-table tr.ux-row-pending td { background:#1b1811; }
+.ux-dark-table tr.ux-row-budget td { background:#121a20; }
+.ux-dark-table tr.ux-row-danger td { background:#211315; }
+.ux-dark-table tr.ux-row-warning td { background:#211d13; }
+.ux-dark-table td.ux-num, .ux-dark-table th.ux-num { text-align:right; font-variant-numeric:tabular-nums; }
+.ux-dark-table .ux-real-strong { font-weight:650; color:#f1f3f5; }
+.ux-dark-table .ux-plan-muted { color:#a6adb5; }
 [data-testid="stSidebar"] .stExpander { background:transparent !important; border:0 !important; }
 .ux-kpi { background:var(--bg-card); border:1px solid var(--border); border-radius:14px; padding:1rem 1.05rem; min-height:108px; }
 .ux-kpi-label { color:var(--text-muted); font-size:.78rem; font-weight:550; }
@@ -994,6 +1013,8 @@ st.markdown("""
   .ux-kpi-value { font-size:1.16rem; }
   .ux-flow-category { display:none; }
   .ux-flow-value-main { font-size:.95rem; }
+  .ux-dark-table { min-width:620px; font-size:.76rem; }
+  .ux-dark-table th, .ux-dark-table td { padding:.48rem .52rem; }
   /* No Fluxo, mantém descrição e valor lado a lado; o botão desce inteiro. */
   [data-testid="stHorizontalBlock"]:has(.ux-flow-row-anchor) {
       flex-direction:row !important; flex-wrap:wrap !important; align-items:center !important; gap:.2rem !important;
@@ -1074,6 +1095,67 @@ def _altura_tabela(qtd_linhas, max_altura=430):
     return min(max_altura, 42 + (qtd * 36))
 
 
+def _render_tabela_escura(dataframe, currency_cols=None, numeric_cols=None, status_col=None):
+    """Tabela somente-leitura com tema escuro consistente e scroll horizontal no mobile."""
+    if dataframe is None or dataframe.empty:
+        return
+    currency_cols = set(currency_cols or [])
+    numeric_cols = set(numeric_cols or []) | currency_cols
+
+    cabecalho = []
+    for col in dataframe.columns:
+        classe = " class='ux-num'" if col in numeric_cols else ""
+        cabecalho.append(f"<th{classe}>{html.escape(str(col))}</th>")
+
+    linhas = []
+    for _, row in dataframe.iterrows():
+        classe_linha = ""
+        if status_col and status_col in dataframe.columns:
+            status = str(row.get(status_col, '') or '')
+            if '✅' in status or status.startswith('🟢'):
+                classe_linha = 'ux-row-paid'
+            elif '⏳' in status:
+                classe_linha = 'ux-row-pending'
+            elif '🧮' in status:
+                classe_linha = 'ux-row-budget'
+            elif status.startswith('🔴'):
+                classe_linha = 'ux-row-danger'
+            elif status.startswith('🟡'):
+                classe_linha = 'ux-row-warning'
+
+        celulas = []
+        for col in dataframe.columns:
+            valor = row[col]
+            classes = []
+            if col in numeric_cols:
+                classes.append('ux-num')
+            if col == 'Pago/Real':
+                classes.append('ux-real-strong')
+            if col == 'Planejado':
+                classes.append('ux-plan-muted')
+
+            if col in currency_cols:
+                texto = f"R$ {format_brl(valor)}"
+            elif pd.isna(valor):
+                texto = '—'
+            else:
+                texto = str(valor)
+            class_attr = f" class='{' '.join(classes)}'" if classes else ''
+            celulas.append(f"<td{class_attr}>{html.escape(texto)}</td>")
+
+        tr_class = f" class='{classe_linha}'" if classe_linha else ''
+        linhas.append(f"<tr{tr_class}>{''.join(celulas)}</tr>")
+
+    tabela_html = (
+        "<div class='ux-table-wrap'><table class='ux-dark-table'><thead><tr>"
+        + ''.join(cabecalho)
+        + "</tr></thead><tbody>"
+        + ''.join(linhas)
+        + "</tbody></table></div>"
+    )
+    st.markdown(tabela_html, unsafe_allow_html=True)
+
+
 def _totais_planejado_real(dataframe):
     """Retorna planejado, realizado e diferença sem misturar os conceitos."""
     if dataframe is None or dataframe.empty:
@@ -1097,7 +1179,7 @@ st.sidebar.markdown(
     "<div style='font-size:.78rem; color:oklch(60% 0.01 250); margin:.15rem 0 .55rem;'>Seu dinheiro, sem ruído.</div>",
     unsafe_allow_html=True,
 )
-st.sidebar.caption("Build demonstrativo-v5")
+st.sidebar.caption("Build demonstrativo-dark-v6")
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
@@ -2488,12 +2570,10 @@ elif menu == "📑 Demonstrativo":
                     st.caption("Esses lançamentos nascem quando você edita o VALOR (não só o 'Pago') de uma linha "
                               "consolidada de Cartão/Plantão em '📊 Fluxo e Prioridades'.")
                     df_ajustes_tudo = pd.concat([df_ajustes_pend_despesa, df_ajustes_pend_entrada])
-                    st.dataframe(
-                        df_ajustes_tudo[['Data BR', 'tipo', 'descricao', 'valor']].rename(
-                            columns={'Data BR': 'Data', 'tipo': 'Tipo', 'descricao': 'Descrição', 'valor': 'Valor'}
-                        ).style.format({'Valor': lambda v: f"R$ {format_brl(v)}"}),
-                        hide_index=True, use_container_width=True
+                    tabela_ajustes = df_ajustes_tudo[['Data BR', 'tipo', 'descricao', 'valor']].rename(
+                        columns={'Data BR': 'Data', 'tipo': 'Tipo', 'descricao': 'Descrição', 'valor': 'Valor'}
                     )
+                    _render_tabela_escura(tabela_ajustes, currency_cols={'Valor'})
 
             st.divider()
             st.subheader("📊 Distribuição de Despesas")
@@ -2528,21 +2608,11 @@ elif menu == "📑 Demonstrativo":
                     columns={'Data BR': 'Vencimento', 'Desc. Exibição': 'Descrição', 'valor': 'Planejado', 'valor_pago': 'Pago/Real', 'prioridade': 'Prioridade'}
                 )
 
-                def _cor_linha_demonstrativo(row):
-                    if row['Status'] == '✅ Pago':
-                        return ['background-color: oklch(72% 0.11 155 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
-                    return ['background-color: oklch(78% 0.12 85 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
-
-                estilo = tabela.style.apply(_cor_linha_demonstrativo, axis=1).format({
-                    'Planejado': lambda v: f"R$ {format_brl(v)}",
-                    'Pago/Real': lambda v: f"R$ {format_brl(v)}"
-                })
-                # CORREÇÃO: sem uma key= única, o Streamlit pode reciclar o componente
-                # visual de uma tabela anterior nesse mesmo loop (categorias/subgrupos
-                # com número de linhas diferente), deixando "linhas fantasma" com só a
-                # cor/ícone da tabela anterior aparecendo. A key garante que cada tabela
-                # seja tratada como um componente genuinamente novo.
-                st.dataframe(estilo, hide_index=True, use_container_width=True, height=_altura_tabela(len(tabela)), key=f"demo_tabela_{chave}")
+                _render_tabela_escura(
+                    tabela,
+                    currency_cols={'Planejado', 'Pago/Real'},
+                    status_col='Status',
+                )
 
             c1, c2 = st.columns(2)
             with c1:
@@ -2613,19 +2683,11 @@ elif menu == "📑 Demonstrativo":
             if matriz_envelopes:
                 df_matriz = pd.DataFrame(matriz_envelopes)
 
-                def _cor_linha_envelope(row):
-                    if row['Métrica de Saúde'].startswith('🔴'):
-                        return ['background-color: oklch(68% 0.13 25 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
-                    if row['Métrica de Saúde'].startswith('🟡'):
-                        return ['background-color: oklch(78% 0.12 85 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
-                    return ['background-color: oklch(72% 0.11 155 / 0.12); color: oklch(93% 0.004 250)'] * len(row)
-
-                estilo_env = df_matriz.style.apply(_cor_linha_envelope, axis=1).format({
-                    'Limite mensal': lambda v: f"R$ {format_brl(v)}",
-                    'Gasto realizado': lambda v: f"R$ {format_brl(v)}",
-                    'Disponível no limite': lambda v: f"R$ {format_brl(v)}"
-                })
-                st.dataframe(estilo_env, use_container_width=True, hide_index=True, height=_altura_tabela(len(df_matriz)), key="demo_limites_tabela")
+                _render_tabela_escura(
+                    df_matriz,
+                    currency_cols={'Limite mensal', 'Gasto realizado', 'Disponível no limite'},
+                    status_col='Métrica de Saúde',
+                )
             else:
                 st.info("Nenhum lançamento encontrado para os envelopes configurados neste mês.")
 
