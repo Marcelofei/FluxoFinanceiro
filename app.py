@@ -27,7 +27,7 @@ from contextlib import contextmanager
 
 @st.cache_resource
 def get_pool():
-    '''Pool compartilhado (thread-safe) em vez de uma conexão global mutável.'''
+    '''Pool compartilhado com validação na retirada de cada conexão.'''
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
         st.error("DATABASE_URL não configurada na variável de ambiente.")
@@ -45,33 +45,113 @@ def get_pool():
             dsn=db_url,
             options="-c client_encoding=utf8",
             connect_timeout=10,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=3,
         )
     except Exception as e:
         st.error(f"Falha Crítica de Conexão com o PostgreSQL: {e}")
         st.stop()
 
+
+def _fechar_pool_atual():
+    '''Descarta todo o pool após reinício/queda do servidor PostgreSQL.'''
+    try:
+        pool = get_pool()
+        pool.closeall()
+    except Exception:
+        pass
+    try:
+        get_pool.clear()
+    except Exception:
+        pass
+
+
+def _eh_erro_de_conexao(exc):
+    '''Reconhece erro de conexão mesmo quando pandas o encapsula em DatabaseError.'''
+    atual = exc
+    vistos = set()
+    marcadores = (
+        "server closed the connection unexpectedly",
+        "connection already closed",
+        "connection not open",
+        "ssl connection has been closed unexpectedly",
+        "terminating connection",
+        "could not connect to server",
+        "connection refused",
+        "connection timed out",
+        "closed the connection",
+    )
+    while atual is not None and id(atual) not in vistos:
+        vistos.add(id(atual))
+        if isinstance(atual, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+            return True
+        msg = str(atual).lower()
+        if any(m in msg for m in marcadores):
+            return True
+        atual = getattr(atual, "__cause__", None) or getattr(atual, "__context__", None)
+    return False
+
+
 @contextmanager
 def db_connection(autocommit=True):
+    '''Retira uma conexão do pool, valida com SELECT 1 e descarta sockets mortos.'''
     pool = get_pool()
-    conn = pool.getconn()
+    conn = None
+    ultimo_erro = None
+
+    # Uma conexão pode continuar presente no pool mesmo depois de o provedor do
+    # PostgreSQL encerrar o socket por ociosidade/restart. Validamos antes do uso.
+    for _ in range(2):
+        candidata = pool.getconn()
+        try:
+            if candidata.closed:
+                raise psycopg2.InterfaceError("Conexão do pool já estava fechada.")
+            try:
+                candidata.rollback()
+            except Exception:
+                pass
+            candidata.autocommit = True
+            with candidata.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+            candidata.autocommit = autocommit
+            conn = candidata
+            break
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            ultimo_erro = e
+            try:
+                pool.putconn(candidata, close=True)
+            except Exception:
+                try:
+                    candidata.close()
+                except Exception:
+                    pass
+
+    if conn is None:
+        raise ultimo_erro or psycopg2.OperationalError("Não foi possível obter uma conexão válida.")
+
     try:
-        conn.autocommit = autocommit
         yield conn
     finally:
-        # Garante que uma transação interrompida não contamine o próximo uso.
+        conexao_quebrada = bool(conn.closed)
         try:
             if not conn.closed and not autocommit:
                 conn.rollback()
         except Exception:
-            pass
+            conexao_quebrada = True
         try:
-            if not conn.closed:
+            if conexao_quebrada or conn.closed:
+                pool.putconn(conn, close=True)
+            else:
                 conn.autocommit = True
                 pool.putconn(conn)
-            else:
-                pool.putconn(conn, close=True)
         except Exception:
-            pass
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 @contextmanager
 def transaction():
@@ -94,7 +174,7 @@ def execute_query(query, params=None, fetch=False, silent=False):
                 cur.execute(query, params)
                 return cur.fetchall() if fetch else None
     except (psycopg2.OperationalError, psycopg2.InterfaceError):
-        get_pool.clear()
+        _fechar_pool_atual()
         try:
             with db_connection(autocommit=True) as conn:
                 with conn.cursor() as cur:
@@ -121,12 +201,12 @@ def execute_values_query(query, params_list):
         raise
 
 
-def fetch_dataframe(query, params=None):
+def fetch_dataframe(query, params=None, silent=False, raise_on_error=False):
     '''
     Leituras de lançamentos usam automaticamente a VIEW financeira derivada.
-    Use o comentário /* RAW */ quando precisar dos valores físicos da tabela
-    (backup/migração). Isso mantém os envelopes imutáveis no banco e calcula
-    o saldo disponível em tempo de leitura.
+    Se uma conexão ociosa tiver sido encerrada pelo servidor, recria o pool e
+    repete a leitura uma única vez. O pandas pode encapsular OperationalError,
+    por isso a detecção não depende apenas do tipo da exceção externa.
     '''
     query_exec = query
     if "/* RAW */" not in query_exec:
@@ -136,20 +216,24 @@ def fetch_dataframe(query, params=None):
             query_exec,
             flags=re.IGNORECASE,
         )
-    try:
-        with db_connection(autocommit=True) as conn:
-            return pd.read_sql_query(query_exec, conn, params=params)
-    except (psycopg2.OperationalError, psycopg2.InterfaceError):
-        get_pool.clear()
+
+    ultimo_erro = None
+    for tentativa in range(2):
         try:
             with db_connection(autocommit=True) as conn:
                 return pd.read_sql_query(query_exec, conn, params=params)
         except Exception as e:
-            st.error(f"Erro de Leitura de Dados: {e}")
-            return pd.DataFrame()
-    except Exception as e:
-        st.error(f"Erro de Leitura de Dados: {e}")
-        return pd.DataFrame()
+            ultimo_erro = e
+            if tentativa == 0 and _eh_erro_de_conexao(e):
+                _fechar_pool_atual()
+                continue
+            break
+
+    if raise_on_error and ultimo_erro is not None:
+        raise ultimo_erro
+    if not silent and ultimo_erro is not None:
+        st.error(f"Erro de Leitura de Dados: {ultimo_erro}")
+    return pd.DataFrame()
 
 
 def limites_mes(mes, ano):
@@ -644,6 +728,36 @@ def calcular_valor_medio_plantao(hoje_ref, n_meses=6):
 
 st.set_page_config(page_title="Gestão Financeira", layout="wide", page_icon="💰")
 if not check_password(): st.stop()
+
+
+def _banco_disponivel():
+    try:
+        with db_connection(autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        return True
+    except Exception:
+        # Uma segunda tentativa força pool totalmente novo.
+        _fechar_pool_atual()
+        try:
+            with db_connection(autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
+            return True
+        except Exception:
+            return False
+
+
+if not _banco_disponivel():
+    st.error("Não foi possível conectar ao banco de dados agora. Seus dados não foram alterados.")
+    st.caption("Isso costuma acontecer quando o provedor reinicia ou encerra conexões ociosas. Tente reconectar em alguns segundos.")
+    if st.button("🔄 Tentar reconectar", type="primary"):
+        _fechar_pool_atual()
+        st.rerun()
+    st.stop()
+
 init_db()
 
 # =================================================================
@@ -1179,7 +1293,7 @@ st.sidebar.markdown(
     "<div style='font-size:.78rem; color:oklch(60% 0.01 250); margin:.15rem 0 .55rem;'>Seu dinheiro, sem ruído.</div>",
     unsafe_allow_html=True,
 )
-st.sidebar.caption("Build plano-pagamentos-v8")
+st.sidebar.caption("Build conexao-resiliente-v9")
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
@@ -1425,8 +1539,21 @@ exibir_flash()
 # 7B. ASSISTENTE DE CONFIGURAÇÃO — ONBOARDING GUIADO
 # =================================================================
 if 'wizard_ativo' not in st.session_state:
-    df_check_categorias = fetch_dataframe("SELECT COUNT(*) as n FROM categorias_personalizadas")
-    n_categorias_existentes = int(df_check_categorias.iloc[0]['n']) if not df_check_categorias.empty else 0
+    try:
+        df_check_categorias = fetch_dataframe(
+            "SELECT COUNT(*) as n FROM categorias_personalizadas",
+            silent=True,
+            raise_on_error=True,
+        )
+        if df_check_categorias.empty or 'n' not in df_check_categorias.columns:
+            raise RuntimeError("Não foi possível confirmar o cadastro de categorias.")
+        n_categorias_existentes = int(df_check_categorias.iloc[0]['n'])
+    except Exception:
+        st.error("Não foi possível verificar sua configuração porque o banco ficou indisponível. O assistente não será aberto automaticamente.")
+        if st.button("🔄 Reconectar ao banco", key="retry_onboarding_db"):
+            _fechar_pool_atual()
+            st.rerun()
+        st.stop()
     st.session_state['wizard_ativo'] = (n_categorias_existentes == 0)
     st.session_state['wizard_passo'] = 0
 
