@@ -1120,6 +1120,34 @@ st.markdown("""
 .ux-empty b { color:var(--text-primary); }
 .ux-empty-icon { font-size:1.35rem; color:var(--success); margin-bottom:.25rem; }
 .ux-payment-box { border-left:3px solid var(--accent); padding-left:.85rem; margin:.35rem 0 .65rem; }
+.ux-cover-summary { background:var(--bg-card); border:1px solid var(--border); border-radius:14px; padding:1rem 1.05rem; min-height:106px; }
+.ux-cover-label { color:var(--text-muted); font-size:.76rem; font-weight:600; }
+.ux-cover-value { margin-top:.28rem; font-size:1.32rem; font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+.ux-cover-note { margin-top:.18rem; color:var(--text-muted); font-size:.74rem; }
+.ux-cover-alert { border:1px solid var(--danger-border); background:var(--danger-tint); border-radius:11px; padding:.65rem .8rem; margin:.65rem 0 1rem; color:var(--text-primary); }
+.ux-cover-ok { border:1px solid var(--success-border); background:var(--success-tint); border-radius:11px; padding:.65rem .8rem; margin:.65rem 0 1rem; color:var(--text-primary); }
+.ux-income-head { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; margin-bottom:.2rem; }
+.ux-income-name { font-weight:680; font-size:1rem; line-height:1.25; }
+.ux-income-meta { color:var(--text-muted); font-size:.76rem; margin-top:.14rem; }
+.ux-income-amount { font-size:1.08rem; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.ux-income-stats { display:flex; flex-wrap:wrap; gap:.45rem .9rem; margin:.6rem 0 .45rem; color:var(--text-muted); font-size:.76rem; }
+.ux-income-stats b { color:var(--text-primary); font-weight:620; }
+.ux-cover-bar { height:7px; border-radius:999px; overflow:hidden; background:#20262c; margin:.45rem 0 .65rem; }
+.ux-cover-fill-ok { height:100%; background:var(--success); }
+.ux-cover-fill-warn { height:100%; background:#d2a13a; }
+.ux-cover-fill-danger { height:100%; background:var(--danger); }
+.ux-match-line { display:grid; grid-template-columns:58px minmax(0,1fr) auto; gap:.55rem; align-items:center; padding:.48rem 0; border-top:1px solid var(--border); }
+.ux-match-date { color:var(--text-muted); font-size:.76rem; font-variant-numeric:tabular-nums; }
+.ux-match-desc { font-size:.84rem; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ux-match-value { font-size:.82rem; font-weight:620; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.ux-match-warning { color:var(--danger-text); font-size:.72rem; margin-top:.15rem; }
+.ux-source-badge { display:inline-block; border-radius:999px; padding:.1rem .45rem; font-size:.68rem; font-weight:650; margin-left:.35rem; vertical-align:1px; }
+.ux-source-received { background:var(--success-tint); color:var(--success); }
+.ux-source-planned { background:var(--accent-tint); color:var(--accent-strong); }
+.ux-source-risk { background:var(--danger-tint); color:var(--danger-text); }
+.ux-source-attn { background:rgba(210,161,58,.13); color:#d9ae55; }
+.ux-source-ok { background:var(--success-tint); color:var(--success); }
+.ux-secondary-note { color:var(--text-muted); font-size:.78rem; margin:.4rem 0 .8rem; }
 @media (max-width:640px) {
   .ux-value { font-size:1.1rem; }
   .ux-card, .ux-card-strong { padding:.8rem .85rem; }
@@ -1293,7 +1321,7 @@ st.sidebar.markdown(
     "<div style='font-size:.78rem; color:oklch(60% 0.01 250); margin:.15rem 0 .55rem;'>Seu dinheiro, sem ruído.</div>",
     unsafe_allow_html=True,
 )
-st.sidebar.caption("Build conexao-resiliente-v9")
+st.sidebar.caption("Build cobertura-rendas-v10")
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
@@ -2097,98 +2125,217 @@ def _montar_plano_pagamentos(df_ops, ano, mes):
 
 
 def _render_plano_pagamentos(df_ops, ano, mes):
+    """Renderiza o casamento renda → contas como informação principal do Fluxo."""
     plano = _montar_plano_pagamentos(df_ops, ano, mes)
     fontes = plano['fontes']
     contas = plano['contas']
     pendentes = [c for c in contas if not c['pago']]
 
     if not fontes and not pendentes:
-        render_empty_state("Nada para planejar", "Cadastre entradas e contas reais neste período para montar a agenda de pagamentos.", "◎")
+        render_empty_state("Nada para planejar", "Cadastre entradas e contas reais neste período para montar a cobertura do mês.", "◎")
         return
 
-    st.caption("Planejamento baseado apenas nos lançamentos registrados no app — não representa saldo bancário em tempo real.")
-
-    hoje_no_periodo = hoje if (ano == hoje.year and mes == hoje.month) else datetime.date(ano, mes, 1)
-    proximas = [f for f in fontes if (not f['recebido']) and f['data'] >= hoje_no_periodo]
-    proxima = min(proximas, key=lambda x: x['data']) if proximas else None
+    total_pendente = round(sum(c['valor'] for c in pendentes), 2)
     risco_total = round(sum(c['risco_valor'] for c in plano['risco_contas']), 2)
+    coberto_prazo = max(round(total_pendente - risco_total, 2), 0.0)
+    pct_coberto = (coberto_prazo / total_pendente * 100.0) if total_pendente > 0 else 100.0
+    n_risco = len(plano['risco_contas'])
 
-    c1, c2, c3, c4 = st.columns(4)
-    if proxima:
-        c1.metric("Próxima entrada", f"R$ {format_brl(proxima['valor'])}", proxima['data'].strftime('%d/%m'))
-        c1.caption(proxima['descricao'])
-    else:
-        c1.metric("Próxima entrada", "—")
-        c1.caption("Nenhuma entrada futura prevista")
-    c2.metric("Contas em risco", len(plano['risco_contas']), f"R$ {format_brl(risco_total)}")
-    c3.metric("Reserva de virada", f"R$ {format_brl(plano['reserva_sugerida'])}")
-    c3.caption("Inclui 10% de margem")
-    c4.metric("Recebido não alocado", f"R$ {format_brl(plano['recebido_nao_alocado'])}")
-    c4.caption("Após compromissos registrados")
+    st.markdown("### Cobertura do mês")
+    st.caption("Veja qual recebimento sustenta cada conta. O cálculo usa apenas o que está registrado no app — não é saldo bancário.")
 
-    if plano['risco_contas']:
-        st.markdown("### ⚠️ Contas que merecem atenção")
-        st.caption("Estas contas não têm cobertura suficiente registrada até a própria data de vencimento.")
-        for conta in plano['risco_contas']:
-            futuras = [a for a in conta['alocacoes'] if a['tipo'] == 'apos_vencimento']
-            prox_txt = min(futuras, key=lambda a: a['data'])['data'].strftime('%d/%m') if futuras else None
-            complemento = f" · próxima cobertura em {prox_txt}" if prox_txt else " · sem cobertura suficiente no mês"
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        st.markdown(
+            f"<div class='ux-cover-summary'><div class='ux-cover-label'>Cobertura no prazo</div>"
+            f"<div class='ux-cover-value ux-positive'>R$ {format_brl(coberto_prazo)}</div>"
+            f"<div class='ux-cover-note'>de R$ {format_brl(total_pendente)} · {pct_coberto:.0f}% das contas pendentes</div></div>",
+            unsafe_allow_html=True,
+        )
+    with s2:
+        tom_risco = "ux-negative" if risco_total > 0.004 else "ux-positive"
+        st.markdown(
+            f"<div class='ux-cover-summary'><div class='ux-cover-label'>Em risco de data</div>"
+            f"<div class='ux-cover-value {tom_risco}'>R$ {format_brl(risco_total)}</div>"
+            f"<div class='ux-cover-note'>{n_risco} conta(s) dependem de dinheiro que chega tarde</div></div>",
+            unsafe_allow_html=True,
+        )
+    with s3:
+        st.markdown(
+            f"<div class='ux-cover-summary'><div class='ux-cover-label'>Colchão necessário</div>"
+            f"<div class='ux-cover-value'>R$ {format_brl(plano['reserva_sugerida'])}</div>"
+            f"<div class='ux-cover-note'>reserva de virada com 10% de margem</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    if n_risco:
+        st.markdown(
+            f"<div class='ux-cover-alert'><b>⚠️ {n_risco} conta(s) dependem de uma renda que entra depois do vencimento.</b> "
+            f"Os conflitos aparecem diretamente abaixo da fonte de renda correspondente.</div>",
+            unsafe_allow_html=True,
+        )
+    elif pendentes:
+        st.markdown(
+            "<div class='ux-cover-ok'><b>✓ Todas as contas pendentes têm cobertura registrada até o vencimento.</b></div>",
+            unsafe_allow_html=True,
+        )
+
+    if plano['recebido_nao_alocado'] > 0.004:
+        st.markdown(
+            f"<div class='ux-secondary-note'>Dos recebimentos já confirmados, <b>R$ {format_brl(plano['recebido_nao_alocado'])}</b> "
+            f"ainda não estão comprometidos com contas cadastradas.</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("### Casamento de rendas")
+    visao = st.radio(
+        "Organizar por",
+        ["Por renda", "Por vencimento"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key=f"cobertura_visao_{ano}_{mes}",
+    )
+
+    def _status_fonte(fonte):
+        futuros = [x for x in fonte['compromissos'] if not x['pago']]
+        conflito = any(x['vencimento'] < fonte['data'] for x in futuros)
+        uso = max(fonte['valor'] - fonte['restante'], 0.0)
+        taxa = (uso / fonte['valor']) if fonte['valor'] > 0 else 0.0
+        if conflito:
+            return "🔴 Conflito de data", "danger", taxa
+        if taxa >= 0.85:
+            return "🟡 Quase toda comprometida", "warn", taxa
+        return "🟢 Cobertura saudável", "ok", taxa
+
+    def _render_fonte(fonte):
+        compromissos_futuros = sorted(
+            [x for x in fonte['compromissos'] if not x['pago']],
+            key=lambda x: (x['vencimento'], x['descricao'])
+        )
+        usados = round(sum(x['valor'] for x in fonte['compromissos'] if x['pago']), 2)
+        comprometido = round(sum(x['valor'] for x in compromissos_futuros), 2)
+        nao_comprometido = max(round(fonte['restante'], 2), 0.0)
+        status_txt, status_tom, taxa = _status_fonte(fonte)
+        bar_cls = {"danger":"ux-cover-fill-danger", "warn":"ux-cover-fill-warn", "ok":"ux-cover-fill-ok"}[status_tom]
+        badge_status = "ux-source-received" if fonte['recebido'] else "ux-source-planned"
+        badge_txt = "RECEBIDO" if fonte['recebido'] else "PREVISTO"
+        status_badge = {"danger":"ux-source-risk", "warn":"ux-source-attn", "ok":"ux-source-ok"}[status_tom]
+        pct_bar = min(max(taxa * 100.0, 0.0), 100.0)
+
+        with st.container(border=True):
+            h1, h2 = st.columns([4, 1.45])
+            with h1:
+                st.markdown(
+                    f"<div class='ux-income-name'>{'✓' if fonte['recebido'] else '◷'} {fonte['descricao']} "
+                    f"<span class='ux-source-badge {badge_status}'>{badge_txt}</span> "
+                    f"<span class='ux-source-badge {status_badge}'>{status_txt}</span></div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f"<div class='ux-income-meta'>{fonte['data'].strftime('%d/%m/%Y')} · "
+                    f"Recebimento de R$ {format_brl(fonte['valor'])}</div>", unsafe_allow_html=True
+                )
+            with h2:
+                st.markdown(
+                    f"<div style='text-align:right'><div class='ux-cover-label'>Não comprometido</div>"
+                    f"<div class='ux-income-amount'>R$ {format_brl(nao_comprometido)}</div></div>", unsafe_allow_html=True
+                )
+
             st.markdown(
-                f"<div class='ux-card'><b>🔴 {conta['descricao']}</b><br>"
-                f"<span class='ux-muted'>Vence {conta['vencimento'].strftime('%d/%m')} · R$ {format_brl(conta['valor'])} · "
-                f"faltam R$ {format_brl(conta['risco_valor'])} até o vencimento{complemento}</span></div>",
+                f"<div class='ux-income-stats'>"
+                + (f"<span>Já utilizado <b>R$ {format_brl(usados)}</b></span>" if fonte['recebido'] and usados > 0.004 else "")
+                + f"<span>Próximas contas <b>R$ {format_brl(comprometido)}</b></span>"
+                + f"<span>Comprometimento <b>{taxa*100:.0f}%</b></span></div>"
+                f"<div class='ux-cover-bar'><div class='{bar_cls}' style='width:{pct_bar:.1f}%'></div></div>",
                 unsafe_allow_html=True,
             )
-    else:
-        st.success("As contas pendentes possuem cobertura prevista até seus vencimentos, considerando apenas os lançamentos cadastrados.")
 
-    st.markdown("### 🧭 Agenda por recebimento")
-    if not fontes:
-        st.info("Não há entradas cadastradas neste período; as contas dependem de reserva trazida de outro período.")
-    else:
-        for fonte in fontes:
-            compromissos_futuros = [x for x in fonte['compromissos'] if not x['pago']]
-            usado_futuro = round(sum(x['valor'] for x in compromissos_futuros), 2)
-            status = "Recebido" if fonte['recebido'] else "Previsto"
-            with st.container(border=True):
-                h1, h2 = st.columns([3.8, 1.4])
-                h1.markdown(f"**{'✅' if fonte['recebido'] else '◷'} {fonte['descricao']}**  ")
-                h1.caption(f"{status} em {fonte['data'].strftime('%d/%m/%Y')} · R$ {format_brl(fonte['valor'])}")
-                h2.metric("Ainda livre", f"R$ {format_brl(max(fonte['restante'], 0.0))}")
-                if compromissos_futuros:
-                    for item in sorted(compromissos_futuros, key=lambda x: x['vencimento']):
-                        st.markdown(f"• {item['vencimento'].strftime('%d/%m')} · {item['descricao']} — **R$ {format_brl(item['valor'])}**")
-                    st.caption(f"Comprometido com contas futuras: R$ {format_brl(usado_futuro)}")
-                else:
-                    st.caption("Nenhuma conta pendente foi atribuída a esta entrada.")
+            if compromissos_futuros:
+                for item in compromissos_futuros:
+                    dias_conflito = (fonte['data'] - item['vencimento']).days
+                    conflito = dias_conflito > 0
+                    alerta = f"<div class='ux-match-warning'>⚠ vence {dias_conflito} dia(s) antes desta renda</div>" if conflito else ""
+                    st.markdown(
+                        f"<div class='ux-match-line'><div class='ux-match-date'>{item['vencimento'].strftime('%d/%m')}</div>"
+                        f"<div><div class='ux-match-desc'>{item['descricao']}</div>{alerta}</div>"
+                        f"<div class='ux-match-value'>R$ {format_brl(item['valor'])}</div></div>",
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.caption("Nenhuma conta futura foi atribuída a este recebimento.")
 
-    if pendentes:
-        with st.expander("💡 Sugestão automática por conta", expanded=False):
-            st.caption("O app usa primeiro entradas disponíveis até o vencimento; quando precisa de uma entrada posterior, sinaliza risco.")
-            for conta in pendentes:
+    if visao == "Por renda":
+        # Fontes já totalmente consumidas por pagamentos passados não ajudam na decisão
+        # das próximas contas e ficam fora da visão principal para reduzir ruído.
+        recebidas = [
+            f for f in fontes if f['recebido'] and (
+                f['restante'] > 0.004 or any(not x['pago'] for x in f['compromissos'])
+            )
+        ]
+        previstas = [f for f in fontes if not f['recebido']]
+
+        if recebidas:
+            st.markdown("#### Dinheiro já recebido")
+            st.caption("Fontes confirmadas que ainda têm valor não comprometido ou sustentam próximas contas.")
+            for fonte in recebidas:
+                _render_fonte(fonte)
+
+        if previstas:
+            st.markdown("#### Próximos recebimentos")
+            st.caption("Receitas ainda previstas. Conflitos de vencimento aparecem dentro do próprio casamento.")
+            for fonte in previstas:
+                _render_fonte(fonte)
+
+        if not fontes:
+            st.info("Nenhuma fonte de renda foi registrada neste período.")
+
+    else:
+        st.markdown("#### Contas por vencimento")
+        st.caption("A mesma cobertura vista pela ordem em que as contas precisam ser pagas.")
+        if not pendentes:
+            render_empty_state("Nenhuma conta pendente", "As contas reais deste período já foram baixadas.", "✓")
+        else:
+            for conta in sorted(pendentes, key=lambda x: (x['vencimento'], prioridades_map.get(x['prioridade'], 2), x['descricao'])):
                 alocs = conta['alocacoes']
-                if alocs:
-                    partes = []
-                    for a in alocs:
-                        tag = " ⚠️" if a['tipo'] == 'apos_vencimento' else ""
-                        partes.append(f"{a['fonte']} ({a['data'].strftime('%d/%m')}) · R$ {format_brl(a['valor'])}{tag}")
-                    fonte_txt = " + ".join(partes)
-                else:
-                    fonte_txt = "Sem fonte registrada"
-                st.markdown(f"**{conta['vencimento'].strftime('%d/%m')} · {conta['descricao']} — R$ {format_brl(conta['valor'])}**  ")
-                st.caption(f"Pagar com: {fonte_txt}")
-                if conta['descoberto'] > 0.004:
-                    st.caption(f"Ainda sem cobertura: R$ {format_brl(conta['descoberto'])}")
+                partes = []
+                tem_tardia = False
+                for a in alocs:
+                    tardia = a['tipo'] == 'apos_vencimento'
+                    tem_tardia = tem_tardia or tardia
+                    partes.append(f"{a['fonte']} · {a['data'].strftime('%d/%m')} · R$ {format_brl(a['valor'])}" + (" ⚠️" if tardia else ""))
+                fonte_txt = " + ".join(partes) if partes else "Sem fonte registrada"
+                with st.container(border=True):
+                    c1, c2 = st.columns([4.2, 1.2])
+                    c1.markdown(f"**{conta['vencimento'].strftime('%d/%m')} · {conta['descricao']}**")
+                    c1.caption(f"Fonte: {fonte_txt}")
+                    if tem_tardia:
+                        c1.caption("⚠️ Parte da cobertura entra depois do vencimento.")
+                    if conta['descoberto'] > 0.004:
+                        c1.caption(f"🔴 Ainda sem cobertura no mês: R$ {format_brl(conta['descoberto'])}")
+                    c2.markdown(f"<div class='ux-income-amount' style='text-align:right'>R$ {format_brl(conta['valor'])}</div>", unsafe_allow_html=True)
 
-    with st.expander("Como interpretar a reserva de virada", expanded=False):
+    sem_cobertura = [c for c in pendentes if c['descoberto'] > 0.004]
+    if sem_cobertura:
+        st.markdown("### Sem cobertura registrada")
+        st.caption("Estas contas continuam sem uma fonte suficiente mesmo considerando os recebimentos previstos do mês.")
+        for conta in sem_cobertura:
+            st.markdown(
+                f"<div class='ux-cover-alert'><b>{conta['vencimento'].strftime('%d/%m')} · {conta['descricao']}</b> · "
+                f"R$ {format_brl(conta['descoberto'])} ainda sem cobertura.</div>", unsafe_allow_html=True
+            )
+
+    with st.expander("Entender o colchão necessário", expanded=False):
         st.write(
-            "A reserva de virada é o maior déficit acumulado que ocorreria se o mês começasse com R$ 0, "
-            "considerando as datas registradas de entradas e despesas. Ela não é reserva de emergência nem saldo bancário."
+            "É o valor necessário para atravessar os dias em que contas vencem antes das entradas correspondentes. "
+            "Ele não é reserva de emergência e não representa saldo bancário."
         )
         st.metric("Mínimo calculado", f"R$ {format_brl(plano['reserva_minima'])}")
-        st.metric("Meta com margem de 10%", f"R$ {format_brl(plano['reserva_sugerida'])}")
+        st.metric("Meta com 10% de margem", f"R$ {format_brl(plano['reserva_sugerida'])}")
         if plano['uso_externo_historico'] > 0.004:
-            st.caption(f"Pagamentos já realizados sugerem uso de R$ {format_brl(plano['uso_externo_historico'])} de recursos trazidos de fora das entradas recebidas registradas neste mês.")
+            st.caption(
+                f"Pagamentos já realizados indicam R$ {format_brl(plano['uso_externo_historico'])} de recursos "
+                "que não vieram das entradas recebidas registradas neste mês."
+            )
 
 
 def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_editar=False, permitir_selecao=False):
@@ -2384,6 +2531,29 @@ elif menu == "🏠 Início":
         with m3: render_kpi("Resultado até agora", resultado_atual, "Recebido − pago", "positive" if resultado_atual >= 0 else "negative")
         with m4: render_kpi("Resultado projetado", saldo_proj, f"Inclui R$ {format_brl(a_receber)} ainda a receber", "positive" if saldo_proj >= 0 else "negative")
 
+        # O casamento renda → contas também aparece na Home como sinal de decisão,
+        # sem repetir toda a agenda detalhada.
+        df_home_real = df_mes.copy()
+        if 'eh_orcamento' in df_home_real.columns:
+            df_home_real = df_home_real[pd.to_numeric(df_home_real['eh_orcamento'], errors='coerce').fillna(0).astype(int) == 0].copy()
+        ops_home_cobertura = _consolidar_operacional(df_home_real) if not df_home_real.empty else pd.DataFrame()
+        plano_home = _montar_plano_pagamentos(ops_home_cobertura, ano_selecionado, mes_selecionado)
+        pend_home = [c for c in plano_home['contas'] if not c['pago']]
+        total_pend_home = round(sum(c['valor'] for c in pend_home), 2)
+        risco_home = round(sum(c['risco_valor'] for c in plano_home['risco_contas']), 2)
+        coberto_home = max(round(total_pend_home - risco_home, 2), 0.0)
+        pct_home = (coberto_home / total_pend_home * 100.0) if total_pend_home > 0 else 100.0
+
+        st.markdown("<div class='ux-section-title'>Cobertura das próximas contas</div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            hc1, hc2, hc3, hc4 = st.columns([1.5, 1.2, 1.2, .9])
+            hc1.metric("Coberto no prazo", f"{pct_home:.0f}%", f"R$ {format_brl(coberto_home)} de R$ {format_brl(total_pend_home)}")
+            hc2.metric("Em risco", f"R$ {format_brl(risco_home)}", f"{len(plano_home['risco_contas'])} conta(s)")
+            hc3.metric("Colchão necessário", f"R$ {format_brl(plano_home['reserva_sugerida'])}")
+            if hc4.button("Ver casamento →", key="home_ver_cobertura", type="primary", use_container_width=True):
+                st.session_state.menu_atual = "📊 Fluxo e Prioridades"
+                st.rerun()
+
         st.markdown("<div class='ux-section-title'>Ações rápidas</div>", unsafe_allow_html=True)
         a1,a2,a3 = st.columns(3)
         if a1.button("＋ Novo lançamento", type="primary", use_container_width=True):
@@ -2488,8 +2658,8 @@ elif menu == "📝 Lançamentos":
 # =================================================================
 
 elif menu == "📊 Fluxo e Prioridades":
-    cabecalho_pagina("📋 Fluxo do Mês", "Ações rápidas primeiro; a edição completa continua disponível abaixo.", "fluxo")
-    st.caption("Escolha o que quer analisar, selecione lançamentos para somar e dê baixa direto na própria linha.")
+    cabecalho_pagina("📋 Fluxo do Mês", "Entenda primeiro como cada renda cobre suas contas; depois faça as baixas no fluxo operacional.", "fluxo")
+    st.caption("A aba Cobertura do mês mostra o casamento entre recebimentos e vencimentos. A aba Fluxo mantém pagamentos, filtros e edição.")
     df_todos_fluxo = fetch_dataframe("SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC", (inicio_periodo, fim_periodo))
     if not df_todos_fluxo.empty:
         if 'eh_orcamento' not in df_todos_fluxo.columns:
@@ -2500,7 +2670,7 @@ elif menu == "📊 Fluxo e Prioridades":
     # Demonstrativo > Limites mensais e entra apenas no planejamento/projeção.
     df = df_todos_fluxo[df_todos_fluxo['eh_orcamento'] == 0].copy() if not df_todos_fluxo.empty else pd.DataFrame()
 
-    tab_fluxo, tab_plano = st.tabs(["📋 Fluxo", "🧭 Plano de pagamentos"])
+    tab_plano, tab_fluxo = st.tabs(["🧭 Cobertura do mês", "📋 Fluxo"])
 
     with tab_fluxo:
         if df.empty:
