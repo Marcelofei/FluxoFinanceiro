@@ -1,5 +1,5 @@
 import streamlit as st
-APP_BUILD = "mais-v2-v22"
+APP_BUILD = "fluxo-cartao-consolidado-v23"
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
@@ -2437,11 +2437,11 @@ def _registrar_pagamento_ids(ids, valor_real_total=None, data_pagamento=None):
 def _consolidar_operacional(df, consolidar_cartao=False):
     """Prepara os lançamentos exibidos no uso diário.
 
-    Na UX 2.0 a Home e o Fluxo não devem inventar uma entidade financeira que
-    o usuário nunca cadastrou. Por isso, despesas com forma_pagamento='Crédito'
-    permanecem como os próprios lançamentos por padrão. A consolidação legada
-    de cartão continua disponível apenas quando chamada explicitamente com
-    consolidar_cartao=True (ex.: ferramentas avançadas/migração futura).
+    Na UX 2.0 a Home preserva apenas lançamentos reais e não cria faturas
+    sintéticas. No Fluxo, porém, despesas explicitamente marcadas como Crédito
+    podem ser consolidadas em uma única fatura operacional, porque é essa saída
+    que o usuário efetivamente paga. As compras individuais continuam no banco
+    para alimentar categorias, planejamento e histórico.
     """
     cols_saida = ['id_ui','tipo','categoria','descricao','valor','valor_pago','pago','data_vencimento','data_pagamento','prioridade','ids','consolidado','ordem_pri','atrasado','ordem_atraso']
     if df.empty: return pd.DataFrame(columns=cols_saida)
@@ -3925,7 +3925,7 @@ elif menu == "📊 Fluxo e Prioridades":
             df_ui = df_contexto_fluxo if not df_contexto_fluxo.empty else df
             df_ui['valor'] = pd.to_numeric(df_ui['valor'], errors='coerce').fillna(0.0)
             df_ui['valor_pago'] = pd.to_numeric(df_ui['valor_pago'], errors='coerce').fillna(0.0)
-            ops_rapido = _consolidar_operacional(df_ui)
+            ops_rapido = _consolidar_operacional(df_ui, consolidar_cartao=True)
             plano_fluxo = _montar_plano_pagamentos(ops_rapido, ano_selecionado, mes_selecionado)
             _render_fluxo2_ponte(plano_fluxo, ano_selecionado, mes_selecionado)
 
