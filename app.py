@@ -319,6 +319,7 @@ def init_db():
         # is_envelope permanece somente para importar backups antigos; a v2 não o usa.
         "ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS is_envelope INTEGER DEFAULT 0;",
         "ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS is_producao_variavel INTEGER DEFAULT 0;",
+        "ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS modalidade_renda TEXT;",
     ]:
         execute_query(ddl)
 
@@ -1577,10 +1578,57 @@ div[data-testid="stExpander"] { background:rgba(12,25,35,.75)!important;border-c
 """, unsafe_allow_html=True)
 
 
+# Rendas 2.0 — visual premium alinhado ao Planejamento 2.0.
+st.markdown("""
+<style>
+.income2-head { margin:.05rem 0 1.05rem; }
+.income2-title { font-size:2rem;font-weight:760;letter-spacing:-.045em;line-height:1.02;color:#f8fbfc; }
+.income2-sub { margin-top:.34rem;font-size:.86rem;color:#8ba0af; }
+[data-testid="stVerticalBlock"]:has(.income2-period-anchor) [data-baseweb="select"] > div {
+  background:linear-gradient(180deg,#10202c,#0e1b26)!important;border:1px solid rgba(116,151,174,.24)!important;
+  min-height:44px!important;border-radius:13px!important;box-shadow:0 8px 28px rgba(0,0,0,.13);
+}
+[data-testid="stVerticalBlock"]:has(.income2-period-anchor) [data-baseweb="select"] span { color:#eaf3f6!important;font-weight:600!important;font-size:.8rem!important; }
+.income2-kpi { position:relative;overflow:hidden;min-height:138px;padding:1rem 1.05rem;border-radius:17px;border:1px solid rgba(125,151,170,.16);background:linear-gradient(155deg,rgba(18,34,46,.98),rgba(12,24,34,.98));box-shadow:0 12px 30px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.018); }
+.income2-kpi-top { display:flex;align-items:center;gap:.72rem; }
+.income2-kpi-icon { width:43px;height:43px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:1.12rem;font-weight:760; }
+.income2-kpi-icon.green { background:rgba(45,212,191,.15);color:#60ead6;border:1px solid rgba(45,212,191,.14); }
+.income2-kpi-icon.blue { background:rgba(56,189,248,.14);color:#65cef8;border:1px solid rgba(56,189,248,.14); }
+.income2-kpi-icon.amber { background:rgba(251,191,36,.14);color:#ffd064;border:1px solid rgba(251,191,36,.14); }
+.income2-kpi-icon.purple { background:rgba(167,139,250,.14);color:#b9a5ff;border:1px solid rgba(167,139,250,.14); }
+.income2-kpi-label { color:#c9d5dc;font-size:.78rem; }
+.income2-kpi-value { color:#f7fbfc;font-size:1.48rem;font-weight:760;letter-spacing:-.035em;margin-top:.08rem; }
+.income2-kpi-note { margin-top:.72rem;color:#869ba9;font-size:.7rem; }
+.income2-progress { height:8px;border-radius:99px;background:#142532;overflow:hidden;margin-top:.72rem; }
+.income2-progress span { display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#2dd4bf,#5eead4); }
+.income2-progress.amber span { background:linear-gradient(90deg,#f5b84b,#ffd06d); }
+.income2-panel-anchor,.income2-source-anchor { display:block;width:0;height:0;overflow:hidden; }
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.income2-panel-anchor) { border:1px solid rgba(126,153,172,.15)!important;border-radius:17px!important;background:linear-gradient(155deg,rgba(14,28,39,.97),rgba(10,21,30,.98))!important;box-shadow:0 13px 34px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.016)!important;overflow:hidden!important; }
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.income2-panel-anchor) > div { padding:1rem 1.08rem!important; }
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.income2-source-anchor) { border:1px solid rgba(125,153,172,.13)!important;border-radius:14px!important;background:linear-gradient(155deg,rgba(15,30,41,.92),rgba(12,24,34,.96))!important;box-shadow:none!important;margin:.42rem 0!important; }
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.income2-source-anchor) > div { padding:.82rem .9rem!important; }
+.income2-panel-title { font-size:1.02rem;font-weight:730;letter-spacing:-.02em;color:#f2f7f9; }
+.income2-panel-note { font-size:.68rem;color:#768b9a; }
+.income2-source-name { font-size:.96rem;font-weight:720;color:#f1f6f8; }
+.income2-source-meta { margin-top:.18rem;font-size:.72rem;color:#8ca1af; }
+.income2-source-money { font-size:.8rem;color:#c8d6de; }
+.income2-source-money b { font-size:1.05rem;color:#f4f9fa; }
+.income2-badge { display:inline-flex;align-items:center;padding:.25rem .55rem;border-radius:999px;font-size:.64rem;font-weight:700;margin-left:.42rem; }
+.income2-badge.teal { background:rgba(45,212,191,.13);color:#59e4d0; }.income2-badge.blue { background:rgba(56,189,248,.12);color:#6ecdf4; }.income2-badge.amber { background:rgba(251,191,36,.12);color:#ffd069; }.income2-badge.purple { background:rgba(167,139,250,.12);color:#baa8ff; }
+.income2-status { display:inline-flex;padding:.28rem .58rem;border-radius:999px;font-size:.65rem;font-weight:720; }.income2-status.received { background:rgba(57,217,138,.12);color:#65e2a0; }.income2-status.expected { background:rgba(251,191,36,.12);color:#ffd16b; }.income2-status.partial { background:rgba(56,189,248,.12);color:#72d0f5; }
+.income2-timeline-row,.income2-progress-row { display:grid;align-items:center;gap:.7rem;padding:.66rem .05rem;border-top:1px solid rgba(124,151,169,.10); }.income2-timeline-row { grid-template-columns:62px minmax(130px,1fr) 105px 92px; }.income2-progress-row { grid-template-columns:minmax(130px,.9fr) minmax(150px,1.15fr) 150px; }
+.income2-date { color:#c9d6de;font-size:.74rem;font-weight:650; }.income2-name { color:#e9f1f4;font-size:.78rem;font-weight:620;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }.income2-value { color:#f4f8fa;font-size:.78rem;font-weight:720;text-align:right; }
+.income2-mini-bar { height:8px;border-radius:99px;background:#152632;overflow:hidden; }.income2-mini-bar span { display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#2dd4bf,#5eead4); }.income2-mini-values { color:#9db0bc;font-size:.7rem;text-align:right;white-space:nowrap; }
+.income2-special-copy b { color:#eff6f8;font-size:.8rem; }.income2-special-copy span { color:#8095a4;font-size:.68rem;display:block;margin-top:.12rem; }
+@media(max-width:800px){ .income2-title{font-size:1.55rem}.income2-timeline-row{grid-template-columns:54px 1fr auto}.income2-timeline-row .income2-status{display:none}.income2-progress-row{grid-template-columns:1fr auto}.income2-progress-row .income2-mini-bar{grid-column:1/-1;grid-row:2}.income2-mini-values{grid-column:2;grid-row:1} }
+</style>
+""", unsafe_allow_html=True)
+
+
 def _nav_btn(rotulo, key, destino=None, container=None):
     alvo = container if container is not None else st.sidebar
     destino = destino or rotulo
-    ativo = st.session_state.menu_atual == destino
+    ativo = st.session_state.menu_atual == destino or (destino == '💰 Rendas' and st.session_state.menu_atual == '🏥 Escala de Plantões')
     if alvo.button(rotulo, key=key, type="primary" if ativo else "secondary", use_container_width=True):
         st.session_state.menu_atual = destino
         st.rerun()
@@ -1739,7 +1787,7 @@ if "menu_atual" not in st.session_state:
 _nav_btn("🏠 Início", "nav_inicio", "🏠 Início")
 _nav_btn("📋 Fluxo", "nav_fluxo", "📊 Fluxo e Prioridades")
 _nav_btn("💡 Planejamento", "nav_planejamento", "📑 Demonstrativo")
-_nav_btn("💰 Rendas", "nav_rendas", "🏥 Escala de Plantões")
+_nav_btn("💰 Rendas", "nav_rendas", "💰 Rendas")
 _nav_btn("⚙️ Mais", "nav_mais", "⚙️ Mais")
 
 menu = st.session_state.menu_atual
@@ -1749,7 +1797,7 @@ if "sb_ano" not in st.session_state: st.session_state["sb_ano"] = hoje.year
 
 # No Planejamento 2.0 o período fica no cabeçalho, como no layout de produto.
 # Nas demais telas o controle lateral permanece para manter navegação rápida.
-if menu != "📑 Demonstrativo":
+if menu not in ("📑 Demonstrativo", "💰 Rendas"):
     st.sidebar.divider()
     st.sidebar.markdown("<div class='nav-eyebrow'>Período</div>", unsafe_allow_html=True)
     p1, p2, p3 = st.sidebar.columns([1, 3, 1])
@@ -1925,7 +1973,7 @@ def importar_backup(arquivo):
         if problemas:
             raise ValueError('; '.join(problemas[:10]))
 
-        cols_cat = ['id','tipo','categoria','subgrupo','valor_padrao','atraso_meses','dia_pagamento','is_recorrente','data_inicio','is_envelope','is_producao_variavel']
+        cols_cat = ['id','tipo','categoria','subgrupo','valor_padrao','atraso_meses','dia_pagamento','is_recorrente','data_inicio','is_envelope','is_producao_variavel','modalidade_renda']
         cols_lanc = ['id','tipo','categoria','subgrupo','descricao','valor','data_vencimento','parcela_atual','total_parcelas','pago','compra_id','forma_pagamento','prioridade','valor_pago','eh_estimativa','data_competencia','data_pagamento','eh_orcamento','valor_orcamento']
         cols_info = ['compra_id','credor','taxa_juros_mensal']
         cols_reserva = ['id','valor','atualizado_em']
@@ -3382,10 +3430,101 @@ def _render_plan2_divida(row):
     )
 
 
+def _renda_fonte_key(categoria, subgrupo):
+    return (str(categoria or '').strip().casefold(), str(subgrupo or '').strip().casefold())
+
+
+def _renda_fonte_nome(categoria, subgrupo):
+    cat = str(categoria or '').strip(); sub = str(subgrupo or '').strip()
+    return sub or cat or 'Renda'
+
+
+def _renda_modalidade(def_row):
+    if def_row is None: return 'Eventual'
+    explicita = str(def_row.get('modalidade_renda') or '').strip()
+    if explicita in ('Mensal','Variável','Eventual','Plantões'): return explicita
+    if int_seguro(def_row.get('is_producao_variavel')) == 1 or str(def_row.get('categoria') or '').strip().casefold().startswith('plant'): return 'Plantões'
+    if int_seguro(def_row.get('is_recorrente')) == 1: return 'Mensal'
+    if float_seguro(def_row.get('valor_padrao')) > 0: return 'Variável'
+    return 'Eventual'
+
+
+def _rendas_fontes_periodo(df_mes, ano, mes):
+    defs = fetch_dataframe('''
+        SELECT id,tipo,categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento,
+               is_recorrente,data_inicio,is_producao_variavel,modalidade_renda
+        FROM categorias_personalizadas WHERE tipo='Entrada'
+        ORDER BY categoria,subgrupo
+    ''')
+    entradas = df_mes[df_mes['tipo']=='Entrada'].copy() if df_mes is not None and not df_mes.empty else pd.DataFrame()
+    if not entradas.empty:
+        entradas['valor']=pd.to_numeric(entradas['valor'],errors='coerce').fillna(0.0)
+        entradas['valor_pago']=pd.to_numeric(entradas['valor_pago'],errors='coerce').fillna(0.0)
+        entradas['pago']=pd.to_numeric(entradas['pago'],errors='coerce').fillna(0).astype(int)
+        entradas['data_vencimento']=pd.to_datetime(entradas['data_vencimento'],errors='coerce')
+    fontes={}
+    if not defs.empty:
+        for _,r in defs.iterrows():
+            k=_renda_fonte_key(r.get('categoria'),r.get('subgrupo'))
+            fontes[k]={'key':k,'id':int_seguro(r.get('id')) or None,'categoria':str(r.get('categoria') or ''),'subgrupo':str(r.get('subgrupo') or ''),'nome':_renda_fonte_nome(r.get('categoria'),r.get('subgrupo')),'valor_padrao':float_seguro(r.get('valor_padrao')),'dia_pagamento':int_seguro(r.get('dia_pagamento')),'atraso_meses':int_seguro(r.get('atraso_meses')),'is_recorrente':int_seguro(r.get('is_recorrente')),'modalidade_renda':str(r.get('modalidade_renda') or '').strip(),'especializada':((str(r.get('modalidade_renda') or '').strip()=='Plantões') if str(r.get('modalidade_renda') or '').strip() else (int_seguro(r.get('is_producao_variavel'))==1 or str(r.get('categoria') or '').strip().casefold().startswith('plant'))),'data_inicio':r.get('data_inicio'),'def_row':r}
+    if not entradas.empty:
+        for _,r in entradas.iterrows():
+            k=_renda_fonte_key(r.get('categoria'),r.get('subgrupo'))
+            if k not in fontes:
+                fontes[k]={'key':k,'id':None,'categoria':str(r.get('categoria') or ''),'subgrupo':str(r.get('subgrupo') or ''),'nome':_renda_fonte_nome(r.get('categoria'),r.get('subgrupo')),'valor_padrao':0.0,'dia_pagamento':0,'atraso_meses':0,'is_recorrente':0,'modalidade_renda':'','especializada':False,'data_inicio':None,'def_row':None}
+    comp=datetime.date(int(ano),int(mes),1); hist_ini=(pd.Timestamp(comp)-pd.DateOffset(months=6)).date(); hist_fim=(pd.Timestamp(comp)+pd.DateOffset(months=1)).date()
+    hist=fetch_dataframe('''SELECT categoria,subgrupo,valor,valor_pago,pago,data_vencimento FROM lancamentos WHERE tipo='Entrada' AND data_vencimento >= %s AND data_vencimento < %s''',(hist_ini,hist_fim))
+    medias={}
+    if not hist.empty:
+        hist['valor']=pd.to_numeric(hist['valor'],errors='coerce').fillna(0.0); hist['valor_pago']=pd.to_numeric(hist['valor_pago'],errors='coerce').fillna(0.0); hist['pago']=pd.to_numeric(hist['pago'],errors='coerce').fillna(0).astype(int)
+        hist['_mes']=pd.to_datetime(hist['data_vencimento'],errors='coerce').dt.to_period('M').astype(str); hist['_valor_op']=hist.apply(lambda r:float(r['valor_pago']) if int(r['pago'])==1 and float(r['valor_pago'])>0 else float(r['valor']),axis=1); hist['_key']=hist.apply(lambda r:_renda_fonte_key(r.get('categoria'),r.get('subgrupo')),axis=1)
+        by=hist.groupby(['_key','_mes'])['_valor_op'].sum().reset_index()
+        for k,grp in by.groupby('_key'): medias[k]=float(grp['_valor_op'].mean()) if not grp.empty else 0.0
+    saida=[]
+    for k,f in fontes.items():
+        if not entradas.empty:
+            mask=entradas.apply(lambda r:_renda_fonte_key(r.get('categoria'),r.get('subgrupo'))==k,axis=1); grp=entradas[mask].copy()
+        else: grp=pd.DataFrame()
+        esperado=float(grp['valor'].sum()) if not grp.empty else 0.0; realizado=float(grp.loc[grp['pago']==1,'valor_pago'].sum()) if not grp.empty else 0.0; pendente=float(grp.loc[grp['pago']==0,'valor'].sum()) if not grp.empty else 0.0
+        if esperado<=0.004 and f['is_recorrente']==1 and f['valor_padrao']>0:
+            di=pd.to_datetime(f.get('data_inicio'),errors='coerce')
+            if pd.isna(di) or di.date() <= datetime.date(int(ano),int(mes),calendar.monthrange(int(ano),int(mes))[1]): esperado=f['valor_padrao']; pendente=max(esperado-realizado,0.0)
+        prox=None
+        if not grp.empty:
+            fut=grp[grp['pago']==0].sort_values('data_vencimento')
+            if not fut.empty and pd.notna(fut.iloc[0]['data_vencimento']): prox=fut.iloc[0]['data_vencimento'].date()
+        if prox is None and f['dia_pagamento']>0 and pendente>0.004: prox=datetime.date(int(ano),int(mes),min(f['dia_pagamento'],calendar.monthrange(int(ano),int(mes))[1]))
+        media=medias.get(k,0.0) or f['valor_padrao'] or esperado; modalidade=_renda_modalidade(f['def_row']); modalidade='Plantões' if f['especializada'] else modalidade
+        f.update({'esperado':round(esperado,2),'realizado':round(realizado,2),'pendente':round(pendente,2),'media':round(float(media),2),'proxima_data':prox,'modalidade':modalidade}); saida.append(f)
+    saida.sort(key=lambda x:(x['proxima_data'] or datetime.date.max,-x['esperado'],x['nome'].casefold()))
+    return saida
+
+
+def _rendas_recebimentos_janela(ano, mes):
+    ini=datetime.date(int(ano),int(mes),1); fim=(pd.Timestamp(ini)+pd.DateOffset(months=1)).date()+datetime.timedelta(days=15)
+    df=fetch_dataframe('''SELECT * FROM lancamentos WHERE tipo='Entrada' AND data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento,id''',(ini,fim))
+    if df.empty: return []
+    df['valor']=pd.to_numeric(df['valor'],errors='coerce').fillna(0.0); df['valor_pago']=pd.to_numeric(df['valor_pago'],errors='coerce').fillna(0.0); df['pago']=pd.to_numeric(df['pago'],errors='coerce').fillna(0).astype(int); df['data_vencimento']=pd.to_datetime(df['data_vencimento'],errors='coerce')
+    df['_key']=df.apply(lambda r:_renda_fonte_key(r.get('categoria'),r.get('subgrupo')),axis=1); df['_nome']=df.apply(lambda r:_renda_fonte_nome(r.get('categoria'),r.get('subgrupo')),axis=1)
+    rows=[]
+    for (k,dt),grp in df.groupby(['_key','data_vencimento'],dropna=False):
+        if pd.isna(dt): continue
+        pagos=int(grp['pago'].sum()); total=len(grp)
+        if pagos==total: status='Recebido'; valor=float(grp['valor_pago'].sum()); classe='received'
+        elif pagos>0: status='Parcial'; valor=float(grp['valor_pago'].sum()+grp.loc[grp['pago']==0,'valor'].sum()); classe='partial'
+        else: status='Previsto'; valor=float(grp['valor'].sum()); classe='expected'
+        rows.append({'data':pd.to_datetime(dt).date(),'nome':str(grp.iloc[0]['_nome']),'valor':valor,'status':status,'classe':classe})
+    rows.sort(key=lambda x:x['data']); return rows
+
+
+def _renda_badge_class(modalidade):
+    return {'Plantões':'blue','Mensal':'purple','Variável':'teal','Eventual':'amber'}.get(modalidade,'teal')
+
+
 if st.session_state.get('wizard_ativo'):
     renderizar_wizard_configuracao()
 
-# Build UX 2.0: ui-refino-planejamento-v16
+# Build UX 2.0: rendas-v2-v17
 # -----------------------------------------------------------------
 # INÍCIO
 # -----------------------------------------------------------------
@@ -4338,13 +4477,100 @@ elif menu == "💳 Dívidas":
                     execute_query("INSERT INTO info_dividas (compra_id,credor,taxa_juros_mensal) VALUES (%s,%s,%s) ON CONFLICT (compra_id) DO UPDATE SET credor=EXCLUDED.credor,taxa_juros_mensal=EXCLUDED.taxa_juros_mensal",(sel,cred.strip() or None,taxa if taxa>0 else None)); flash('success','Informações salvas.'); st.rerun()
 
 # -----------------------------------------------------------------
-# PLANTÕES
+# RENDAS 2.0
+# -----------------------------------------------------------------
+elif menu == "💰 Rendas":
+    rh1,rh2=st.columns([4.7,1.35],vertical_alignment='top')
+    with rh1:
+        st.markdown("<div class='income2-head'><div class='income2-title'>Rendas</div><div class='income2-sub'>Veja de onde vem seu dinheiro, quanto já entrou e o que ainda está previsto.</div></div>",unsafe_allow_html=True)
+    with rh2:
+        st.markdown("<span class='income2-period-anchor'></span>",unsafe_allow_html=True)
+        periodos_renda=[(a,m) for a in range(hoje.year-3,hoje.year+6) for m in range(1,13)]; atual=(ano_selecionado,mes_selecionado)
+        if st.session_state.get('income2_period_picker') not in periodos_renda: st.session_state['income2_period_picker']=atual
+        if st.session_state.get('_income2_last_period') != atual: st.session_state['income2_period_picker']=atual; st.session_state['_income2_last_period']=atual
+        novo=st.selectbox('Período',periodos_renda,format_func=lambda x:f"▣  {meses[x[1]-1]} de {x[0]}",key='income2_period_picker',label_visibility='collapsed')
+        if novo != atual: st.session_state['sb_ano'],st.session_state['sb_mes']=int(novo[0]),int(novo[1]); st.session_state['_income2_last_period']=novo; st.rerun()
+
+    df_rendas_mes=_dados_mes(); fontes=_rendas_fontes_periodo(df_rendas_mes,ano_selecionado,mes_selecionado); recebimentos=_rendas_recebimentos_janela(ano_selecionado,mes_selecionado)
+    esperado=sum(f['esperado'] for f in fontes); recebido=sum(f['realizado'] for f in fontes); previsto=sum(f['pendente'] for f in fontes); nfontes=len(fontes)
+    pct_receb=(recebido/esperado*100) if esperado>0 else (100 if recebido>0 else 0); pct_prev=(previsto/esperado*100) if esperado>0 else 0
+    kc=st.columns(4); kpis=[('↗','green','Esperado no mês',f"R$ {format_brl(esperado)}",'Total previsto de todas as fontes',None),('▣','blue','Recebido até agora',f"R$ {format_brl(recebido)}",f"{pct_receb:.0f}% do esperado",pct_receb),('◷','amber','Ainda previsto',f"R$ {format_brl(previsto)}",f"{pct_prev:.0f}% do esperado",pct_prev),('◇','purple','Fontes ativas',str(nfontes),'Fontes de renda cadastradas',None)]
+    for col,(ico,cor,rot,val,nota,pct) in zip(kc,kpis):
+        with col:
+            prog='' if pct is None else f"<div class='income2-progress {'amber' if cor=='amber' else ''}'><span style='width:{min(max(pct,0),100):.1f}%'></span></div>"
+            st.markdown(f"<div class='income2-kpi'><div class='income2-kpi-top'><div class='income2-kpi-icon {cor}'>{ico}</div><div><div class='income2-kpi-label'>{rot}</div><div class='income2-kpi-value'>{val}</div></div></div>{prog}<div class='income2-kpi-note'>{nota}</div></div>",unsafe_allow_html=True)
+
+    left,right=st.columns([1.45,1],gap='medium')
+    with left:
+        with st.container(border=True):
+            st.markdown("<span class='income2-panel-anchor'></span>",unsafe_allow_html=True); h1,h2=st.columns([3,1.15],vertical_alignment='center')
+            h1.markdown("<div class='income2-panel-title'>Fontes de renda</div><div class='income2-panel-note'>Uma visão simples das origens do seu dinheiro.</div>",unsafe_allow_html=True)
+            if h2.button('＋ Adicionar fonte',key='income2_add_btn',use_container_width=True): st.session_state['income2_add_open']=not st.session_state.get('income2_add_open',False)
+            if st.session_state.get('income2_add_open'):
+                with st.form('income2_add_form',clear_on_submit=False):
+                    a1,a2=st.columns([1.6,1]); nome=a1.text_input('Nome da fonte',placeholder='Ex.: Consultório, Hospital Help'); modalidade=a2.selectbox('Tipo',['Mensal','Variável','Eventual','Plantões'])
+                    b1,b2,b3=st.columns(3); valor=b1.number_input('Valor esperado/médio',min_value=0.0,step=100.0,format='%.2f'); dia=b2.number_input('Dia de recebimento',min_value=1,max_value=31,value=10); atraso=b3.number_input('Meses até receber',min_value=0,max_value=6,value=1 if modalidade=='Plantões' else 0)
+                    if st.form_submit_button('Salvar fonte',type='primary',use_container_width=True):
+                        if not nome.strip(): st.error('Informe um nome para a fonte.')
+                        else:
+                            cat='Plantões' if modalidade=='Plantões' else 'Rendas'; rec=1 if modalidade in ('Mensal','Variável') and valor>0 else 0; especial=1 if modalidade=='Plantões' else 0
+                            execute_query('''INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento,is_recorrente,data_inicio,is_producao_variavel,modalidade_renda) VALUES ('Entrada',%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',(cat,nome.strip(),valor if valor>0 else None,int(atraso),int(dia),rec,datetime.date(ano_selecionado,mes_selecionado,1),especial,modalidade))
+                            invalidar_caches_estruturais(); st.session_state.pop(f"rec_processado_{mes_selecionado}_{ano_selecionado}",None); st.session_state['income2_add_open']=False; flash('success','Fonte de renda adicionada.'); st.rerun()
+            if not fontes: st.markdown("<div class='plan2-empty-inline'>Nenhuma fonte cadastrada. Adicione a primeira para organizar seus recebimentos.</div>",unsafe_allow_html=True)
+            for idx,f in enumerate(fontes):
+                with st.container(border=True):
+                    st.markdown("<span class='income2-source-anchor'></span>",unsafe_allow_html=True); c1,c2,c3=st.columns([3.1,1.5,.95],vertical_alignment='center'); badge=_renda_badge_class(f['modalidade'])
+                    c1.markdown(f"<div class='income2-source-name'>{html.escape(f['nome'])}<span class='income2-badge {badge}'>{html.escape(f['modalidade'])}</span></div><div class='income2-source-money'>Média <b>R$ {format_brl(f['media'])}</b></div>"+(f"<div class='income2-source-meta'>▣ Normalmente recebe dia {f['dia_pagamento']}</div>" if f['dia_pagamento'] else "<div class='income2-source-meta'>Sem recorrência fixa</div>"),unsafe_allow_html=True)
+                    prox=f['proxima_data'].strftime('%d/%m') if f['proxima_data'] else '—'; sit='Previsto' if f['pendente']>0.004 else ('Recebido' if f['realizado']>0.004 else 'Sem previsão'); c2.markdown(f"<div class='income2-source-meta'>Próximo recebimento</div><div class='income2-source-money'><b>{prox}</b></div><div class='income2-source-meta'>{sit} · R$ {format_brl(f['pendente'] if f['pendente']>0.004 else f['realizado'])}</div>",unsafe_allow_html=True)
+                    if f['especializada']:
+                        if c3.button('Plantões ›',key=f"income2_plant_{idx}",use_container_width=True): st.session_state['rendas_fonte_filtro']=f['nome']; st.session_state.menu_atual='🏥 Escala de Plantões'; st.rerun()
+                    elif f['id'] and c3.button('Editar ›',key=f"income2_edit_{idx}",use_container_width=True): st.session_state['income2_edit_id']=f['id']; st.rerun()
+                    elif f['pendente']>0.004: c3.markdown("<div style='text-align:right'><span class='income2-status expected'>Previsto</span></div>",unsafe_allow_html=True)
+                    else: c3.markdown("<div style='text-align:right'><span class='income2-status received'>Recebido</span></div>",unsafe_allow_html=True)
+            edit_id=st.session_state.get('income2_edit_id')
+            if edit_id:
+                alvo=next((f for f in fontes if f.get('id')==edit_id),None)
+                if alvo:
+                    with st.expander(f"Editar {alvo['nome']}",expanded=True):
+                        with st.form('income2_edit_form'):
+                            e1,e2=st.columns(2); ev=e1.number_input('Valor esperado/médio',min_value=0.0,value=float(alvo['valor_padrao'] or 0),step=100.0,format='%.2f'); ed=e2.number_input('Dia de recebimento',min_value=1,max_value=31,value=int(alvo['dia_pagamento'] or 10))
+                            if st.form_submit_button('Salvar alterações',type='primary'):
+                                execute_query('UPDATE categorias_personalizadas SET valor_padrao=%s,dia_pagamento=%s WHERE id=%s',(ev if ev>0 else None,int(ed),int(edit_id))); invalidar_caches_estruturais(); st.session_state.pop('income2_edit_id',None); flash('success','Fonte atualizada.'); st.rerun()
+
+    with right:
+        with st.container(border=True):
+            st.markdown("<span class='income2-panel-anchor'></span><div class='income2-panel-title'>Próximos recebimentos</div><div class='income2-panel-note'>O mês selecionado e os primeiros dias do próximo.</div>",unsafe_allow_html=True)
+            if not recebimentos: st.markdown("<div class='plan2-empty-inline'>Nenhum recebimento previsto neste período.</div>",unsafe_allow_html=True)
+            for r in recebimentos[:6]: st.markdown(f"<div class='income2-timeline-row'><div class='income2-date'>{r['data'].strftime('%d/%m')}</div><div class='income2-name'>{html.escape(r['nome'])}</div><div class='income2-value'>R$ {format_brl(r['valor'])}</div><div><span class='income2-status {r['classe']}'>{r['status']}</span></div></div>",unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("<span class='income2-panel-anchor'></span><div class='income2-panel-title'>Visão por fonte</div><div class='income2-panel-note'>Quanto do esperado já foi recebido.</div>",unsafe_allow_html=True)
+            for f in sorted(fontes,key=lambda x:x['esperado'],reverse=True)[:6]:
+                pct=(f['realizado']/f['esperado']*100) if f['esperado']>0 else (100 if f['realizado']>0 else 0); st.markdown(f"<div class='income2-progress-row'><div class='income2-name'>{html.escape(f['nome'])}</div><div class='income2-mini-bar'><span style='width:{min(max(pct,0),100):.1f}%'></span></div><div class='income2-mini-values'><b>R$ {format_brl(f['realizado'])}</b> de R$ {format_brl(f['esperado'])}</div></div>",unsafe_allow_html=True)
+
+    especiais=[f for f in fontes if f['especializada']]
+    with st.container(border=True):
+        st.markdown("<span class='income2-panel-anchor'></span><div class='income2-panel-title'>Modo especializado</div><div class='income2-panel-note'>Recursos extras para fontes específicas, como escala, produção e previsão de pagamento.</div>",unsafe_allow_html=True)
+        if not especiais: st.markdown("<div class='plan2-empty-inline'>Nenhuma fonte usa modo especializado. Você pode ativá-lo ao editar uma fonte.</div>",unsafe_allow_html=True)
+        for i,f in enumerate(especiais):
+            x1,x2=st.columns([4.8,1.2],vertical_alignment='center'); x1.markdown(f"<div class='income2-special-copy'><b>{html.escape(f['nome'])}</b><span>Plantões ativos · gestão de escala e produção disponível</span></div>",unsafe_allow_html=True)
+            if x2.button('Gerenciar ›',key=f'income2_special_{i}',use_container_width=True): st.session_state['rendas_fonte_filtro']=f['nome']; st.session_state.menu_atual='🏥 Escala de Plantões'; st.rerun()
+
+# -----------------------------------------------------------------
+# PLANTÕES — modo especializado de Rendas
 # -----------------------------------------------------------------
 elif menu == "🏥 Escala de Plantões":
-    cabecalho_pagina("🏥 Plantões", "Escala para consultar; cadastro, produção e manutenção em espaços separados.", "plantoes")
+    top_back,top_title=st.columns([1.1,4.9],vertical_alignment="center")
+    if top_back.button("← Rendas",key="back_rendas_v2",use_container_width=True): st.session_state.pop("rendas_fonte_filtro",None); st.session_state.menu_atual="💰 Rendas"; st.rerun()
+    with top_title: st.markdown("<div class='income2-title' style='font-size:1.55rem'>Gestão de plantões</div><div class='income2-sub'>Modo especializado para escala, produção e previsão de pagamento.</div>",unsafe_allow_html=True)
+    render_periodo_topo("plantoes")
     tab_cal,tab_add,tab_prod,tab_ger=st.tabs(["📅 Escala","➕ Adicionar","📊 Produção","⚙️ Gerenciar"])
     df_t=fetch_dataframe("SELECT * FROM lancamentos WHERE tipo='Entrada' AND descricao LIKE 'Plantão %'")
-    if not df_t.empty: df_t['d_p']=pd.to_datetime(df_t['data_competencia'].fillna(df_t['data_vencimento']),errors='coerce').dt.date
+    fonte_especial=st.session_state.get('rendas_fonte_filtro')
+    if not df_t.empty:
+        df_t['d_p']=pd.to_datetime(df_t['data_competencia'].fillna(df_t['data_vencimento']),errors='coerce').dt.date
+        if fonte_especial:
+            df_t=df_t[df_t['subgrupo'].fillna('').astype(str)==str(fonte_especial)].copy()
+            st.caption(f"Fonte ativa: {fonte_especial}")
     with tab_cal:
         c1,c2=st.columns(2); cal_mes=c1.selectbox('Mês',range(1,13),format_func=lambda x:meses[x-1],index=mes_selecionado-1,key='plant_cal_mes'); anos_cal=list(range(hoje.year-2,hoje.year+4)); cal_ano=c2.selectbox('Ano',anos_cal,index=anos_cal.index(ano_selecionado) if ano_selecionado in anos_cal else 2,key='plant_cal_ano')
         dm=df_t[(pd.to_datetime(df_t['d_p']).dt.month==cal_mes)&(pd.to_datetime(df_t['d_p']).dt.year==cal_ano)].copy() if not df_t.empty else pd.DataFrame()
@@ -4362,10 +4588,10 @@ elif menu == "🏥 Escala de Plantões":
                 st.markdown(f"<div class='ux-row'>🏥 <b>{r['subgrupo']}</b> · R$ {format_brl(r['valor'])} · recebe {pd.to_datetime(r['data_vencimento']).strftime('%d/%m')}</div>",unsafe_allow_html=True)
     with tab_add:
         modo=st.radio('Modo',['Dia específico','Plantões fixos na semana'],horizontal=True)
-        locais=sorted(set([x for subs in ESTRUTURA.get('Entrada',{}).values() for x in subs]))
-        if not locais: st.warning('Cadastre primeiro um local de plantão em Categorias e Automações.')
+        defs_plant=fetch_dataframe("SELECT subgrupo FROM categorias_personalizadas WHERE tipo='Entrada' AND (COALESCE(is_producao_variavel,0)=1 OR LOWER(COALESCE(categoria,'')) LIKE 'plant%') AND COALESCE(subgrupo,'')<>'' ORDER BY subgrupo"); locais=sorted(defs_plant['subgrupo'].dropna().astype(str).unique().tolist()) if not defs_plant.empty else []
+        if not locais: st.warning('Ative o modo Plantões em uma fonte de renda antes de cadastrar a escala.')
         else:
-            loc=st.selectbox('Local',locais); defaults={'v':1000.0,'m':1,'d':10}; res=fetch_dataframe("SELECT valor_padrao,atraso_meses,dia_pagamento FROM categorias_personalizadas WHERE subgrupo=%s AND tipo='Entrada' LIMIT 1",(loc,))
+            loc_default=locais.index(fonte_especial) if fonte_especial in locais else 0; loc=st.selectbox('Local',locais,index=loc_default); defaults={'v':1000.0,'m':1,'d':10}; res=fetch_dataframe("SELECT valor_padrao,atraso_meses,dia_pagamento FROM categorias_personalizadas WHERE subgrupo=%s AND tipo='Entrada' LIMIT 1",(loc,))
             if not res.empty:
                 if pd.notna(res.iloc[0]['valor_padrao']): defaults['v']=float(res.iloc[0]['valor_padrao'])
                 if pd.notna(res.iloc[0]['atraso_meses']): defaults['m']=int(res.iloc[0]['atraso_meses'])
@@ -4402,7 +4628,7 @@ elif menu == "🏥 Escala de Plantões":
                     imp=pd.read_csv(arq); imp.columns=[c.strip().lower() for c in imp.columns]; cd=next((c for c in imp if c in ('data','data_plantao','date')),None); cl=next((c for c in imp if c in ('local','hospital','subgrupo')),None); cv=next((c for c in imp if c in ('valor','value')),None)
                     if not cd or not cl: st.error("O CSV precisa de 'data' e 'local'.")
                     else:
-                        defs=fetch_dataframe("SELECT categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento FROM categorias_personalizadas WHERE tipo='Entrada'"); exist=set(df_t['descricao'].tolist()) if not df_t.empty else set(); novos=[]; problemas=[]
+                        defs=fetch_dataframe("SELECT categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento FROM categorias_personalizadas WHERE tipo='Entrada' AND (COALESCE(is_producao_variavel,0)=1 OR LOWER(COALESCE(categoria,'')) LIKE 'plant%')"); exist=set(df_t['descricao'].tolist()) if not df_t.empty else set(); novos=[]; problemas=[]
                         for _,r in imp.iterrows():
                             try: dt=pd.to_datetime(str(r[cd]).strip(),format='%d/%m/%Y').date()
                             except: problemas.append(str(r[cd])); continue
