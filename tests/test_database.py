@@ -112,7 +112,9 @@ def test_reverse_preserves_audit_for_payment_and_receipt(db):
             cur.execute("""SELECT anterior->>'valor_pago',posterior->>'pago' FROM auditoria
                 WHERE anterior->>'id'=%s AND anterior->>'pago'='1'
                 AND posterior->>'pago'='0'""",(str(i),))
-            assert cur.fetchone()==('90.00','0')
+            audit_value, audit_state = cur.fetchone()
+            assert Decimal(audit_value) == Decimal('90.00')
+            assert audit_state == '0'
             cur.execute('SELECT count(*) FROM auditoria')
             count=cur.fetchone()[0]
             reverse(cur,[i])
