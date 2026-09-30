@@ -1,5 +1,5 @@
 import streamlit as st
-APP_BUILD = "rendas-tipos-especializado-v20"
+APP_BUILD = "onboarding-v2-v21"
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
@@ -2026,7 +2026,7 @@ inicio_periodo, fim_periodo = limites_mes(mes_selecionado, ano_selecionado)
 exibir_flash()
 
 # =================================================================
-# 7B. ASSISTENTE DE CONFIGURAÇÃO — ONBOARDING GUIADO
+# 7B. ONBOARDING 2.0 — 3 PASSOS, PROGRESSIVO E SEM BUROCRACIA
 # =================================================================
 if 'wizard_ativo' not in st.session_state:
     try:
@@ -2039,243 +2039,235 @@ if 'wizard_ativo' not in st.session_state:
             raise RuntimeError("Não foi possível confirmar o cadastro de categorias.")
         n_categorias_existentes = int(df_check_categorias.iloc[0]['n'])
     except Exception:
-        st.error("Não foi possível verificar sua configuração porque o banco ficou indisponível. O assistente não será aberto automaticamente.")
+        st.error("Não foi possível verificar sua configuração porque o banco ficou indisponível. O onboarding não será aberto automaticamente.")
         if st.button("🔄 Reconectar ao banco", key="retry_onboarding_db"):
             _fechar_pool_atual()
             st.rerun()
         st.stop()
     st.session_state['wizard_ativo'] = (n_categorias_existentes == 0)
-    st.session_state['wizard_passo'] = 0
+    st.session_state['wizard_passo'] = 1
 
-if 'wizard_orcamentos' not in st.session_state and 'wizard_envelopes' in st.session_state:
+if 'wizard_rendas' not in st.session_state:
+    st.session_state['wizard_rendas'] = []
+    for h in list(st.session_state.get('wizard_hospitais') or []):
+        st.session_state['wizard_rendas'].append({
+            'modelo': 'Hospital', 'nome': str(h.get('nome') or '').strip(), 'valor': 0.0,
+            'dia_recebimento': int_seguro(h.get('dia_pagamento'), 10),
+            'modalidade': 'Variável', 'plantoes': True,
+        })
+if 'wizard_contas' not in st.session_state:
+    st.session_state['wizard_contas'] = []
+    for f in list(st.session_state.get('wizard_fixas') or []):
+        st.session_state['wizard_contas'].append({
+            'tipo_conta': 'Outro', 'nome': str(f.get('nome') or '').strip(),
+            'valor': float_seguro(f.get('valor')), 'dia_vencimento': int_seguro(f.get('dia_vencimento'), 5),
+        })
+if 'wizard_orcamentos' not in st.session_state:
     st.session_state['wizard_orcamentos'] = list(st.session_state.get('wizard_envelopes') or [])
-for _chave in ['wizard_hospitais', 'wizard_fixas', 'wizard_orcamentos', 'wizard_dividas']:
-    if _chave not in st.session_state:
-        st.session_state[_chave] = []
 
-MAPA_ATRASO_AMIGAVEL = {"Paga no mesmo mês": 0, "Paga 1 mês depois": 1, "Paga 2 meses depois": 2, "Paga 3 meses depois": 3}
-
-
-def _wizard_intro():
-    st.header("🧙 Vamos preparar seu controle financeiro")
-    st.markdown("Em cinco etapas rápidas vamos cadastrar o essencial para o app trabalhar por você.")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("""
-        <div class='ux-card'>
-          <b>1. 🏥 Receitas e hospitais</b><br><span class='ux-muted'>Onde você trabalha e quando recebe.</span><br><br>
-          <b>2. 🏠 Despesas fixas</b><br><span class='ux-muted'>Contas que se repetem todo mês.</span>
-        </div>""", unsafe_allow_html=True)
-    with c2:
-        st.markdown("""
-        <div class='ux-card'>
-          <b>3. 💳 Dívidas</b><br><span class='ux-muted'>Parcelas que ainda faltam pagar.</span><br><br>
-          <b>4. 🎯 Orçamentos por categoria</b><br><span class='ux-muted'>Mercado, lazer, transporte e outros planos mensais.</span>
-        </div>""", unsafe_allow_html=True)
-    st.markdown("<div class='ux-muted'>5. Revisamos tudo antes de salvar.</div>", unsafe_allow_html=True)
-    c_skip, c_go = st.columns([1, 2])
-    if c_skip.button("Pular por enquanto", key="wizard_intro_skip", use_container_width=True):
-        st.session_state['wizard_ativo'] = False
-        st.rerun()
-    if c_go.button("Começar configuração →", type="primary", key="wizard_intro_go", use_container_width=True):
-        st.session_state['wizard_passo'] = 1
-        st.rerun()
+_WIZ_RENDA_MODELOS = ['Salário', 'Consultório', 'Hospital', 'Comissão', 'Freelance', 'Aluguel recebido', 'Outro']
+_WIZ_CONTAS_MODELOS = ['Moradia', 'Energia', 'Internet', 'Escola', 'Plano de saúde', 'Cartão', 'Financiamento', 'Outro']
+_WIZ_ORCAMENTOS_MODELOS = ['Mercado', 'Lazer', 'Transporte', 'Farmácia', 'Cuidados pessoais', 'Pets', 'Outro']
 
 
-def _wizard_cabecalho(passo_atual, titulo):
-    st.header("🧙 Configuração inicial")
-    st.progress(passo_atual / 5)
-    st.caption(f"Passo {passo_atual} de 5")
-    if st.button("✖️ Sair do assistente", key=f"wizard_sair_{passo_atual}"):
-        st.session_state['wizard_ativo'] = False
-        st.rerun()
-    st.divider()
-    st.subheader(titulo)
+def _wizard_css_v2():
+    st.markdown(r'''
+    <style>
+    .onb-hero { margin:.15rem 0 1.35rem 0; }
+    .onb-title { font-size:clamp(2rem,3.5vw,3.05rem); font-weight:800; letter-spacing:-.045em; line-height:1.02; color:#f5f8fb; }
+    .onb-sub { margin-top:.45rem; color:#9aaabc; font-size:1.02rem; }
+    .onb-steps { display:grid; grid-template-columns:1fr 1fr 1fr; gap:.65rem; margin:.55rem 0 1.15rem 0; }
+    .onb-step { display:flex; gap:.7rem; align-items:center; border-bottom:2px solid #263747; padding:.3rem .15rem .7rem; color:#75879a; }
+    .onb-step.active { color:#f5f8fb; border-color:#16d8cf; }
+    .onb-step.done { color:#96b7b5; border-color:#287f7b; }
+    .onb-step-num { width:2.15rem; height:2.15rem; border-radius:50%; border:1px solid #41566a; display:flex; align-items:center; justify-content:center; font-weight:800; flex:none; }
+    .onb-step.active .onb-step-num { background:rgba(22,216,207,.13); border-color:#16d8cf; color:#38eee3; box-shadow:0 0 0 4px rgba(22,216,207,.06); }
+    .onb-step.done .onb-step-num { background:rgba(22,216,207,.08); border-color:#287f7b; }
+    .onb-step-label { font-weight:750; font-size:.98rem; line-height:1.1; }
+    .onb-step-note { font-size:.78rem; color:#718497; margin-top:.18rem; }
+    .onb-card-title { font-size:1.55rem; font-weight:800; letter-spacing:-.025em; color:#f4f7fb; }
+    .onb-card-sub { color:#91a4b7; margin:.2rem 0 .9rem; }
+    .onb-help { background:linear-gradient(150deg,rgba(12,35,49,.96),rgba(9,23,34,.95)); border:1px solid rgba(67,106,131,.35); border-radius:18px; padding:1.1rem 1.15rem; margin-bottom:.75rem; }
+    .onb-help-title { font-weight:800; font-size:1.08rem; color:#eef7fb; margin-bottom:.7rem; }
+    .onb-benefit { display:flex; gap:.7rem; padding:.72rem 0; border-top:1px solid rgba(92,119,137,.18); }
+    .onb-benefit:first-of-type { border-top:0; }
+    .onb-benefit-ico { width:2.15rem;height:2.15rem;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(18,207,194,.12);color:#35e1d7;font-size:1.05rem;flex:none; }
+    .onb-benefit b { color:#edf5f8; font-size:.9rem; }
+    .onb-benefit span { color:#8295a8; font-size:.78rem; display:block; margin-top:.1rem; }
+    .onb-pending { background:#0b151e;border:1px solid rgba(83,111,129,.33);border-radius:14px;padding:.65rem .8rem;margin:.35rem 0;display:flex;justify-content:space-between;gap:.8rem;align-items:center; }
+    .onb-pending-name { color:#ecf3f7;font-weight:700; }
+    .onb-pending-meta { color:#7e91a3;font-size:.78rem;margin-top:.12rem; }
+    .onb-footer-note { text-align:center;color:#6f8396;font-size:.78rem;padding-top:.5rem; }
+    .onb-finish { text-align:center;padding:1.5rem .8rem; }
+    .onb-finish-icon { width:4rem;height:4rem;margin:0 auto .8rem;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(22,216,207,.14);border:1px solid rgba(22,216,207,.38);font-size:1.65rem; }
+    .onb-side-active { margin:.65rem 0 .45rem;padding:.7rem .75rem;border-radius:12px;background:linear-gradient(110deg,rgba(18,207,194,.2),rgba(13,81,91,.32));border:1px solid rgba(22,216,207,.32);color:#eafcfa;font-weight:800; }
+    .onb-side-note { color:#73889b;font-size:.78rem;line-height:1.45;padding:.1rem .2rem; }
+    /* Durante o onboarding a navegação normal sai de cena: menos escolhas, menos ruído. */
+    section[data-testid="stSidebar"] div[data-testid="stButton"],
+    section[data-testid="stSidebar"] details,
+    section[data-testid="stSidebar"] .nav-eyebrow,
+    section[data-testid="stSidebar"] .sidebar-period { display:none !important; }
+    div[data-testid="stForm"] { border:1px solid rgba(80,109,128,.34) !important; border-radius:18px !important; padding:1rem 1rem .35rem !important; background:linear-gradient(160deg,rgba(15,28,39,.9),rgba(10,21,31,.82)) !important; }
+    @media (max-width: 760px) {
+      .onb-steps { grid-template-columns:1fr; gap:.1rem; }
+      .onb-step { padding:.35rem .1rem; border-bottom:0; }
+      .onb-step:not(.active) .onb-step-note { display:none; }
+      .onb-title { font-size:2rem; }
+    }
+    </style>
+    ''', unsafe_allow_html=True)
 
 
-def _wizard_lista_com_remover(lista, chave_sessao, formatar_linha):
+def _wizard_progress_v2(passo):
+    passos = [(1,'Rendas','De onde vem seu dinheiro'),(2,'Contas','O que você precisa pagar'),(3,'Orçamentos','Defina seus limites')]
+    blocos=[]
+    for n,titulo,nota in passos:
+        cls='active' if n==passo else ('done' if n<passo else '')
+        blocos.append(f"<div class='onb-step {cls}'><div class='onb-step-num'>{'✓' if n<passo else n}</div><div><div class='onb-step-label'>{titulo}</div><div class='onb-step-note'>{nota}</div></div></div>")
+    st.markdown("<div class='onb-steps'>"+''.join(blocos)+"</div>",unsafe_allow_html=True)
+
+
+def _wizard_help_v2(passo):
+    if passo==1:
+        titulo='Como isso vai ajudar'; itens=[('▣','Organiza entradas por data','Você vê exatamente quando o dinheiro deve entrar.'),('↔','Relaciona contas com rendas','O app mostra se suas contas estão cobertas pelas entradas.'),('◫','Antecipa conflitos','Você vê o que vence antes da próxima entrada.')]
+    elif passo==2:
+        titulo='Comece pelo que pesa'; itens=[('⌂','Cadastre só as principais contas','Você pode completar despesas menores depois.'),('◷','Informe o vencimento','Isso permite organizar cada conta com a renda certa.'),('↻','O app repete por você','Contas mensais são criadas automaticamente nos próximos meses.')]
+    else:
+        titulo='Planeje sem complicar'; itens=[('◎','Orçamento não é uma conta','Ele serve como referência para acompanhar seus gastos.'),('↗','Realizado atualiza sozinho','Conforme você paga despesas, o uso da categoria aumenta.'),('✓','Esta etapa é opcional','Você pode começar sem definir nenhum orçamento.')]
+    itens_html=''.join(f"<div class='onb-benefit'><div class='onb-benefit-ico'>{ico}</div><div><b>{html.escape(t)}</b><span>{html.escape(n)}</span></div></div>" for ico,t,n in itens)
+    st.markdown(f"<div class='onb-help'><div class='onb-help-title'>{titulo}</div>{itens_html}</div>",unsafe_allow_html=True)
+
+
+def _wizard_lista_v2(lista,chave,render):
     if not lista:
-        st.caption("Nada adicionado ainda.")
+        st.caption('Nada adicionado ainda. Você pode continuar e completar depois.')
         return
-    for i, item in enumerate(lista):
-        c_txt, c_del = st.columns([5, 1])
-        c_txt.write(formatar_linha(item))
-        if c_del.button("🗑️", key=f"{chave_sessao}_del_{i}"):
-            lista.pop(i)
-            st.rerun()
+    for i,item in enumerate(list(lista)):
+        c1,c2=st.columns([8,1])
+        nome,meta=render(item)
+        c1.markdown(f"<div class='onb-pending'><div><div class='onb-pending-name'>{html.escape(nome)}</div><div class='onb-pending-meta'>{html.escape(meta)}</div></div></div>",unsafe_allow_html=True)
+        if c2.button('×',key=f'{chave}_remove_{i}',help='Remover',use_container_width=True):
+            st.session_state[chave].pop(i); st.rerun()
 
 
-def _wizard_navegacao(passo_atual, texto_avancar="Próximo →"):
-    st.divider()
-    c_voltar, c_avancar = st.columns(2)
-    if c_voltar.button("← Voltar", key=f"wizard_voltar_{passo_atual}", use_container_width=True):
-        st.session_state['wizard_passo'] = passo_atual - 1
-        st.rerun()
-    if c_avancar.button(texto_avancar, type="primary", key=f"wizard_avancar_{passo_atual}", use_container_width=True):
-        st.session_state['wizard_passo'] = passo_atual + 1
-        st.rerun()
+def _wizard_categoria_conta(tipo_conta):
+    if tipo_conta in ('Moradia','Energia','Escola','Plano de saúde'): return 'Despesas Essenciais'
+    return 'Despesas Recorrentes'
 
 
-def _wizard_passo1_hospitais():
-    _wizard_cabecalho(1, "🏥 Onde você faz plantão?")
-    st.caption("Para cada local, informe quando o pagamento costuma cair.")
-    with st.form("wizard_form_hospital", clear_on_submit=True):
-        c1, c2, c3 = st.columns([2, 1.4, 1])
-        nome = c1.text_input("Hospital/local")
-        atraso_label = c2.selectbox("Quando paga?", list(MAPA_ATRASO_AMIGAVEL.keys()), index=1)
-        dia_pgto = c3.number_input("Dia", min_value=1, max_value=31, value=10)
-        if st.form_submit_button("＋ Adicionar local") and nome.strip():
-            st.session_state['wizard_hospitais'].append({
-                "nome": nome.strip(), "atraso_meses": MAPA_ATRASO_AMIGAVEL[atraso_label],
-                "dia_pagamento": int(dia_pgto), "atraso_label": atraso_label
-            })
-            st.rerun()
-    _wizard_lista_com_remover(st.session_state['wizard_hospitais'], 'wizard_hospitais',
-        lambda h: f"🏥 {h['nome']} · {h['atraso_label']} · dia {h['dia_pagamento']}")
-    _wizard_navegacao(1)
+def _wizard_salvar_v2():
+    """Persiste somente o que o usuário informou; nenhuma etapa é obrigatória."""
+    rendas=list(st.session_state.get('wizard_rendas') or [])
+    contas=list(st.session_state.get('wizard_contas') or [])
+    orcamentos=list(st.session_state.get('wizard_orcamentos') or [])
+    hoje_w=datetime.date.today(); competencia=datetime.date(hoje_w.year,hoje_w.month,1)
+    try:
+        with transaction() as cur:
+            for r in rendas:
+                modalidade=str(r.get('modalidade') or 'Variável'); valor=max(float_seguro(r.get('valor')),0.0); especial=bool(r.get('plantoes'))
+                recorrente=1 if modalidade in ('Mensal','Variável') and valor>0 and not especial else 0
+                cur.execute('''INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento,is_recorrente,data_inicio,is_producao_variavel,modalidade_renda) VALUES ('Entrada','Rendas',%s,%s,0,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',(r['nome'],valor if valor>0 else None,int(r['dia_recebimento']),recorrente,competencia,1 if especial else 0,modalidade))
+            for c in contas:
+                cat=_wizard_categoria_conta(c.get('tipo_conta')); valor=max(float_seguro(c.get('valor')),0.0)
+                cur.execute('''INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento,is_recorrente,data_inicio,is_producao_variavel) VALUES ('Despesa',%s,%s,%s,0,%s,1,%s,0) ON CONFLICT DO NOTHING''',(cat,c['nome'],valor,int(c['dia_vencimento']),competencia))
+            for o in orcamentos:
+                nome=str(o.get('nome') or '').strip(); valor=max(float_seguro(o.get('valor')),0.0)
+                if not nome or valor<=0.004: continue
+                cat='Despesas Variáveis'
+                cur.execute("INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,is_recorrente,data_inicio,is_producao_variavel) VALUES ('Despesa',%s,%s,0,%s,0) ON CONFLICT DO NOTHING",(cat,nome,competencia))
+                cur.execute("UPDATE orcamentos_categorias SET valor_planejado=%s,origem='onboarding',atualizado_em=NOW() WHERE competencia=%s AND categoria=%s AND COALESCE(subgrupo,'')=%s",(valor,competencia,cat,nome))
+                if cur.rowcount==0:
+                    cur.execute("INSERT INTO orcamentos_categorias (competencia,categoria,subgrupo,valor_planejado,origem) VALUES (%s,%s,%s,%s,'onboarding')",(competencia,cat,nome,valor))
+    except Exception as e:
+        st.error(f'Não foi possível concluir a configuração. Nada foi salvo parcialmente: {e}'); return False
+    invalidar_caches_estruturais()
+    for chave in list(st.session_state.keys()):
+        if str(chave).startswith('rec_processado_'): st.session_state.pop(chave,None)
+    return True
 
 
-def _wizard_passo2_fixas():
-    _wizard_cabecalho(2, "🏠 Quais contas se repetem todo mês?")
-    st.caption("Ex.: aluguel, internet, plano de saúde, escola.")
-    with st.form("wizard_form_fixa", clear_on_submit=True):
-        c1, c2, c3 = st.columns([2, 1.3, 1])
-        nome = c1.text_input("Despesa", placeholder="Ex: Aluguel")
-        valor_txt = c2.text_input("Valor (R$)", value="0,00")
-        dia_venc = c3.number_input("Vence dia", min_value=1, max_value=31, value=5)
-        if st.form_submit_button("＋ Adicionar despesa fixa"):
-            valor_f = parse_valor(valor_txt)
-            if nome.strip() and valor_f > 0:
-                st.session_state['wizard_fixas'].append({"nome": nome.strip(), "valor": valor_f, "dia_vencimento": int(dia_venc)})
-                st.rerun()
-    _wizard_lista_com_remover(st.session_state['wizard_fixas'], 'wizard_fixas',
-        lambda f: f"🏠 {f['nome']} · R$ {format_brl(f['valor'])} · dia {f['dia_vencimento']}")
-    _wizard_navegacao(2)
+def _wizard_encerrar_v2(mensagem='Tudo pronto. Seu mês já pode começar a ser organizado.'):
+    if _wizard_salvar_v2():
+        for k in ['wizard_rendas','wizard_contas','wizard_orcamentos','wizard_hospitais','wizard_fixas','wizard_dividas','wizard_envelopes']:
+            if k in st.session_state: st.session_state[k]=[]
+        st.session_state['wizard_ativo']=False; st.session_state['wizard_passo']=1; st.session_state['menu_atual']='🏠 Início'
+        flash('success',f'✓ {mensagem}'); st.rerun()
 
 
-def _wizard_passo3_dividas():
-    _wizard_cabecalho(3, "💳 Você tem alguma dívida parcelada em andamento?")
-    st.caption("Cadastre apenas o que ainda falta pagar.")
-    with st.form("wizard_form_divida", clear_on_submit=True):
-        c1, c2 = st.columns([2, 1.3])
-        nome = c1.text_input("Dívida", placeholder="Ex: Financiamento, notebook")
-        valor_parcela_txt = c2.text_input("Valor da parcela (R$)", value="0,00")
-        c3, c4, c5 = st.columns([1, 1, 1.4])
-        parcelas_faltam = c3.number_input("Parcelas restantes", min_value=1, max_value=120, value=1)
-        dia_venc = c4.number_input("Vence dia", min_value=1, max_value=31, value=10)
-        eh_cartao = c5.checkbox("É no cartão de crédito?")
-        if st.form_submit_button("＋ Adicionar dívida"):
-            valor_f = parse_valor(valor_parcela_txt)
-            if nome.strip() and valor_f > 0:
-                st.session_state['wizard_dividas'].append({
-                    "nome": nome.strip(), "valor_parcela": valor_f, "parcelas_faltam": int(parcelas_faltam),
-                    "dia_vencimento": int(dia_venc), "eh_cartao": eh_cartao
-                })
-                st.rerun()
-    _wizard_lista_com_remover(st.session_state['wizard_dividas'], 'wizard_dividas',
-        lambda d: f"💳 {d['nome']} · {d['parcelas_faltam']}x de R$ {format_brl(d['valor_parcela'])}")
-    _wizard_navegacao(3)
+def _wizard_nav_v2(passo,final=False):
+    st.markdown("<div class='onb-footer-note'>Você pode completar ou alterar tudo depois.</div>",unsafe_allow_html=True)
+    a,b,c=st.columns([1.15,1,1.45])
+    if passo>1:
+        if a.button('← Voltar',key=f'onb_back_{passo}',use_container_width=True): st.session_state['wizard_passo']=passo-1; st.rerun()
+    else:
+        if a.button('Pular por enquanto',key='onb_skip_all',use_container_width=True): _wizard_encerrar_v2('Configuração inicial encerrada. Você pode completar os dados a qualquer momento.')
+    if passo>1:
+        if b.button('Pular esta etapa',key=f'onb_skip_step_{passo}',use_container_width=True):
+            if final: _wizard_encerrar_v2()
+            else: st.session_state['wizard_passo']=passo+1; st.rerun()
+    if c.button('Concluir →' if final else 'Continuar →',type='primary',key=f'onb_next_{passo}',use_container_width=True):
+        if final: _wizard_encerrar_v2()
+        else: st.session_state['wizard_passo']=passo+1; st.rerun()
 
 
-def _wizard_passo4_orcamentos():
-    _wizard_cabecalho(4, "🎯 Quanto você pretende gastar nas categorias variáveis?")
-    st.caption("Ex.: mercado, lazer, farmácia, transporte. Isso será o orçamento do mês, não uma conta a pagar.")
-    with st.form("wizard_form_orcamento", clear_on_submit=True):
-        c1, c2 = st.columns([2, 1.3])
-        nome = c1.text_input("Gasto", placeholder="Ex: Mercado")
-        valor_txt = c2.text_input("Orçamento do mês (R$)", value="0,00")
-        if st.form_submit_button("＋ Adicionar orçamento"):
-            valor_f = parse_valor(valor_txt)
-            if nome.strip() and valor_f > 0:
-                st.session_state['wizard_orcamentos'].append({"nome": nome.strip(), "valor": valor_f})
-                st.rerun()
-    _wizard_lista_com_remover(st.session_state['wizard_orcamentos'], 'wizard_orcamentos',
-        lambda e: f"🎯 {e['nome']} · R$ {format_brl(e['valor'])} planejados")
-    _wizard_navegacao(4, texto_avancar="Revisar →")
+def _wizard_passo1_rendas_v2():
+    st.markdown("<div class='onb-card-title'>De onde vem seu dinheiro?</div><div class='onb-card-sub'>Adicione suas principais fontes. Uma só já é suficiente para começar.</div>",unsafe_allow_html=True)
+    with st.form('onb_income_form',clear_on_submit=True):
+        modelo=st.radio('Exemplo de fonte',_WIZ_RENDA_MODELOS,horizontal=True,key='onb_income_model')
+        c1,c2=st.columns([1.55,1]); nome=c1.text_input('Nome da fonte',placeholder='Ex.: Hospital Help, Salário principal'); valor=c2.number_input('Valor esperado',min_value=0.0,step=100.0,format='%.2f')
+        c3,c4=st.columns([1,1.45]); dia=c3.number_input('Dia aproximado do recebimento',min_value=1,max_value=31,value=10)
+        sugestao={'Salário':'Mensal','Aluguel recebido':'Mensal','Comissão':'Variável','Consultório':'Variável','Hospital':'Variável','Freelance':'Eventual','Outro':'Variável'}.get(modelo,'Variável'); tipos=['Mensal','Variável','Eventual']
+        modalidade=c4.selectbox('Tipo da renda',tipos,index=tipos.index(sugestao),help='Mensal é mais previsível; Variável se repete mas oscila; Eventual não tem recorrência confiável.')
+        plantoes=st.checkbox('Usa plantões nessa fonte?',value=(modelo=='Hospital'),help='Ativa escala, produção e previsão de pagamento. O tipo da renda continua Mensal, Variável ou Eventual.')
+        if st.form_submit_button('＋ Adicionar fonte',type='primary',use_container_width=True):
+            nome_final=(nome.strip() or (modelo if modelo!='Outro' else ''))
+            if not nome_final: st.error('Informe um nome para a fonte.')
+            else:
+                st.session_state['wizard_rendas'].append({'modelo':modelo,'nome':nome_final,'valor':float(valor),'dia_recebimento':int(dia),'modalidade':modalidade,'plantoes':bool(plantoes)}); st.rerun()
+    _wizard_lista_v2(st.session_state['wizard_rendas'],'wizard_rendas',lambda r:(r['nome'],f"{r['modalidade']} · dia {r['dia_recebimento']} · R$ {format_brl(r['valor'])}"+(' · Plantões' if r.get('plantoes') else '')))
+    _wizard_nav_v2(1)
 
 
-def _wizard_passo5_revisao():
-    _wizard_cabecalho(5, "📋 Revise antes de salvar")
-    hospitais = st.session_state['wizard_hospitais']
-    fixas = st.session_state['wizard_fixas']
-    orcamentos = st.session_state['wizard_orcamentos']
-    dividas = st.session_state['wizard_dividas']
-    with st.container(border=True):
-        if hospitais:
-            st.markdown("**🏥 Receitas / locais**")
-            for h in hospitais: st.write(f"• {h['nome']} · {h['atraso_label']} · dia {h['dia_pagamento']}")
-        if fixas:
-            st.markdown("**🏠 Despesas fixas**")
-            for f in fixas: st.write(f"• {f['nome']} · R$ {format_brl(f['valor'])} · dia {f['dia_vencimento']}")
-        if dividas:
-            st.markdown("**💳 Dívidas**")
-            for d in dividas: st.write(f"• {d['nome']} · {d['parcelas_faltam']}x R$ {format_brl(d['valor_parcela'])}")
-        if orcamentos:
-            st.markdown("**🎯 Orçamentos do mês**")
-            for e in orcamentos: st.write(f"• {e['nome']} · R$ {format_brl(e['valor'])}/mês")
-        if not any([hospitais, fixas, orcamentos, dividas]):
-            st.info("Nenhum item foi adicionado. Você pode voltar ou sair do assistente.")
+def _wizard_passo2_contas_v2():
+    st.markdown("<div class='onb-card-title'>Quais contas mais pesam no seu mês?</div><div class='onb-card-sub'>Cadastre apenas as principais. O restante pode ser adicionado aos poucos.</div>",unsafe_allow_html=True)
+    with st.form('onb_bills_form',clear_on_submit=True):
+        modelo=st.selectbox('Tipo de conta',_WIZ_CONTAS_MODELOS)
+        c1,c2,c3=st.columns([1.6,1,1]); nome=c1.text_input('Nome da conta',placeholder='Ex.: Aluguel, Escola das crianças'); valor=c2.number_input('Valor aproximado',min_value=0.0,step=50.0,format='%.2f'); dia=c3.number_input('Vence dia',min_value=1,max_value=31,value=5)
+        if st.form_submit_button('＋ Adicionar conta',type='primary',use_container_width=True):
+            nome_final=(nome.strip() or (modelo if modelo!='Outro' else ''))
+            if not nome_final or valor<=0: st.error('Informe o nome e um valor aproximado.')
+            else:
+                st.session_state['wizard_contas'].append({'tipo_conta':modelo,'nome':nome_final,'valor':float(valor),'dia_vencimento':int(dia)}); st.rerun()
+    _wizard_lista_v2(st.session_state['wizard_contas'],'wizard_contas',lambda c:(c['nome'],f"R$ {format_brl(c['valor'])} · vence dia {c['dia_vencimento']} · mensal"))
+    _wizard_nav_v2(2)
 
-    c_voltar, c_confirmar = st.columns(2)
-    if c_voltar.button("← Voltar", key="wizard_voltar_5", use_container_width=True):
-        st.session_state['wizard_passo'] = 4
-        st.rerun()
-    if c_confirmar.button("✅ Salvar configuração", type="primary", key="wizard_finalizar", use_container_width=True):
-        hoje_wizard = datetime.date.today()
-        try:
-            with transaction() as cur:
-                for h in hospitais:
-                    cur.execute("INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,atraso_meses,dia_pagamento,is_recorrente,data_inicio) VALUES ('Entrada','Plantões',%s,%s,%s,0,%s) ON CONFLICT DO NOTHING",
-                                (h['nome'], h['atraso_meses'], h['dia_pagamento'], hoje_wizard))
-                for f in fixas:
-                    cur.execute("INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento,is_recorrente,data_inicio) VALUES ('Despesa','Despesas Essenciais',%s,%s,0,%s,1,%s) ON CONFLICT DO NOTHING",
-                                (f['nome'], f['valor'], f['dia_vencimento'], hoje_wizard))
-                for e in orcamentos:
-                    cur.execute("INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,is_recorrente,data_inicio) VALUES ('Despesa','Despesas Essenciais',%s,0,%s) ON CONFLICT DO NOTHING",
-                                (e['nome'], hoje_wizard))
-                    cur.execute('''
-                        INSERT INTO orcamentos_categorias (competencia,categoria,subgrupo,valor_planejado,origem)
-                        VALUES (DATE_TRUNC('month', %s::date)::date,'Despesas Essenciais',%s,%s,'onboarding')
-                        ON CONFLICT DO NOTHING
-                    ''', (hoje_wizard, e['nome'], e['valor']))
-                for d in dividas:
-                    cur.execute("INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,is_recorrente) VALUES ('Despesa','Dívidas',%s,0) ON CONFLICT DO NOTHING", (d['nome'],))
-                    comp_id = str(uuid.uuid4())
-                    dia_venc = int(d['dia_vencimento'])
-                    if dia_venc >= hoje_wizard.day:
-                        primeira = datetime.date(hoje_wizard.year, hoje_wizard.month, min(dia_venc, calendar.monthrange(hoje_wizard.year, hoje_wizard.month)[1]))
-                    else:
-                        m_f = hoje_wizard.month % 12 + 1
-                        a_f = hoje_wizard.year + (hoje_wizard.month // 12)
-                        primeira = datetime.date(a_f, m_f, min(dia_venc, calendar.monthrange(a_f, m_f)[1]))
-                    regs = []
-                    for i in range(d['parcelas_faltam']):
-                        m_i = primeira.month - 1 + i
-                        a_i = primeira.year + m_i // 12
-                        m_i = m_i % 12 + 1
-                        data_i = datetime.date(a_i, m_i, min(primeira.day, calendar.monthrange(a_i, m_i)[1]))
-                        regs.append(('Despesa','Dívidas',d['nome'],d['nome'],d['valor_parcela'],data_i,i+1,d['parcelas_faltam'],0,comp_id,'Crédito' if d['eh_cartao'] else 'Outros','Média 🟡',0.0,data_i))
-                    if regs:
-                        execute_values(cur, "INSERT INTO lancamentos (tipo,categoria,subgrupo,descricao,valor,data_vencimento,parcela_atual,total_parcelas,pago,compra_id,forma_pagamento,prioridade,valor_pago,data_competencia) VALUES %s", regs)
-        except Exception as e:
-            st.error(f"Não foi possível concluir a configuração. Nada foi salvo parcialmente: {e}")
-        else:
-            invalidar_caches_estruturais()
-            for k in ['wizard_hospitais','wizard_fixas','wizard_orcamentos','wizard_dividas']:
-                st.session_state[k] = []
-            st.session_state['wizard_ativo'] = False
-            flash("success", "🎉 Configuração salva. Seu painel já está pronto.")
-            st.rerun()
+
+def _wizard_passo3_orcamentos_v2():
+    st.markdown("<div class='onb-card-title'>Quer planejar alguns gastos?</div><div class='onb-card-sub'>Opcional. Defina apenas categorias que você realmente quer acompanhar de perto.</div>",unsafe_allow_html=True)
+    with st.form('onb_budget_form',clear_on_submit=True):
+        modelo=st.selectbox('Categoria',_WIZ_ORCAMENTOS_MODELOS)
+        c1,c2=st.columns([1.6,1]); nome=c1.text_input('Nome do orçamento',placeholder='Ex.: Mercado, Lazer'); valor=c2.number_input('Orçamento do mês',min_value=0.0,step=50.0,format='%.2f')
+        if st.form_submit_button('＋ Adicionar orçamento',type='primary',use_container_width=True):
+            nome_final=(nome.strip() or (modelo if modelo!='Outro' else ''))
+            if not nome_final or valor<=0: st.error('Informe uma categoria e um valor.')
+            else:
+                st.session_state['wizard_orcamentos'].append({'nome':nome_final,'valor':float(valor)}); st.rerun()
+    _wizard_lista_v2(st.session_state['wizard_orcamentos'],'wizard_orcamentos',lambda o:(o['nome'],f"R$ {format_brl(o['valor'])} planejados para este mês"))
+    st.markdown("<div class='onb-finish'><div class='onb-finish-icon'>✓</div><div class='onb-card-title' style='font-size:1.2rem'>Você já informou o essencial</div><div class='onb-card-sub'>Ao concluir, o app cria suas previsões e leva você direto para o Início.</div></div>",unsafe_allow_html=True)
+    _wizard_nav_v2(3,final=True)
 
 
 def renderizar_wizard_configuracao():
-    passo = int(st.session_state.get('wizard_passo', 0))
-    if passo <= 0: _wizard_intro()
-    elif passo == 1: _wizard_passo1_hospitais()
-    elif passo == 2: _wizard_passo2_fixas()
-    elif passo == 3: _wizard_passo3_dividas()
-    elif passo == 4: _wizard_passo4_orcamentos()
-    else: _wizard_passo5_revisao()
+    _wizard_css_v2(); passo=max(1,min(int(st.session_state.get('wizard_passo',1)),3))
+    st.sidebar.markdown("<div class='onb-side-active'>✦ Onboarding</div><div class='onb-side-note'>3 passos rápidos para o app entender suas rendas, contas e planejamento.</div>",unsafe_allow_html=True)
+    st.markdown("<div class='onb-hero'><div class='onb-title'>Vamos organizar sua vida financeira</div><div class='onb-sub'>Em 3 passos rápidos o app já consegue organizar o seu mês.</div></div>",unsafe_allow_html=True)
+    _wizard_progress_v2(passo)
+    principal,ajuda=st.columns([2.05,1],gap='large')
+    with principal:
+        if passo==1: _wizard_passo1_rendas_v2()
+        elif passo==2: _wizard_passo2_contas_v2()
+        else: _wizard_passo3_orcamentos_v2()
+    with ajuda: _wizard_help_v2(passo)
 
 # =================================================================
 # 8+. INTERFACE UX — USO DIÁRIO, ANÁLISE E CONFIGURAÇÕES
@@ -3566,7 +3558,7 @@ def _renda_badge_class(modalidade):
 if st.session_state.get('wizard_ativo'):
     renderizar_wizard_configuracao()
 
-# Build UX 2.0: rendas-v2-v17
+# Build UX 2.0: onboarding-v2-v21
 # -----------------------------------------------------------------
 # INÍCIO
 # -----------------------------------------------------------------
@@ -4784,10 +4776,10 @@ elif menu == "⚙️ Mais":
         if st.button("🧰 Manutenção e diagnóstico", use_container_width=True):
             st.session_state.menu_atual = "🧰 Manutenção e Diagnóstico"; st.rerun()
     st.divider()
-    if st.button("🧙 Reconfigurar aplicativo", key="mais_reconfigurar", use_container_width=True):
+    if st.button("🧙 Refazer configuração inicial", key="mais_reconfigurar", use_container_width=True):
         st.session_state['wizard_ativo'] = True
-        st.session_state['wizard_passo'] = 0
-        for _wk in ['wizard_hospitais','wizard_fixas','wizard_orcamentos','wizard_dividas']:
+        st.session_state['wizard_passo'] = 1
+        for _wk in ['wizard_rendas','wizard_contas','wizard_orcamentos']:
             st.session_state[_wk] = []
         st.rerun()
 
