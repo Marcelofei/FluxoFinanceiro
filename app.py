@@ -1,5 +1,5 @@
 import streamlit as st
-APP_BUILD = "orcamento-categorias-v15"
+APP_BUILD = "ui-refino-planejamento-v16"
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
@@ -1371,6 +1371,210 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Refinamento visual 2.0 — aproxima o shell e o Planejamento do mockup aprovado.
+st.markdown("""
+<style>
+:root, .stApp {
+  --bg-page:#071018;
+  --bg-sidebar:#08121b;
+  --bg-card:#0d1822;
+  --bg-card-2:#101e29;
+  --border:rgba(130,157,176,.16);
+  --border-strong:rgba(130,157,176,.25);
+  --text-primary:#eef5f7;
+  --text-heading:#f7fbfc;
+  --text-muted:#8da2b2;
+  --text-faint:#607585;
+  --accent:#2dd4bf;
+  --accent-strong:#5eead4;
+  --accent-tint:rgba(45,212,191,.14);
+  --success:#39d98a;
+  --success-tint:rgba(57,217,138,.12);
+  --danger:#ff646f;
+  --danger-text:#ff7b84;
+  --danger-tint:rgba(255,100,111,.11);
+}
+
+/* Shell */
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+  background:
+    radial-gradient(900px 520px at 78% -12%, rgba(36,113,156,.12), transparent 62%),
+    linear-gradient(180deg,#071018 0%,#081119 46%,#070e15 100%) !important;
+}
+.block-container {
+  max-width:1500px !important;
+  padding-top:1.65rem !important;
+  padding-left:2rem !important;
+  padding-right:2rem !important;
+  padding-bottom:3rem !important;
+}
+section[data-testid="stSidebar"] {
+  width:252px !important; min-width:252px !important;
+  background:linear-gradient(180deg,#091520 0%,#08121b 66%,#071019 100%) !important;
+  border-right:1px solid rgba(120,150,170,.13) !important;
+  box-shadow:18px 0 45px rgba(0,0,0,.08);
+}
+section[data-testid="stSidebar"] > div { width:252px !important; }
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"] { padding:1.25rem .78rem 1.1rem !important; }
+
+.brand2 { display:flex; align-items:center; gap:.72rem; padding:.22rem .3rem .55rem; }
+.brand2-mark {
+  width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(145deg,rgba(45,212,191,.22),rgba(45,212,191,.06));
+  border:1px solid rgba(45,212,191,.22); color:var(--accent-strong)!important;
+  font-size:1.55rem;font-weight:800;line-height:1;transform:rotate(-12deg);
+  box-shadow:0 8px 25px rgba(45,212,191,.08);
+}
+.brand2-name { font-size:1.02rem;font-weight:760;letter-spacing:-.02em;color:var(--text-heading)!important;line-height:1.12; }
+.brand2-sub { margin-top:.18rem;font-size:.68rem;color:var(--text-muted)!important; }
+.brand2-version { margin:.1rem .34rem .65rem; font-size:.65rem;color:var(--text-faint)!important; }
+.sidebar-period { text-align:center;padding:.47rem .15rem;font-weight:650;color:var(--text-heading)!important;font-size:.78rem; }
+
+.nav-eyebrow { margin:1.05rem .45rem .42rem !important;font-size:.62rem!important;letter-spacing:.11em!important;color:#617687!important; }
+section[data-testid="stSidebar"] hr { border-color:rgba(125,151,169,.13)!important;margin:1rem .25rem!important; }
+section[data-testid="stSidebar"] .stButton { margin:.14rem 0; }
+section[data-testid="stSidebar"] .stButton button {
+  min-height:42px!important;padding:.55rem .72rem!important;border-radius:10px!important;
+  background:transparent!important;border:1px solid transparent!important;color:#b7c6d1!important;
+  font-size:.82rem!important;transition:background .14s ease,border-color .14s ease,transform .14s ease!important;
+}
+section[data-testid="stSidebar"] .stButton button:hover { background:rgba(255,255,255,.035)!important;border-color:rgba(126,154,174,.13)!important;transform:translateX(1px); }
+section[data-testid="stSidebar"] .stButton button[kind="primary"] {
+  background:linear-gradient(90deg,rgba(45,212,191,.18),rgba(45,212,191,.105))!important;
+  border:1px solid rgba(45,212,191,.18)!important;
+  box-shadow:inset 3px 0 0 var(--accent),0 8px 24px rgba(0,0,0,.08)!important;
+  color:#e9fffb!important;
+}
+section[data-testid="stSidebar"] .stButton button[kind="primary"] * { color:#e9fffb!important; }
+
+/* Controles */
+.stButton button { border-radius:10px!important; min-height:40px; }
+[data-baseweb="select"] > div, .stTextInput input, .stNumberInput input {
+  background:#0c1720!important;border-color:rgba(127,155,175,.2)!important;border-radius:11px!important;
+}
+
+/* Cabeçalho do Planejamento */
+.plan2-shell-head { margin:.05rem 0 1.05rem; }
+.plan2-head { margin:.05rem 0 0!important; }
+.plan2-title { font-size:2rem!important;font-weight:760!important;letter-spacing:-.045em!important;line-height:1.02;color:#f8fbfc!important; }
+.plan2-sub { margin-top:.34rem!important;font-size:.86rem!important;color:#8ba0af!important; }
+[data-testid="stHorizontalBlock"]:has(.plan2-period-anchor) { align-items:flex-start!important; }
+[data-testid="stVerticalBlock"]:has(.plan2-period-anchor) [data-baseweb="select"] > div {
+  background:linear-gradient(180deg,#10202c,#0e1b26)!important;border:1px solid rgba(116,151,174,.24)!important;
+  min-height:44px!important;border-radius:13px!important;box-shadow:0 8px 28px rgba(0,0,0,.13);
+}
+[data-testid="stVerticalBlock"]:has(.plan2-period-anchor) [data-baseweb="select"] span { color:#eaf3f6!important;font-weight:600!important;font-size:.8rem!important; }
+
+/* Tabs em pills */
+.stTabs [data-baseweb="tab-list"] {
+  width:max-content!important;max-width:100%;gap:3px!important;padding:4px!important;margin:.2rem 0 .9rem!important;
+  background:#0c1923!important;border:1px solid rgba(119,149,169,.12)!important;border-radius:999px!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.015);
+}
+.stTabs [data-baseweb="tab"] {
+  height:38px!important;padding:0 1.05rem!important;border-radius:999px!important;border:1px solid transparent!important;
+  background:transparent!important;color:#91a4b2!important;font-size:.79rem!important;
+}
+.stTabs [data-baseweb="tab"] p { color:inherit!important; }
+.stTabs [aria-selected="true"] {
+  background:linear-gradient(180deg,rgba(45,212,191,.18),rgba(45,212,191,.10))!important;
+  border-color:rgba(45,212,191,.55)!important;color:#effffc!important;
+  box-shadow:0 0 0 1px rgba(45,212,191,.08),0 0 22px rgba(45,212,191,.09)!important;
+}
+.stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] { display:none!important; }
+
+/* Cards de resumo */
+.plan2-summary {
+  position:relative;overflow:hidden;border:1px solid rgba(125,151,170,.16)!important;
+  background:linear-gradient(155deg,rgba(18,34,46,.98),rgba(12,24,34,.98))!important;
+  border-radius:17px!important;padding:1.05rem 1.1rem!important;min-height:171px!important;
+  box-shadow:0 12px 30px rgba(0,0,0,.13),inset 0 1px 0 rgba(255,255,255,.018);
+}
+.plan2-summary::after { content:"";position:absolute;width:150px;height:150px;border-radius:50%;right:-65px;top:-78px;opacity:.24;filter:blur(1px); }
+.plan2-summary.income::after { background:radial-gradient(circle,rgba(45,212,191,.34),transparent 67%); }
+.plan2-summary.outcome::after { background:radial-gradient(circle,rgba(255,100,111,.29),transparent 67%); }
+.plan2-summary.result-card::after { background:radial-gradient(circle,rgba(56,189,248,.28),transparent 67%); }
+.plan2-summary-top { margin-bottom:.9rem!important;gap:.72rem!important;position:relative;z-index:1; }
+.plan2-icon { width:46px!important;height:46px!important;font-size:1.18rem!important;border:1px solid rgba(255,255,255,.035);box-shadow:inset 0 1px 0 rgba(255,255,255,.03); }
+.plan2-icon.in { background:rgba(45,212,191,.15)!important;color:#55e6d1!important; }
+.plan2-icon.out { background:rgba(255,100,111,.14)!important;color:#ff7d86!important; }
+.plan2-icon.result { background:rgba(56,189,248,.14)!important;color:#67cdf8!important; }
+.plan2-summary-name { font-size:.96rem!important;font-weight:720!important; }
+.plan2-pair { gap:0!important;position:relative;z-index:1; }
+.plan2-pair > div { padding-right:.85rem; }
+.plan2-pair > div + div { border-left:1px solid rgba(124,150,168,.15);padding-left:.95rem; }
+.plan2-small-label { font-size:.66rem!important;color:#8297a6!important; }
+.plan2-big { font-size:1.15rem!important;font-weight:750!important;color:#f2f7f9!important;margin-top:.16rem!important;letter-spacing:-.025em; }
+.plan2-delta {
+  position:relative;z-index:1;margin-top:.85rem!important;border-radius:10px!important;padding:.48rem .65rem!important;
+  font-size:.76rem!important;font-weight:720!important;
+}
+.plan2-delta.good { background:rgba(45,212,191,.12)!important;color:#53e4cf!important; }
+.plan2-delta.bad { background:rgba(255,100,111,.105)!important;color:#ff7e87!important; }
+.plan2-delta.neutral { background:rgba(89,132,161,.11)!important;color:#a9bfcd!important; }
+
+/* Painéis */
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.plan2-panel-anchor) {
+  border:1px solid rgba(126,153,172,.15)!important;border-radius:17px!important;
+  background:linear-gradient(155deg,rgba(14,28,39,.97),rgba(10,21,30,.98))!important;
+  box-shadow:0 13px 34px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.016)!important;
+  overflow:hidden!important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.plan2-panel-anchor) > div { padding:1rem 1.08rem!important; }
+.plan2-panel-anchor { display:block;width:0;height:0;overflow:hidden; }
+.plan2-panel-head { margin-bottom:.58rem!important;padding-bottom:.56rem;border-bottom:1px solid rgba(125,151,170,.12); }
+.plan2-panel-title { font-size:1.02rem!important;font-weight:730!important;letter-spacing:-.02em; }
+.plan2-panel-note { color:#768b9a!important;font-size:.68rem!important; }
+.plan2-empty-inline { padding:.75rem .05rem .25rem;color:#7f94a3;font-size:.76rem; }
+.plan2-row { grid-template-columns:minmax(150px,.92fr) minmax(210px,1.45fr) minmax(155px,.72fr) minmax(118px,.55fr)!important;gap:.9rem!important;padding:.68rem .12rem!important;border-color:rgba(126,153,172,.10)!important; }
+.plan2-name { font-size:.79rem!important;font-weight:680!important; }
+.plan2-name-cell { display:flex;align-items:center;gap:.62rem;min-width:0; }
+.plan2-cat-icon { width:30px;height:30px;flex:0 0 30px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:#12232f;border:1px solid rgba(118,150,171,.13);color:#9fb6c5;font-size:.68rem;font-weight:760;box-shadow:inset 0 1px 0 rgba(255,255,255,.02); }
+.plan2-name-sub { font-size:.63rem!important;color:#718695!important; }
+.plan2-bar,.plan2-debt-progress { background:#1b2a35!important;box-shadow:inset 0 1px 2px rgba(0,0,0,.22); }
+.plan2-bar { height:7px!important; }
+.plan2-fill.good { background:linear-gradient(90deg,#34d8c1,#50dfca)!important; }
+.plan2-fill.warn { background:linear-gradient(90deg,#f3b74f,#ffc866)!important; }
+.plan2-fill.bad { background:linear-gradient(90deg,#ff6671,#ff7f87)!important; }
+.plan2-values { font-size:.69rem!important;color:#718695!important; }
+.plan2-values b { color:#eaf1f4!important;font-weight:700!important; }
+.plan2-status { border-radius:9px!important;padding:.34rem .55rem!important;font-size:.66rem!important;font-weight:700!important; }
+.plan2-status.good { background:rgba(45,212,191,.105)!important;color:#4ee0cb!important; }
+.plan2-status.warn { background:rgba(243,183,79,.12)!important;color:#f5bf5c!important; }
+.plan2-status.bad { background:rgba(255,100,111,.11)!important;color:#ff7e87!important; }
+
+.plan2-limit-row { grid-template-columns:minmax(120px,.8fr) minmax(120px,1.05fr) 46px minmax(120px,.9fr)!important;padding:.58rem .05rem!important;border-color:rgba(126,153,172,.10)!important; }
+.plan2-percent { font-size:.7rem!important;color:#dfe9ed; }
+.plan2-debt-row { padding:.72rem .05rem!important;border-color:rgba(126,153,172,.10)!important; }
+.plan2-debt-head { align-items:center!important; }
+.plan2-debt-name-wrap { display:flex;align-items:center;gap:.62rem;min-width:0; }
+.plan2-debt-icon { width:34px;height:34px;flex:0 0 34px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(45,212,191,.09);border:1px solid rgba(45,212,191,.13);color:#52dfcb;font-size:.9rem; }
+.plan2-debt-name { font-size:.8rem!important;font-weight:700!important; }
+.plan2-debt-balance { font-size:.87rem!important;color:#f1f6f8!important; }
+.plan2-debt-meta { font-size:.64rem!important;color:#78909f!important;gap:.4rem .9rem!important;margin:.35rem 0 .45rem!important; }
+.plan2-debt-progress { height:6px!important; }
+.plan2-debt-progress > span { background:linear-gradient(90deg,#2dd4bf,#55e5d1)!important; }
+
+/* Filtros e expansores das abas secundárias */
+div[data-testid="stExpander"] { background:rgba(12,25,35,.75)!important;border-color:rgba(126,153,172,.15)!important; }
+
+@media (max-width:900px) {
+  .block-container { padding-left:1.2rem!important;padding-right:1.2rem!important; }
+  .plan2-title { font-size:1.7rem!important; }
+  .plan2-row { grid-template-columns:1fr 1.4fr!important; }
+  .plan2-row .plan2-values { text-align:left!important; }
+  .plan2-row .plan2-status { justify-self:start!important; }
+}
+@media (max-width:640px) {
+  section[data-testid="stSidebar"] { width:242px!important;min-width:242px!important; }
+  section[data-testid="stSidebar"] > div { width:242px!important; }
+  .block-container { padding-top:1rem!important;padding-left:.85rem!important;padding-right:.85rem!important; }
+  .plan2-summary { min-height:0!important; }
+  .plan2-row { grid-template-columns:1fr auto!important; }
+  .stTabs [data-baseweb="tab"] { padding:0 .75rem!important; }
+}
+</style>
+""", unsafe_allow_html=True)
 
 
 def _nav_btn(rotulo, key, destino=None, container=None):
@@ -1519,17 +1723,19 @@ def _rotulo_comparativo(dataframe, tipo):
 
 
 st.sidebar.markdown(
-    "<div style='font-weight:700; font-size:1.08rem; color:oklch(96% 0.003 250);'>〽 Meu Financeiro</div>"
-    "<div style='font-size:.78rem; color:oklch(60% 0.01 250); margin:.15rem 0 .55rem;'>Seu dinheiro, sem ruído.</div>",
+    "<div class='brand2'>"
+    "<div class='brand2-mark'>∿</div>"
+    "<div><div class='brand2-name'>Meu Financeiro</div>"
+    "<div class='brand2-sub'>Seu dinheiro, sem ruído.</div></div>"
+    "</div>",
     unsafe_allow_html=True,
 )
-st.sidebar.caption("Versão 2.0 · Beta")
+st.sidebar.markdown("<div class='brand2-version'>Versão 2.0 · Beta</div>", unsafe_allow_html=True)
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
     st.session_state.menu_atual = "🏠 Início"
 
-st.sidebar.markdown("<div class='nav-eyebrow'>Navegação</div>", unsafe_allow_html=True)
 _nav_btn("🏠 Início", "nav_inicio", "🏠 Início")
 _nav_btn("📋 Fluxo", "nav_fluxo", "📊 Fluxo e Prioridades")
 _nav_btn("💡 Planejamento", "nav_planejamento", "📑 Demonstrativo")
@@ -1537,29 +1743,30 @@ _nav_btn("💰 Rendas", "nav_rendas", "🏥 Escala de Plantões")
 _nav_btn("⚙️ Mais", "nav_mais", "⚙️ Mais")
 
 menu = st.session_state.menu_atual
-st.sidebar.divider()
-st.sidebar.markdown("<div class='nav-eyebrow'>Período</div>", unsafe_allow_html=True)
 
 if "sb_mes" not in st.session_state: st.session_state["sb_mes"] = hoje.month
 if "sb_ano" not in st.session_state: st.session_state["sb_ano"] = hoje.year
 
-p1, p2, p3 = st.sidebar.columns([1, 3, 1])
-p1.button("‹", key="sb_prev", on_click=_mover_periodo, args=(-1,), use_container_width=True)
-p2.markdown(
-    f"<div style='text-align:center; padding:.42rem .2rem; font-weight:600;'>{meses[int(st.session_state['sb_mes'])-1][:3]} {st.session_state['sb_ano']}</div>",
-    unsafe_allow_html=True,
-)
-p3.button("›", key="sb_next", on_click=_mover_periodo, args=(1,), use_container_width=True)
-st.sidebar.button("Ir para o mês atual", key="sb_today", on_click=_periodo_hoje, use_container_width=True)
+# No Planejamento 2.0 o período fica no cabeçalho, como no layout de produto.
+# Nas demais telas o controle lateral permanece para manter navegação rápida.
+if menu != "📑 Demonstrativo":
+    st.sidebar.divider()
+    st.sidebar.markdown("<div class='nav-eyebrow'>Período</div>", unsafe_allow_html=True)
+    p1, p2, p3 = st.sidebar.columns([1, 3, 1])
+    p1.button("‹", key="sb_prev", on_click=_mover_periodo, args=(-1,), use_container_width=True)
+    p2.markdown(
+        f"<div class='sidebar-period'>{meses[int(st.session_state['sb_mes'])-1][:3]} {st.session_state['sb_ano']}</div>",
+        unsafe_allow_html=True,
+    )
+    p3.button("›", key="sb_next", on_click=_mover_periodo, args=(1,), use_container_width=True)
+    st.sidebar.button("Ir para o mês atual", key="sb_today", on_click=_periodo_hoje, use_container_width=True)
+    with st.sidebar.expander("Escolher outro período"):
+        col_sb1, col_sb2 = st.columns(2)
+        with col_sb1:
+            st.selectbox("Mês", range(1, 13), format_func=lambda x: meses[x-1], key="sb_mes")
+        with col_sb2:
+            st.selectbox("Ano", range(hoje.year-3, hoje.year+6), key="sb_ano")
 
-with st.sidebar.expander("Escolher outro período"):
-    col_sb1, col_sb2 = st.columns(2)
-    with col_sb1:
-        mes_selecionado = st.selectbox("Mês", range(1, 13), format_func=lambda x: meses[x-1], key="sb_mes")
-    with col_sb2:
-        ano_selecionado = st.selectbox("Ano", range(hoje.year-3, hoje.year+6), key="sb_ano")
-
-# Fora do expander, os valores seguem o session_state mesmo quando o widget está recolhido.
 mes_selecionado = int(st.session_state['sb_mes'])
 ano_selecionado = int(st.session_state['sb_ano'])
 
@@ -3126,6 +3333,8 @@ def _plan2_status(unidade):
         return 'bad', f"R$ {format_brl(diferenca)} acima"
     if planejado > 0 and pct >= 90:
         return 'warn', f"{pct:.0f}% utilizado"
+    if planejado > 0 and realizado <= 0.004:
+        return 'good', 'Ainda sem gasto'
     if planejado > 0:
         return 'good', f"R$ {format_brl(max(-diferenca, 0))} abaixo"
     if realizado > 0:
@@ -3143,9 +3352,10 @@ def _render_plan2_unidade(row, mostrar_categoria=False):
     subt = ''
     if mostrar_categoria and str(row.get('subgrupo') or '').strip():
         subt = f"<div class='plan2-name-sub'>{html.escape(str(row.get('categoria') or ''))}</div>"
+    inicial = html.escape((nome[:1] if nome else '•').upper())
     st.markdown(
         f"<div class='plan2-row'>"
-        f"<div><div class='plan2-name'>{nome}</div>{subt}</div>"
+        f"<div class='plan2-name-cell'><span class='plan2-cat-icon'>{inicial}</span><div><div class='plan2-name'>{nome}</div>{subt}</div></div>"
         f"<div class='plan2-bar'><div class='plan2-fill {tom}' style='width:{width:.1f}%'></div></div>"
         f"<div class='plan2-values'><b>R$ {format_brl(realizado)}</b> de R$ {format_brl(planejado)}</div>"
         f"<div class='plan2-status {tom}'>{html.escape(status)}</div>"
@@ -3164,7 +3374,8 @@ def _render_plan2_divida(row):
     prox_txt = prox.strftime('%d/%m') if pd.notna(prox) else '—'
     st.markdown(
         f"<div class='plan2-debt-row'><div class='plan2-debt-head'>"
-        f"<div class='plan2-debt-name'>{nome}</div><div class='plan2-debt-balance'>R$ {format_brl(saldo)}</div></div>"
+        f"<div class='plan2-debt-name-wrap'><span class='plan2-debt-icon'>◇</span><div class='plan2-debt-name'>{nome}</div></div>"
+        f"<div class='plan2-debt-balance'>R$ {format_brl(saldo)}</div></div>"
         f"<div class='plan2-debt-meta'><span>Parcela R$ {format_brl(parcela)}</span><span>{restantes} parcela(s)</span><span>Próxima {prox_txt}</span></div>"
         f"<div class='plan2-debt-progress'><span style='width:{largura:.1f}%'></span></div></div>",
         unsafe_allow_html=True,
@@ -3174,7 +3385,7 @@ def _render_plan2_divida(row):
 if st.session_state.get('wizard_ativo'):
     renderizar_wizard_configuracao()
 
-# Build UX 2.0: orcamento-categorias-v15
+# Build UX 2.0: ui-refino-planejamento-v16
 # -----------------------------------------------------------------
 # INÍCIO
 # -----------------------------------------------------------------
@@ -3816,12 +4027,36 @@ elif menu == "📊 Fluxo e Prioridades":
 # =================================================================
 
 elif menu == "📑 Demonstrativo":
-    st.markdown(
-        f"<div class='plan2-head'><div class='plan2-title'>Planejamento</div>"
-        f"<div class='plan2-sub'>Acompanhe se sua vida financeira está seguindo o plano.</div></div>",
-        unsafe_allow_html=True,
-    )
-    render_periodo_topo("planejamento2")
+    # Cabeçalho compacto: título à esquerda e seletor de período à direita,
+    # reproduzindo a hierarquia visual do mockup aprovado.
+    ph1, ph2 = st.columns([4.7, 1.35], vertical_alignment="top")
+    with ph1:
+        st.markdown(
+            "<div class='plan2-shell-head'><div class='plan2-head'><div class='plan2-title'>Planejamento</div>"
+            "<div class='plan2-sub'>Acompanhe se sua vida financeira está seguindo o plano.</div></div></div>",
+            unsafe_allow_html=True,
+        )
+    with ph2:
+        st.markdown("<span class='plan2-period-anchor'></span>", unsafe_allow_html=True)
+        periodos_plan = [(a, m) for a in range(hoje.year-3, hoje.year+6) for m in range(1, 13)]
+        periodo_atual = (ano_selecionado, mes_selecionado)
+        if st.session_state.get('plan2_period_picker') not in periodos_plan:
+            st.session_state['plan2_period_picker'] = periodo_atual
+        # Sincroniza quando o período foi alterado fora desta tela.
+        if st.session_state.get('_plan2_last_period') != periodo_atual:
+            st.session_state['plan2_period_picker'] = periodo_atual
+            st.session_state['_plan2_last_period'] = periodo_atual
+        periodo_novo = st.selectbox(
+            "Período",
+            periodos_plan,
+            format_func=lambda x: f"▣  {meses[x[1]-1]} de {x[0]}",
+            key='plan2_period_picker',
+            label_visibility='collapsed',
+        )
+        if periodo_novo != periodo_atual:
+            st.session_state['sb_ano'], st.session_state['sb_mes'] = int(periodo_novo[0]), int(periodo_novo[1])
+            st.session_state['_plan2_last_period'] = periodo_novo
+            st.rerun()
 
     df = _dados_mes()
     unidades = _planejamento_unidades(df, ano_selecionado, mes_selecionado)
@@ -3840,6 +4075,7 @@ elif menu == "📑 Demonstrativo":
         ]
         cols = st.columns(3)
         for col, (nome, icone, classe_icon, plan, real, delta, natureza) in zip(cols, cards):
+            card_class = {'in':'income','out':'outcome','result':'result-card'}.get(classe_icon, '')
             if abs(delta) <= 0.004:
                 tom = 'neutral'; delta_txt = 'Em linha com o planejado'
             else:
@@ -3849,7 +4085,7 @@ elif menu == "📑 Demonstrativo":
                 sinal = '+' if delta > 0 else '−'
                 delta_txt = f"{sinal} R$ {format_brl(abs(delta))}"
             col.markdown(
-                f"<div class='plan2-summary'><div class='plan2-summary-top'>"
+                f"<div class='plan2-summary {card_class}'><div class='plan2-summary-top'>"
                 f"<div class='plan2-icon {classe_icon}'>{icone}</div><div class='plan2-summary-name'>{nome}</div></div>"
                 f"<div class='plan2-pair'><div><div class='plan2-small-label'>Planejado</div><div class='plan2-big'>R$ {format_brl(plan)}</div></div>"
                 f"<div><div class='plan2-small-label'>Realizado</div><div class='plan2-big'>R$ {format_brl(real)}</div></div></div>"
@@ -3863,19 +4099,27 @@ elif menu == "📑 Demonstrativo":
             # Prioriza estouros, categorias perto do limite e depois maiores diferenças absolutas.
             if not unidades.empty:
                 desvios = unidades.copy()
+                # A visão geral não chama de "desvio" uma categoria que ainda nem teve gasto.
+                # Priorizamos o que já está acontecendo: estouros, proximidade do orçamento e uso relevante.
+                desvios = desvios[(desvios['realizado'] > 0.01) | (desvios['percentual'] >= 80)].copy()
                 desvios['_overspend'] = (desvios['diferenca'] > 0.01).astype(int)
                 desvios['_near'] = ((desvios['percentual'] >= 80) & (desvios['diferenca'] <= 0.01)).astype(int)
                 desvios['_abs'] = desvios['diferenca'].abs()
-                desvios = desvios.sort_values(['_overspend','_near','_abs','realizado'], ascending=[False,False,False,False]).head(4)
+                desvios = desvios.sort_values(['_overspend','_near','percentual','realizado'], ascending=[False,False,False,False]).head(4)
                 with st.container(border=True):
+                    st.markdown("<span class='plan2-panel-anchor'></span>", unsafe_allow_html=True)
                     st.markdown("<div class='plan2-panel-head'><div class='plan2-panel-title'>Onde você está desviando</div><div class='plan2-panel-note'>Realizado até agora × plano do mês</div></div>", unsafe_allow_html=True)
-                    for _, r in desvios.iterrows():
-                        _render_plan2_unidade(r, mostrar_categoria=True)
+                    if desvios.empty:
+                        st.markdown("<div class='plan2-empty-inline'>Nenhum desvio relevante até agora.</div>", unsafe_allow_html=True)
+                    else:
+                        for _, r in desvios.iterrows():
+                            _render_plan2_unidade(r, mostrar_categoria=True)
 
             c_orc, c_div = st.columns(2)
             with c_orc:
                 with st.container(border=True):
-                    st.markdown("<div class='plan2-panel-head'><div class='plan2-panel-title'>Orçamentos por categoria</div><div class='plan2-panel-note'>Gasto realizado</div></div>", unsafe_allow_html=True)
+                    st.markdown("<span class='plan2-panel-anchor'></span>", unsafe_allow_html=True)
+                    st.markdown("<div class='plan2-panel-head'><div class='plan2-panel-title'>Orçamentos do mês</div><div class='plan2-panel-note'>Gasto realizado</div></div>", unsafe_allow_html=True)
                     if orcamentos_plan.empty:
                         st.markdown("<div class='plan2-panel-note'>Nenhum orçamento mensal definido.</div>", unsafe_allow_html=True)
                     else:
@@ -3894,6 +4138,7 @@ elif menu == "📑 Demonstrativo":
 
             with c_div:
                 with st.container(border=True):
+                    st.markdown("<span class='plan2-panel-anchor'></span>", unsafe_allow_html=True)
                     st.markdown("<div class='plan2-panel-head'><div class='plan2-panel-title'>Dívidas</div><div class='plan2-panel-note'>Parcelamentos ativos</div></div>", unsafe_allow_html=True)
                     ativas = dividas_plan[dividas_plan['saldo'] > 0.01] if not dividas_plan.empty else pd.DataFrame()
                     if ativas.empty:
@@ -3920,6 +4165,7 @@ elif menu == "📑 Demonstrativo":
             view['_rank'] = view.apply(lambda r: 2 if r['diferenca'] > .01 else (1 if r['percentual'] >= 90 else 0), axis=1)
             view = view.sort_values(['_rank','percentual','realizado'], ascending=[False,False,False])
             with st.container(border=True):
+                st.markdown("<span class='plan2-panel-anchor'></span>", unsafe_allow_html=True)
                 if view.empty:
                     st.markdown("<div class='plan2-panel-note'>Nada corresponde a este filtro.</div>", unsafe_allow_html=True)
                 else:
@@ -3979,6 +4225,7 @@ elif menu == "📑 Demonstrativo":
                 )
 
             with st.container(border=True):
+                st.markdown("<span class='plan2-panel-anchor'></span>", unsafe_allow_html=True)
                 for _, r in ativas.sort_values('saldo', ascending=False).iterrows():
                     _render_plan2_divida(r)
                 if ativas.empty:
