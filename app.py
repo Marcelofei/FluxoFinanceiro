@@ -1,5 +1,5 @@
 import streamlit as st
-APP_BUILD = "onboarding-v2-v21"
+APP_BUILD = "mais-v2-v22"
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
@@ -509,6 +509,16 @@ def init_db():
         ON CONFLICT DO NOTHING;
     ''')
 
+    # Preferências leves da interface. Não substitui autenticação/contas; guarda
+    # apenas escolhas do produto como nome de exibição e página inicial.
+    execute_query('''
+        CREATE TABLE IF NOT EXISTS preferencias_app (
+            chave TEXT PRIMARY KEY,
+            valor TEXT,
+            atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    ''')
+
     # Migração: orçamento deixa de ser lançamento e passa a ser dado mensal da categoria.
     _migrar_envelopes_legados()
 
@@ -800,6 +810,24 @@ if not _banco_disponivel():
     st.stop()
 
 init_db()
+
+def preferencia_get(chave, padrao=None):
+    try:
+        dfp = fetch_dataframe('SELECT valor FROM preferencias_app WHERE chave=%s', (chave,), silent=True)
+        if dfp is not None and not dfp.empty:
+            v = dfp.iloc[0].get('valor')
+            if v is not None and str(v).strip() != '':
+                return str(v)
+    except Exception:
+        pass
+    return padrao
+
+def preferencia_set(chave, valor):
+    execute_query('''
+        INSERT INTO preferencias_app (chave, valor, atualizado_em)
+        VALUES (%s,%s,NOW())
+        ON CONFLICT (chave) DO UPDATE SET valor=EXCLUDED.valor, atualizado_em=NOW()
+    ''', (str(chave), None if valor is None else str(valor)))
 
 # =================================================================
 # 5B. IDENTIDADE VISUAL
@@ -1785,6 +1813,44 @@ def _rotulo_comparativo(dataframe, tipo):
             f"· Dif. {sinal}R$ {format_brl(diferenca)}")
 
 
+# Mais 2.0 — configurações organizadas em blocos, visual alinhado ao mockup.
+st.markdown("""
+<style>
+.more2-head { margin:.05rem 0 1.05rem;display:flex;justify-content:space-between;gap:1rem;align-items:flex-start; }
+.more2-title { font-size:2rem;font-weight:760;letter-spacing:-.045em;line-height:1.02;color:#f8fbfc; }
+.more2-sub { margin-top:.34rem;font-size:.86rem;color:#8ba0af; }
+.more2-profile { min-width:190px;border:1px solid rgba(124,151,170,.18);background:linear-gradient(155deg,#10202c,#0d1a24);border-radius:15px;padding:.7rem .85rem;box-shadow:0 10px 28px rgba(0,0,0,.12); }
+.more2-profile-name { color:#f3f8fa;font-size:.82rem;font-weight:700; }
+.more2-profile-sub { margin-top:.12rem;color:#7f95a4;font-size:.68rem; }
+.more2-section { margin:.8rem 0 1.15rem; }
+.more2-section-head { display:flex;align-items:center;gap:.72rem;margin:0 0 .62rem;padding:.05rem .08rem; }
+.more2-section-icon { width:42px;height:42px;flex:0 0 42px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:1.05rem;background:rgba(45,212,191,.10);border:1px solid rgba(45,212,191,.13); }
+.more2-section-title { font-size:1.05rem;font-weight:740;color:#f3f8fa;letter-spacing:-.02em; }
+.more2-section-sub { margin-top:.1rem;color:#7e93a2;font-size:.7rem; }
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.more2-card-anchor) { border:1px solid rgba(126,153,172,.15)!important;border-radius:15px!important;background:linear-gradient(155deg,rgba(17,32,44,.97),rgba(11,23,32,.98))!important;box-shadow:0 10px 28px rgba(0,0,0,.11),inset 0 1px 0 rgba(255,255,255,.016)!important;overflow:hidden!important; }
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.more2-card-anchor) > div { padding:.72rem .78rem!important; }
+.more2-card-anchor { display:block;width:0;height:0;overflow:hidden; }
+.more2-card-copy { display:flex;align-items:center;gap:.72rem;min-height:52px; }
+.more2-card-icon { width:42px;height:42px;flex:0 0 42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.05rem;border:1px solid rgba(255,255,255,.035); }
+.more2-card-icon.blue { background:rgba(96,165,250,.13);color:#9ec5ff; }
+.more2-card-icon.green { background:rgba(52,211,153,.13);color:#72e6bc; }
+.more2-card-icon.purple { background:rgba(168,85,247,.13);color:#c9a3ff; }
+.more2-card-icon.pink { background:rgba(244,114,182,.13);color:#ffabd4; }
+.more2-card-icon.amber { background:rgba(251,191,36,.13);color:#ffd370; }
+.more2-card-icon.orange { background:rgba(251,146,60,.13);color:#ffb47c; }
+.more2-card-title { color:#f0f6f8;font-size:.8rem;font-weight:710;line-height:1.2; }
+.more2-card-desc { margin-top:.14rem;color:#788d9c;font-size:.66rem;line-height:1.3; }
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.more2-card-anchor) .stButton button { min-height:42px!important;border-radius:11px!important;font-size:1.05rem!important;background:rgba(255,255,255,.018)!important;border-color:rgba(124,151,170,.12)!important;color:#91a7b6!important; }
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.more2-card-anchor) .stButton button:hover { background:rgba(45,212,191,.08)!important;border-color:rgba(45,212,191,.28)!important;color:#6ee7d5!important; }
+.more2-section-anchor { display:block;width:0;height:0;overflow:hidden; }
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.more2-section-anchor) { border:1px solid rgba(126,153,172,.13)!important;background:linear-gradient(155deg,rgba(12,25,35,.74),rgba(9,19,27,.78))!important;border-radius:18px!important;box-shadow:0 12px 32px rgba(0,0,0,.10),inset 0 1px 0 rgba(255,255,255,.012)!important;margin-bottom:1rem!important; }
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.more2-section-anchor) > div { padding:1rem 1rem .72rem!important; }
+.more2-back { color:#84a0b1;font-size:.72rem;margin-bottom:.6rem; }
+.more2-mini-note { color:#728897;font-size:.7rem;line-height:1.45; }
+@media(max-width:700px){ .more2-head{display:block}.more2-profile{margin-top:.8rem;min-width:0}.more2-title{font-size:1.65rem}div[data-testid="stVerticalBlockBorderWrapper"]:has(.more2-section-anchor)>div{padding:.75rem .7rem .55rem!important} }
+</style>
+""", unsafe_allow_html=True)
+
 st.sidebar.markdown(
     "<div class='brand2'>"
     "<div class='brand2-mark'>∿</div>"
@@ -1797,7 +1863,8 @@ st.sidebar.markdown("<div class='brand2-version'>Versão 2.0 · Beta</div>", uns
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
-    st.session_state.menu_atual = "🏠 Início"
+    _paginas_inicio = {"Início":"🏠 Início", "Fluxo":"📊 Fluxo e Prioridades", "Planejamento":"📑 Demonstrativo", "Rendas":"💰 Rendas"}
+    st.session_state.menu_atual = _paginas_inicio.get(preferencia_get('pagina_inicial','Início'), "🏠 Início")
 
 _nav_btn("🏠 Início", "nav_inicio", "🏠 Início")
 _nav_btn("📋 Fluxo", "nav_fluxo", "📊 Fluxo e Prioridades")
@@ -1847,6 +1914,7 @@ def exportar_backup_completo():
         'pagamentos.csv': fetch_dataframe('SELECT * FROM pagamentos'),
         'recorrencias_geradas.csv': fetch_dataframe('SELECT * FROM recorrencias_geradas'),
         'orcamentos_categorias.csv': fetch_dataframe('SELECT * FROM orcamentos_categorias'),
+        'preferencias_app.csv': fetch_dataframe('SELECT * FROM preferencias_app'),
     }
     metadata = {
         'schema_version': 3,
@@ -1977,7 +2045,7 @@ def importar_backup(arquivo):
                 raise ValueError(f"Backup ZIP incompleto. Faltam: {', '.join(sorted(faltantes))}")
 
             dfs = {}
-            for nome_csv in obrigatorios | {'pagamentos.csv', 'recorrencias_geradas.csv', 'orcamentos_categorias.csv'}:
+            for nome_csv in obrigatorios | {'pagamentos.csv', 'recorrencias_geradas.csv', 'orcamentos_categorias.csv', 'preferencias_app.csv'}:
                 if nome_csv in nomes:
                     with zf.open(nome_csv) as f:
                         dfs[nome_csv] = pd.read_csv(f)
@@ -1995,9 +2063,10 @@ def importar_backup(arquivo):
         cols_pag = ['lancamento_id','valor','data_pagamento','origem','criado_em']
         cols_rec = ['categoria_id','competencia','criado_em']
         cols_orc = ['id','competencia','categoria','subgrupo','valor_planejado','origem','criado_em','atualizado_em']
+        cols_pref = ['chave','valor','atualizado_em']
 
         with transaction() as cur:
-            cur.execute("TRUNCATE TABLE pagamentos, recorrencias_geradas, orcamentos_categorias, info_dividas, reserva_emergencia, lancamentos, categorias_personalizadas RESTART IDENTITY CASCADE")
+            cur.execute("TRUNCATE TABLE pagamentos, recorrencias_geradas, orcamentos_categorias, preferencias_app, info_dividas, reserva_emergencia, lancamentos, categorias_personalizadas RESTART IDENTITY CASCADE")
             _insert_dataframe(cur, 'categorias_personalizadas', dfs['categorias_personalizadas.csv'], cols_cat)
             _insert_dataframe(cur, 'lancamentos', df_lanc, cols_lanc)
             _insert_dataframe(cur, 'info_dividas', dfs['info_dividas.csv'], cols_info, 'ON CONFLICT (compra_id) DO UPDATE SET credor=EXCLUDED.credor, taxa_juros_mensal=EXCLUDED.taxa_juros_mensal')
@@ -2005,6 +2074,7 @@ def importar_backup(arquivo):
             _insert_dataframe(cur, 'pagamentos', dfs['pagamentos.csv'], cols_pag, 'ON CONFLICT (lancamento_id, origem) DO UPDATE SET valor=EXCLUDED.valor, data_pagamento=EXCLUDED.data_pagamento')
             _insert_dataframe(cur, 'recorrencias_geradas', dfs['recorrencias_geradas.csv'], cols_rec, 'ON CONFLICT (categoria_id, competencia) DO NOTHING')
             _insert_dataframe(cur, 'orcamentos_categorias', dfs.get('orcamentos_categorias.csv', pd.DataFrame()), cols_orc, 'ON CONFLICT DO NOTHING')
+            _insert_dataframe(cur, 'preferencias_app', dfs.get('preferencias_app.csv', pd.DataFrame()), cols_pref, 'ON CONFLICT (chave) DO UPDATE SET valor=EXCLUDED.valor, atualizado_em=EXCLUDED.atualizado_em')
             cur.execute("INSERT INTO reserva_emergencia (id,valor,atualizado_em) VALUES (1,0,CURRENT_DATE) ON CONFLICT DO NOTHING")
             cur.execute("SELECT setval(pg_get_serial_sequence('categorias_personalizadas','id'), COALESCE((SELECT MAX(id) FROM categorias_personalizadas),1), (SELECT COUNT(*)>0 FROM categorias_personalizadas))")
             cur.execute("SELECT setval(pg_get_serial_sequence('lancamentos','id'), COALESCE((SELECT MAX(id) FROM lancamentos),1), (SELECT COUNT(*)>0 FROM lancamentos))")
@@ -4760,28 +4830,181 @@ elif menu == "🏥 Escala de Plantões":
 # MAIS — concentra recursos que não precisam competir na navegação diária
 # -----------------------------------------------------------------
 elif menu == "⚙️ Mais":
-    cabecalho_pagina("⚙️ Mais", "Recursos avançados e configurações. Você não precisa passar por aqui no dia a dia.", "mais")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("＋ Novo lançamento", use_container_width=True):
-            st.session_state["novo_pago_imediato"] = False
-            st.session_state.menu_atual = "📝 Lançamentos"; st.rerun()
-        if st.button("📈 Balanço anual", use_container_width=True):
-            st.session_state.menu_atual = "📈 Balanço Anual"; st.rerun()
-    with c2:
-        if st.button("⚙️ Categorias e automações", use_container_width=True):
-            st.session_state.menu_atual = "⚙️ Gerenciar Categorias"; st.rerun()
-        if st.button("💾 Backup e restauração", use_container_width=True):
-            st.session_state.menu_atual = "💾 Backup e Restauração"; st.rerun()
-        if st.button("🧰 Manutenção e diagnóstico", use_container_width=True):
-            st.session_state.menu_atual = "🧰 Manutenção e Diagnóstico"; st.rerun()
+    nome_exibicao = preferencia_get('nome_exibicao', 'Conta pessoal') or 'Conta pessoal'
+    st.markdown(
+        f"<div class='more2-head'><div><div class='more2-title'>Mais</div>"
+        f"<div class='more2-sub'>Configurações e ferramentas para organizar seu financeiro.</div></div>"
+        f"<div class='more2-profile'><div class='more2-profile-name'>{html.escape(nome_exibicao)}</div>"
+        f"<div class='more2-profile-sub'>Conta pessoal · configurações</div></div></div>",
+        unsafe_allow_html=True,
+    )
+
+    def _more2_go(label, key, destino, icon, title, desc, tone='blue', extra=None):
+        with st.container(border=True):
+            st.markdown("<span class='more2-card-anchor'></span>", unsafe_allow_html=True)
+            ccopy, cbtn = st.columns([6.4, .8], vertical_alignment='center')
+            with ccopy:
+                st.markdown(
+                    f"<div class='more2-card-copy'><div class='more2-card-icon {tone}'>{icon}</div>"
+                    f"<div><div class='more2-card-title'>{html.escape(title)}</div>"
+                    f"<div class='more2-card-desc'>{html.escape(desc)}</div></div></div>",
+                    unsafe_allow_html=True,
+                )
+            with cbtn:
+                if st.button('›', key=key, use_container_width=True, help=label):
+                    if extra:
+                        for k,v in extra.items(): st.session_state[k]=v
+                    st.session_state.menu_atual = destino
+                    st.rerun()
+
+    def _more2_section(icon, title, subtitle, cards):
+        with st.container(border=True):
+            st.markdown("<span class='more2-section-anchor'></span>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='more2-section-head'><div class='more2-section-icon'>{icon}</div>"
+                f"<div><div class='more2-section-title'>{html.escape(title)}</div>"
+                f"<div class='more2-section-sub'>{html.escape(subtitle)}</div></div></div>",
+                unsafe_allow_html=True,
+            )
+            for i in range(0, len(cards), 2):
+                cols = st.columns(2)
+                for col, card in zip(cols, cards[i:i+2]):
+                    with col: _more2_go(**card)
+
+    _more2_section('▰', 'Organização', 'Gerencie as informações principais do app.', [
+        dict(label='Categorias',key='m2_cat',destino='⚙️ Gerenciar Categorias',icon='▣',title='Categorias',desc='Crie e edite categorias de receitas e despesas.',tone='blue'),
+        dict(label='Recorrências',key='m2_rec',destino='🔄 Recorrências',icon='◫',title='Recorrências',desc='Veja contas e receitas geradas automaticamente.',tone='green'),
+        dict(label='Fontes de renda',key='m2_fontes',destino='💰 Rendas',icon='◉',title='Fontes de renda',desc='Adicione e edite suas fontes de renda.',tone='purple'),
+        dict(label='Orçamentos',key='m2_orc',destino='📑 Demonstrativo',icon='◎',title='Orçamentos',desc='Defina e acompanhe orçamentos por categoria.',tone='pink'),
+    ])
+
+    _more2_section('▤', 'Dados', 'Faça backup, restaure ou exporte seus dados.', [
+        dict(label='Backup',key='m2_backup',destino='💾 Backup e Restauração',icon='⇧',title='Backup',desc='Crie uma cópia de segurança completa.',tone='green'),
+        dict(label='Restaurar backup',key='m2_restore',destino='💾 Backup e Restauração',icon='↥',title='Restaurar backup',desc='Restaure seus dados a partir de ZIP ou CSV legado.',tone='purple'),
+        dict(label='Exportar dados',key='m2_export',destino='📤 Exportar Dados',icon='⇩',title='Exportar dados',desc='Baixe lançamentos, categorias e orçamentos em CSV.',tone='amber'),
+        dict(label='Importar dados',key='m2_import',destino='💾 Backup e Restauração',icon='↧',title='Importar dados',desc='Importe um backup completo ou arquivo legado.',tone='orange'),
+    ])
+
+    _more2_section('●', 'Conta e preferências', 'Ajuste o app ao seu jeito.', [
+        dict(label='Perfil',key='m2_perfil',destino='👤 Perfil e Preferências',icon='○',title='Perfil',desc='Nome de exibição e informações básicas.',tone='pink',extra={'config_tab':'Perfil'}),
+        dict(label='Aparência',key='m2_apar',destino='👤 Perfil e Preferências',icon='◌',title='Aparência',desc='Veja o tema visual ativo do app.',tone='blue',extra={'config_tab':'Aparência'}),
+        dict(label='Preferências',key='m2_pref',destino='👤 Perfil e Preferências',icon='⚙',title='Preferências do app',desc='Escolha onde o app abre por padrão.',tone='green',extra={'config_tab':'Preferências'}),
+        dict(label='Segurança',key='m2_sec',destino='👤 Perfil e Preferências',icon='▢',title='Segurança',desc='Veja o modo de acesso e encerre a sessão.',tone='purple',extra={'config_tab':'Segurança'}),
+    ])
+
+    _more2_section('◆', 'Avançado', 'Ferramentas adicionais e manutenção.', [
+        dict(label='Manutenção',key='m2_maint',destino='🧰 Manutenção e Diagnóstico',icon='⌕',title='Manutenção',desc='Rotinas de correção e limpeza de dados.',tone='amber'),
+        dict(label='Diagnóstico',key='m2_diag',destino='🩺 Diagnóstico',icon='⌁',title='Diagnóstico',desc='Verifique banco, dados e status do app.',tone='green'),
+        dict(label='Ferramentas técnicas',key='m2_tools',destino='🧰 Manutenção e Diagnóstico',icon='>_',title='Ferramentas técnicas',desc='Acesse ferramentas administrativas avançadas.',tone='pink'),
+        dict(label='Refazer configuração inicial',key='m2_onb',destino='⚙️ Mais',icon='↶',title='Refazer configuração inicial',desc='Abra o onboarding novamente sem apagar seus dados.',tone='purple',extra={'wizard_ativo':True,'wizard_passo':1,'wizard_rendas':[],'wizard_contas':[],'wizard_orcamentos':[]}),
+    ])
+
+# -----------------------------------------------------------------
+# RECORRÊNCIAS — visão simples; edição estrutural continua em Categorias
+# -----------------------------------------------------------------
+elif menu == "🔄 Recorrências":
+    cabecalho_pagina("🔄 Recorrências", "Contas e receitas que o app gera automaticamente a cada mês.")
+    if st.button("← Voltar para Mais", key="rec_back"): st.session_state.menu_atual='⚙️ Mais'; st.rerun()
+    rec = fetch_dataframe("""SELECT id,tipo,categoria,subgrupo,valor_padrao,dia_pagamento,atraso_meses,data_inicio
+                              FROM categorias_personalizadas WHERE COALESCE(is_recorrente,0)=1
+                              ORDER BY tipo,categoria,subgrupo""")
+    if rec.empty:
+        render_empty_state("Nenhuma recorrência ativa", "Quando uma conta ou renda se repetir todo mês, ela aparecerá aqui.", "↻")
+    else:
+        for _,r in rec.iterrows():
+            nome = str(r.get('subgrupo') or r.get('categoria') or 'Recorrência')
+            tipo = str(r.get('tipo') or '')
+            valor = float_seguro(r.get('valor_padrao'))
+            detalhe = f"R$ {format_brl(valor)} por mês" if valor>0 else "Valor variável"
+            if tipo=='Entrada' and int_seguro(r.get('dia_pagamento'))>0: detalhe += f" · normalmente dia {int_seguro(r.get('dia_pagamento'))}"
+            st.markdown(f"<div class='ux-card'><b>{'↗' if tipo=='Entrada' else '↘'} {html.escape(nome)}</b><br><span class='ux-muted'>{html.escape(detalhe)}</span></div>",unsafe_allow_html=True)
+    if st.button("Gerenciar categorias e recorrências", use_container_width=True): st.session_state.menu_atual='⚙️ Gerenciar Categorias'; st.rerun()
+
+# -----------------------------------------------------------------
+# PERFIL E PREFERÊNCIAS
+# -----------------------------------------------------------------
+elif menu == "👤 Perfil e Preferências":
+    cabecalho_pagina("Conta e preferências", "Ajustes leves da experiência. Dados financeiros continuam separados destas preferências.")
+    if st.button("← Voltar para Mais", key="pref_back"): st.session_state.menu_atual='⚙️ Mais'; st.rerun()
+    tabs = ['Perfil','Aparência','Preferências','Segurança']
+    inicial = st.session_state.get('config_tab','Perfil')
+    try: idx = tabs.index(inicial)
+    except ValueError: idx = 0
+    # st.tabs não permite seleção programática portátil; mostramos o alvo primeiro para manter o clique útil.
+    ordered = [tabs[idx]] + [x for x in tabs if x != tabs[idx]]
+    t1,t2,t3,t4 = st.tabs(ordered)
+    for tab,nome_tab in zip([t1,t2,t3,t4],ordered):
+        with tab:
+            if nome_tab=='Perfil':
+                nome_atual=preferencia_get('nome_exibicao','') or ''
+                nome_novo=st.text_input('Nome de exibição',value=nome_atual,placeholder='Como você quer aparecer no app?')
+                st.caption('Esta preferência é apenas visual e não altera autenticação ou dados financeiros.')
+                if st.button('Salvar perfil',type='primary',key='save_profile'):
+                    preferencia_set('nome_exibicao',nome_novo.strip()); flash('success','Perfil atualizado.'); st.rerun()
+            elif nome_tab=='Aparência':
+                st.markdown('**Tema atual: Escuro refinado**')
+                st.caption('A versão 2.0 usa uma linguagem visual única para manter consistência entre Home, Fluxo, Planejamento e Rendas.')
+                st.info('Outros temas ficam fora desta versão para evitar fragmentar a experiência visual.')
+            elif nome_tab=='Preferências':
+                atual=preferencia_get('pagina_inicial','Início') or 'Início'
+                op=['Início','Fluxo','Planejamento','Rendas']
+                escolha=st.selectbox('Abrir o app em',op,index=op.index(atual) if atual in op else 0)
+                if st.button('Salvar preferência',type='primary',key='save_pref'):
+                    preferencia_set('pagina_inicial',escolha); flash('success','Preferência salva. Ela vale para a próxima sessão.'); st.rerun()
+            else:
+                protegido=bool(os.environ.get('APP_PASSWORD'))
+                st.markdown(f"**Acesso por senha:** {'Ativo' if protegido else 'Não configurado'}")
+                st.caption('A senha continua sendo definida no ambiente de deploy; esta versão não altera o modelo de autenticação.')
+                if st.button('Encerrar sessão',key='logout_app'):
+                    st.session_state['password_correct']=False
+                    st.rerun()
+
+# -----------------------------------------------------------------
+# EXPORTAÇÃO CSV
+# -----------------------------------------------------------------
+elif menu == "📤 Exportar Dados":
+    cabecalho_pagina("📤 Exportar dados", "Baixe cópias legíveis dos principais dados sem alterar o banco.")
+    if st.button("← Voltar para Mais", key="exp_back"): st.session_state.menu_atual='⚙️ Mais'; st.rerun()
+    export_sets = [
+        ('Lançamentos','lancamentos.csv',_df_raw('lancamentos')),
+        ('Categorias','categorias.csv',fetch_dataframe('SELECT * FROM categorias_personalizadas ORDER BY tipo,categoria,subgrupo')),
+        ('Orçamentos','orcamentos.csv',fetch_dataframe('SELECT * FROM orcamentos_categorias ORDER BY competencia,categoria,subgrupo')),
+        ('Dívidas','dividas.csv',fetch_dataframe('SELECT * FROM info_dividas ORDER BY compra_id')),
+    ]
+    for titulo,nome,dfx in export_sets:
+        with st.container(border=True):
+            c1,c2=st.columns([4,1],vertical_alignment='center')
+            c1.markdown(f"**{titulo}**")
+            c1.caption(f"{len(dfx)} registro(s)")
+            c2.download_button('Baixar CSV',data=dfx.to_csv(index=False).encode('utf-8-sig'),file_name=nome,mime='text/csv',key=f'dl_{nome}',use_container_width=True)
     st.divider()
-    if st.button("🧙 Refazer configuração inicial", key="mais_reconfigurar", use_container_width=True):
-        st.session_state['wizard_ativo'] = True
-        st.session_state['wizard_passo'] = 1
-        for _wk in ['wizard_rendas','wizard_contas','wizard_orcamentos']:
-            st.session_state[_wk] = []
-        st.rerun()
+    if st.button('Preparar backup completo ZIP',type='primary'):
+        st.session_state['_backup_blob']=exportar_backup_completo(); st.session_state['_backup_nome']=f"backup_completo_{hoje.strftime('%d_%m_%Y')}.zip"
+    if st.session_state.get('_backup_blob') is not None:
+        st.download_button('Baixar backup completo',data=st.session_state['_backup_blob'],file_name=st.session_state.get('_backup_nome','backup_completo.zip'),mime='application/zip')
+
+# -----------------------------------------------------------------
+# DIAGNÓSTICO — somente leitura
+# -----------------------------------------------------------------
+elif menu == "🩺 Diagnóstico":
+    cabecalho_pagina("🩺 Diagnóstico", "Uma checagem rápida do banco e da consistência dos dados.")
+    if st.button("← Voltar para Mais", key="diag_back"): st.session_state.menu_atual='⚙️ Mais'; st.rerun()
+    ok_db=_banco_disponivel()
+    counts={}
+    for nome,tabela in [('Lançamentos','lancamentos'),('Categorias','categorias_personalizadas'),('Orçamentos','orcamentos_categorias'),('Pagamentos','pagamentos')]:
+        try:
+            d=fetch_dataframe(f'SELECT COUNT(*) n FROM {tabela}',silent=True); counts[nome]=int(d.iloc[0]['n']) if not d.empty else 0
+        except Exception: counts[nome]=None
+    d1,d2,d3=st.columns(3)
+    d1.metric('Banco','Online' if ok_db else 'Indisponível')
+    d2.metric('Lançamentos',counts.get('Lançamentos') if counts.get('Lançamentos') is not None else '—')
+    d3.metric('Categorias',counts.get('Categorias') if counts.get('Categorias') is not None else '—')
+    st.caption(f"Build atual: {APP_BUILD}")
+    if ok_db: st.success('Conexão com o banco respondendo normalmente.')
+    else: st.error('O banco não respondeu ao teste de conexão.')
+    st.markdown('**Estruturas da versão 2.0**')
+    st.write(f"Orçamentos mensais: {counts.get('Orçamentos','—')} · Pagamentos registrados: {counts.get('Pagamentos','—')}")
+    if st.button('Abrir manutenção avançada',use_container_width=True): st.session_state.menu_atual='🧰 Manutenção e Diagnóstico'; st.rerun()
 
 # -----------------------------------------------------------------
 # CATEGORIAS E AUTOMAÇÕES
