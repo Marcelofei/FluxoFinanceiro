@@ -1,5 +1,5 @@
 import streamlit as st
-APP_BUILD = "fluxo-selecao-v3"
+APP_BUILD = "fluxo-v2-v12"
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
@@ -1148,6 +1148,99 @@ st.markdown("""
 .ux-source-attn { background:rgba(210,161,58,.13); color:#d9ae55; }
 .ux-source-ok { background:var(--success-tint); color:var(--success); }
 .ux-secondary-note { color:var(--text-muted); font-size:.78rem; margin:.4rem 0 .8rem; }
+
+
+/* Fluxo 2.0 — agenda financeira com casamento renda → conta */
+.flow2-head { margin:.15rem 0 .7rem; }
+.flow2-title { font-size:1.7rem; font-weight:760; letter-spacing:-.035em; color:var(--text-heading); }
+.flow2-sub { margin-top:.2rem; color:var(--text-muted); font-size:.84rem; }
+.flow2-bridge { border:1px solid var(--success-border); background:linear-gradient(100deg, rgba(25,165,116,.10), var(--bg-card) 58%); border-radius:15px; padding:.9rem 1rem; margin:.55rem 0 1rem; }
+.flow2-bridge.warn { border-color:rgba(210,161,58,.38); background:linear-gradient(100deg, rgba(210,161,58,.10), var(--bg-card) 58%); }
+.flow2-bridge.danger { border-color:var(--danger-border); background:linear-gradient(100deg, var(--danger-tint), var(--bg-card) 58%); }
+.flow2-bridge-grid { display:grid; grid-template-columns:1.25fr .85fr auto; gap:1rem; align-items:center; }
+.flow2-bridge-label { color:var(--text-muted); font-size:.72rem; font-weight:650; }
+.flow2-bridge-name { margin-top:.17rem; font-size:1rem; font-weight:700; color:var(--text-heading); }
+.flow2-bridge-meta { margin-top:.12rem; color:var(--text-muted); font-size:.76rem; }
+.flow2-bridge-value { margin-top:.12rem; font-size:1.25rem; font-weight:720; font-variant-numeric:tabular-nums; }
+.flow2-pill { display:inline-block; border-radius:999px; padding:.28rem .64rem; font-size:.74rem; font-weight:700; white-space:nowrap; }
+.flow2-pill.ok { background:var(--success-tint); color:var(--success); }
+.flow2-pill.warn { background:rgba(210,161,58,.13); color:#d9ae55; }
+.flow2-pill.danger { background:var(--danger-tint); color:var(--danger-text); }
+.flow2-day { margin:1rem 0 .38rem; display:flex; align-items:center; gap:.45rem; color:var(--text-muted); font-size:.78rem; font-weight:700; letter-spacing:.015em; }
+.flow2-day.today { color:var(--accent-strong); }
+.flow2-dot { width:8px; height:8px; border-radius:50%; display:inline-block; background:var(--border-strong); }
+.flow2-dot.today { background:var(--accent); box-shadow:0 0 0 4px var(--accent-tint); }
+.flow2-row-anchor { display:none; }
+.flow2-name { color:var(--text-heading); font-size:.9rem; font-weight:680; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.flow2-meta { color:var(--text-muted); font-size:.72rem; margin-top:.18rem; line-height:1.25; }
+.flow2-meta.danger { color:var(--danger-text); }
+.flow2-meta.warn { color:#d9ae55; }
+.flow2-amount { font-size:1rem; font-weight:730; font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap; }
+.flow2-match { margin-top:.18rem; text-align:right; color:var(--text-muted); font-size:.7rem; line-height:1.22; }
+.flow2-match.ok { color:var(--success); }
+.flow2-match.warn { color:#d9ae55; }
+.flow2-match.danger { color:var(--danger-text); }
+.flow2-paid { opacity:.58; }
+.flow2-income-details { margin:.35rem 0 .7rem 2.5rem; border-left:2px solid var(--accent); padding:.15rem 0 .15rem .8rem; }
+.flow2-income-line { display:grid; grid-template-columns:58px minmax(0,1fr) auto; gap:.55rem; align-items:center; padding:.38rem 0; border-bottom:1px solid var(--border); font-size:.76rem; }
+.flow2-income-line:last-child { border-bottom:0; }
+.flow2-selection { border:1px solid rgba(47,124,246,.34); background:linear-gradient(100deg, rgba(47,124,246,.12), var(--bg-card)); border-radius:13px; padding:.72rem .85rem; margin:.55rem 0 .9rem; }
+.flow2-selection strong { font-variant-numeric:tabular-nums; }
+.flow2-help { color:var(--text-muted); font-size:.73rem; margin:.35rem 0 .8rem; }
+.flow2-batch-note { border-left:3px solid var(--accent); padding-left:.75rem; margin:.35rem 0 .65rem; }
+
+/* Faz o container Streamlit das linhas se aproximar do card horizontal do mockup. */
+[data-testid="stVerticalBlockBorderWrapper"]:has(.flow2-row-anchor) {
+    border-color:var(--border) !important; border-radius:13px !important; background:rgba(255,255,255,.012) !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:has(.flow2-row-anchor):hover { border-color:var(--border-strong) !important; }
+
+/* Home 2.0 — orientação antes de análise */
+.home2-head { margin:.2rem 0 1rem; }
+.home2-hello { font-size:1.65rem; font-weight:760; letter-spacing:-.035em; color:var(--text-heading); line-height:1.08; }
+.home2-sub { margin-top:.32rem; color:var(--text-muted); font-size:.9rem; }
+.home2-period { display:inline-flex; align-items:center; gap:.35rem; border:1px solid var(--border-strong); border-radius:9px; padding:.4rem .65rem; color:var(--text-muted); font-size:.78rem; }
+.home2-hero { border:1px solid var(--success-border); background:linear-gradient(100deg, var(--success-tint), var(--bg-card) 55%); border-radius:16px; padding:1.15rem 1.25rem; margin:.35rem 0 1rem; }
+.home2-hero-grid { display:grid; grid-template-columns:1.05fr 1fr; gap:1.2rem; align-items:center; }
+.home2-hero-side { border-left:1px solid var(--border); padding-left:1.2rem; }
+.home2-hero.warn { border-color:rgba(210,161,58,.38); background:linear-gradient(100deg, rgba(210,161,58,.10), var(--bg-card) 55%); }
+.home2-hero.danger { border-color:var(--danger-border); background:linear-gradient(100deg, var(--danger-tint), var(--bg-card) 55%); }
+.home2-eyebrow { color:var(--text-muted); font-size:.74rem; font-weight:650; letter-spacing:.02em; }
+.home2-income-name { margin-top:.28rem; color:var(--text-heading); font-size:1.08rem; font-weight:700; }
+.home2-income-value { margin-top:.18rem; font-size:1.8rem; font-weight:760; font-variant-numeric:tabular-nums; color:var(--success); letter-spacing:-.035em; }
+.home2-income-date { color:var(--text-muted); font-size:.78rem; }
+.home2-bridge-value { margin-top:.2rem; font-size:1.4rem; font-weight:720; font-variant-numeric:tabular-nums; color:var(--text-heading); }
+.home2-status { margin-top:.55rem; border-radius:10px; padding:.55rem .7rem; font-size:.79rem; line-height:1.35; }
+.home2-status.ok { background:var(--success-tint); color:var(--text-primary); }
+.home2-status.warn { background:rgba(210,161,58,.13); color:var(--text-primary); }
+.home2-status.danger { background:var(--danger-tint); color:var(--text-primary); }
+.home2-panel { border:1px solid var(--border); background:var(--bg-card); border-radius:16px; padding:1rem 1.05rem; margin:.55rem 0; }
+.home2-panel-title { font-size:1rem; font-weight:700; color:var(--text-heading); margin-bottom:.55rem; }
+.home2-alert-row { border-radius:11px; padding:.68rem .75rem; margin:.36rem 0; border:1px solid var(--border); background:rgba(255,255,255,.012); }
+.home2-alert-row.danger { background:var(--danger-tint); border-color:var(--danger-border); }
+.home2-alert-row.warn { background:rgba(210,161,58,.08); border-color:rgba(210,161,58,.25); }
+.home2-alert-row.info { background:var(--accent-tint); border-color:rgba(80,180,220,.22); }
+.home2-alert-name { font-weight:670; color:var(--text-heading); font-size:.87rem; }
+.home2-alert-meta { color:var(--text-muted); font-size:.75rem; margin-top:.1rem; }
+.home2-month-card { border:1px solid var(--border); border-radius:13px; background:var(--bg-card); padding:.9rem .95rem; min-height:104px; }
+.home2-month-card.green { background:linear-gradient(140deg, var(--success-tint), var(--bg-card)); }
+.home2-month-card.red { background:linear-gradient(140deg, var(--danger-tint), var(--bg-card)); }
+.home2-month-card.blue { background:linear-gradient(140deg, var(--accent-tint), var(--bg-card)); }
+.home2-month-value { font-size:1.32rem; font-weight:730; font-variant-numeric:tabular-nums; letter-spacing:-.025em; }
+.home2-month-label { color:var(--text-muted); font-size:.76rem; margin-top:.16rem; }
+.home2-forecast { border-left:1px solid var(--border); padding-left:.9rem; min-height:104px; }
+.home2-forecast-title { color:var(--text-muted); font-size:.72rem; }
+.home2-forecast-line { font-size:.8rem; font-weight:620; margin-top:.38rem; font-variant-numeric:tabular-nums; }
+.home2-timeline { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.55rem; align-items:stretch; }
+.home2-event { border:1px solid var(--border); border-radius:11px; padding:.65rem .7rem; background:rgba(255,255,255,.012); min-height:94px; }
+.home2-event.today { border-color:rgba(80,180,220,.25); background:var(--accent-tint); }
+.home2-event.in { border-color:var(--success-border); background:var(--success-tint); }
+.home2-event.out { border-color:rgba(210,161,58,.26); background:rgba(210,161,58,.08); }
+.home2-event-date { font-size:.72rem; font-weight:700; color:var(--text-heading); }
+.home2-event-name { margin-top:.2rem; color:var(--text-muted); font-size:.72rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.home2-event-value { margin-top:.28rem; font-size:.8rem; font-weight:700; font-variant-numeric:tabular-nums; }
+.home2-quick-note { color:var(--text-muted); font-size:.75rem; margin-top:.1rem; }
+.home2-tip { border:1px solid rgba(80,180,220,.2); background:var(--accent-tint); border-radius:10px; padding:.55rem .75rem; color:var(--text-muted); font-size:.76rem; margin-top:.8rem; }
 @media (max-width:640px) {
   .ux-value { font-size:1.1rem; }
   .ux-card, .ux-card-strong { padding:.8rem .85rem; }
@@ -1155,6 +1248,24 @@ st.markdown("""
   .ux-kpi-value { font-size:1.16rem; }
   .ux-flow-category { display:none; }
   .ux-flow-value-main { font-size:.95rem; }
+  .home2-hello { font-size:1.35rem; }
+  .home2-income-value { font-size:1.5rem; }
+  .home2-hero-grid { grid-template-columns:1fr; }
+  .home2-hero-side { border-left:0; border-top:1px solid var(--border); padding-left:0; padding-top:.8rem; }
+  .home2-timeline { grid-template-columns:1fr 1fr; }
+  .home2-forecast { border-left:0; border-top:1px solid var(--border); padding-left:0; padding-top:.7rem; min-height:0; }
+  .flow2-title { font-size:1.4rem; }
+  .flow2-bridge-grid { grid-template-columns:1fr; gap:.55rem; }
+  .flow2-bridge-value { font-size:1.08rem; }
+  .flow2-income-details { margin-left:.35rem; }
+  .flow2-income-line { grid-template-columns:48px minmax(0,1fr) auto; }
+  [data-testid="stHorizontalBlock"]:has(.flow2-row-anchor) { flex-wrap:wrap !important; gap:.18rem !important; align-items:center !important; }
+  [data-testid="stHorizontalBlock"]:has(.flow2-row-anchor) > div:nth-child(1) { flex:0 0 32px !important; min-width:32px !important; }
+  [data-testid="stHorizontalBlock"]:has(.flow2-row-anchor) > div:nth-child(2) { flex:1 1 calc(100% - 42px) !important; min-width:180px !important; }
+  [data-testid="stHorizontalBlock"]:has(.flow2-row-anchor) > div:nth-child(3) { flex:1 1 58% !important; min-width:150px !important; }
+  [data-testid="stHorizontalBlock"]:has(.flow2-row-anchor) > div:nth-child(4) { flex:0 0 112px !important; min-width:112px !important; }
+  [data-testid="stHorizontalBlock"]:has(.flow2-row-anchor) > div:nth-child(5) { flex:0 0 42px !important; min-width:42px !important; }
+
   .ux-dark-table { min-width:620px; font-size:.76rem; }
   .ux-dark-table th, .ux-dark-table td { padding:.48rem .52rem; }
   /* No Fluxo, mantém descrição e valor lado a lado; o botão desce inteiro. */
@@ -1317,38 +1428,22 @@ def _rotulo_comparativo(dataframe, tipo):
 
 
 st.sidebar.markdown(
-    "<div style='font-weight:700; font-size:1.08rem; color:oklch(96% 0.003 250);'>💰 Gestão Financeira</div>"
+    "<div style='font-weight:700; font-size:1.08rem; color:oklch(96% 0.003 250);'>〽 Meu Financeiro</div>"
     "<div style='font-size:.78rem; color:oklch(60% 0.01 250); margin:.15rem 0 .55rem;'>Seu dinheiro, sem ruído.</div>",
     unsafe_allow_html=True,
 )
-st.sidebar.caption("Build cobertura-rendas-v10")
+st.sidebar.caption("Versão 2.0 · Home + Fluxo beta")
 st.sidebar.divider()
 
 if "menu_atual" not in st.session_state:
     st.session_state.menu_atual = "🏠 Início"
 
-st.sidebar.markdown("<div class='nav-eyebrow'>Dia a Dia</div>", unsafe_allow_html=True)
+st.sidebar.markdown("<div class='nav-eyebrow'>Navegação</div>", unsafe_allow_html=True)
 _nav_btn("🏠 Início", "nav_inicio", "🏠 Início")
-_nav_btn("➕ Novo Lançamento", "nav_lancamentos", "📝 Lançamentos")
-_nav_btn("📋 Fluxo do Mês", "nav_fluxo", "📊 Fluxo e Prioridades")
-
-st.sidebar.markdown("<div class='nav-eyebrow'>Análise</div>", unsafe_allow_html=True)
-_nav_btn("📊 Demonstrativo", "nav_demonstrativo", "📑 Demonstrativo")
-_nav_btn("💳 Dívidas", "nav_dividas", "💳 Dívidas")
-_nav_btn("📈 Balanço Anual", "nav_balanco", "📈 Balanço Anual")
-_nav_btn("🏥 Plantões", "nav_escala", "🏥 Escala de Plantões")
-
-_config_destinos = ("⚙️ Gerenciar Categorias", "💾 Backup e Restauração", "🧰 Manutenção e Diagnóstico")
-with st.sidebar.expander("⚙️ Configurações", expanded=st.session_state.menu_atual in _config_destinos):
-    _nav_btn("⚙️ Categorias e Automações", "nav_categorias", "⚙️ Gerenciar Categorias", container=st)
-    _nav_btn("💾 Backup e Restauração", "nav_backup", "💾 Backup e Restauração", container=st)
-    _nav_btn("🧰 Manutenção e diagnóstico", "nav_manutencao", "🧰 Manutenção e Diagnóstico", container=st)
-    if st.button("🧙 Reconfigurar App", key="btn_abrir_wizard", use_container_width=True):
-        st.session_state['wizard_ativo'] = True
-        st.session_state['wizard_passo'] = 0
-        for _wk in ['wizard_hospitais','wizard_fixas','wizard_envelopes','wizard_dividas']:
-            st.session_state[_wk] = []
-        st.rerun()
+_nav_btn("📋 Fluxo", "nav_fluxo", "📊 Fluxo e Prioridades")
+_nav_btn("💡 Planejamento", "nav_planejamento", "📑 Demonstrativo")
+_nav_btn("💰 Rendas", "nav_rendas", "🏥 Escala de Plantões")
+_nav_btn("⚙️ Mais", "nav_mais", "⚙️ Mais")
 
 menu = st.session_state.menu_atual
 st.sidebar.divider()
@@ -1937,16 +2032,18 @@ def _consolidar_operacional(df):
     base = base[base['eh_orcamento'].fillna(0).astype(int) == 0].copy()
     mask_cred = (base['tipo'] == 'Despesa') & (base['forma_pagamento'] == 'Crédito')
     if mask_cred.any():
-        grp = base[mask_cred]
-        all_paid = bool((grp['pago'] == 1).all())
-        datas_pg = pd.to_datetime(grp['data_pagamento'], errors='coerce').dropna() if 'data_pagamento' in grp.columns else pd.Series(dtype='datetime64[ns]')
-        data_pg = datas_pg.max().date() if all_paid and not datas_pg.empty else None
-        linhas.append({
-            'id_ui':'cartao', 'tipo':'Despesa', 'categoria':'Cartão de Crédito', 'descricao':"💳 Fatura do cartão",
-            'valor':float(grp['valor'].sum()), 'valor_pago':float(grp['valor_pago'].sum()), 'pago':1 if all_paid else 0,
-            'data_vencimento':pd.to_datetime(grp['data_vencimento']).min().date(), 'data_pagamento':data_pg, 'prioridade':'Alta 🔴',
-            'ids':grp['id'].astype(int).tolist(), 'consolidado':True,
-        })
+        credito = base[mask_cred].copy()
+        credito['_mes_fatura'] = pd.to_datetime(credito['data_vencimento']).dt.to_period('M').astype(str)
+        for mes_fatura, grp in credito.groupby('_mes_fatura'):
+            all_paid = bool((grp['pago'] == 1).all())
+            datas_pg = pd.to_datetime(grp['data_pagamento'], errors='coerce').dropna() if 'data_pagamento' in grp.columns else pd.Series(dtype='datetime64[ns]')
+            data_pg = datas_pg.max().date() if all_paid and not datas_pg.empty else None
+            linhas.append({
+                'id_ui':f'cartao_{mes_fatura}', 'tipo':'Despesa', 'categoria':'Cartão de Crédito', 'descricao':"💳 Fatura do cartão",
+                'valor':float(grp['valor'].sum()), 'valor_pago':float(grp['valor_pago'].sum()), 'pago':1 if all_paid else 0,
+                'data_vencimento':pd.to_datetime(grp['data_vencimento']).min().date(), 'data_pagamento':data_pg, 'prioridade':'Alta 🔴',
+                'ids':grp['id'].astype(int).tolist(), 'consolidado':True,
+            })
     restante = base[~mask_cred].copy()
     mask_plant = (restante['tipo'] == 'Entrada') & restante['descricao'].str.contains('plant', case=False, na=False)
     plant = restante[mask_plant].copy()
@@ -2338,6 +2435,301 @@ def _render_plano_pagamentos(df_ops, ano, mes):
             )
 
 
+
+def _fluxo2_texto_cobertura(conta):
+    """Texto curto de casamento para uma conta pendente."""
+    if not conta:
+        return "", ""
+    if float_seguro(conta.get('descoberto')) > 0.004:
+        return "danger", f"Sem renda suficiente · faltam R$ {format_brl(conta['descoberto'])}"
+
+    tardias = [a for a in conta.get('alocacoes', []) if a.get('tipo') == 'apos_vencimento']
+    if tardias:
+        a = min(tardias, key=lambda x: x['data'])
+        dias = max((a['data'] - conta['vencimento']).days, 1)
+        plural = "dia" if dias == 1 else "dias"
+        return "warn", f"{a['fonte']} entra em {a['data'].strftime('%d/%m')} · {dias} {plural} depois"
+
+    no_prazo = [a for a in conta.get('alocacoes', []) if a.get('tipo') in ('no_prazo', 'historico')]
+    if no_prazo:
+        nomes = []
+        for a in no_prazo:
+            nome = str(a['fonte'])
+            if nome not in nomes:
+                nomes.append(nome)
+        if len(nomes) == 1:
+            data_fonte = max(a['data'] for a in no_prazo if str(a['fonte']) == nomes[0])
+            return "ok", f"Coberto por {nomes[0]} · {data_fonte.strftime('%d/%m')}"
+        return "ok", "Coberto por " + " + ".join(nomes[:2]) + (" + …" if len(nomes) > 2 else "")
+    return "danger", "Sem fonte de renda associada"
+
+
+def _fluxo2_resumo_proxima_renda(plano, ano, mes):
+    fontes = plano.get('fontes', [])
+    pendentes = [c for c in plano.get('contas', []) if not c.get('pago')]
+    referencia = hoje if (ano == hoje.year and mes == hoje.month) else datetime.date(ano, mes, 1)
+    candidatas = [f for f in fontes if (not f.get('recebido')) and f.get('data') >= referencia]
+    if not candidatas:
+        return None
+    fonte = min(candidatas, key=lambda f: (f['data'], f['descricao']))
+    contas_ate = [c for c in pendentes if referencia <= c['vencimento'] <= fonte['data']]
+    total = round(sum(float_seguro(c['valor']) for c in contas_ate), 2)
+    risco = round(sum(float_seguro(c.get('risco_valor')) for c in contas_ate), 2)
+    return {'fonte': fonte, 'contas': contas_ate, 'total': total, 'risco': risco}
+
+
+def _render_fluxo2_ponte(plano, ano, mes):
+    resumo = _fluxo2_resumo_proxima_renda(plano, ano, mes)
+    if not resumo:
+        st.markdown(
+            "<div class='flow2-bridge'><div class='flow2-bridge-grid'>"
+            "<div><div class='flow2-bridge-label'>Próxima renda</div><div class='flow2-bridge-name'>Nenhuma renda futura neste período</div>"
+            "<div class='flow2-bridge-meta'>O Fluxo continua mostrando as contas e recebimentos cadastrados.</div></div>"
+            "<div></div><div><span class='flow2-pill ok'>Sem próxima renda</span></div></div></div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    fonte, total, risco = resumo['fonte'], resumo['total'], resumo['risco']
+    if risco > 0.004:
+        cls, pill_cls = 'danger', 'danger'
+        status = f"Faltam R$ {format_brl(risco)}"
+    else:
+        cls, pill_cls = '', 'ok'
+        status = '✓ Coberto'
+    st.markdown(
+        f"<div class='flow2-bridge {cls}'><div class='flow2-bridge-grid'>"
+        f"<div><div class='flow2-bridge-label'>Próxima renda</div>"
+        f"<div class='flow2-bridge-name'>{html.escape(str(fonte['descricao']))}</div>"
+        f"<div class='flow2-bridge-meta'>{fonte['data'].strftime('%d/%m')} · R$ {format_brl(fonte['valor'])}</div></div>"
+        f"<div><div class='flow2-bridge-label'>Até lá vencem</div>"
+        f"<div class='flow2-bridge-value'>R$ {format_brl(total)}</div>"
+        f"<div class='flow2-bridge-meta'>{len(resumo['contas'])} conta(s)</div></div>"
+        f"<div><span class='flow2-pill {pill_cls}'>{status}</span></div>"
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _fluxo2_pagar_lote_planejado(linhas, data_pagamento):
+    """Baixa em lote usando o valor planejado de cada linha real, em uma transação."""
+    ids = []
+    for r in linhas:
+        ids.extend(int(x) for x in r['ids'])
+    ids = sorted(set(ids))
+    if not ids:
+        return
+    with transaction() as cur:
+        cur.execute(
+            "UPDATE lancamentos SET pago=1, valor_pago=valor, data_pagamento=%s WHERE id = ANY(%s)",
+            (data_pagamento, ids),
+        )
+
+
+def _render_fluxo2_timeline(df_visivel, df_todos, plano, prefixo='fluxo2'):
+    if df_visivel.empty:
+        render_empty_state("Nada por aqui", "Não há lançamentos que correspondam a este filtro.", "○")
+        return
+
+    contas_map = {str(c['id']): c for c in plano.get('contas', [])}
+    fontes_map = {str(f['id']): f for f in plano.get('fontes', [])}
+
+    # Barra de seleção: o total é uma simulação. Pagamento em lote só é oferecido
+    # quando tudo selecionado são despesas pendentes.
+    selecionados = []
+    for _, r in df_todos.iterrows():
+        key = f"{prefixo}_sel_{r['id_ui']}"
+        if bool(st.session_state.get(key, False)):
+            valor = _valor_operacional(r)
+            selecionados.append((r, valor, key))
+
+    if selecionados:
+        total_sel = round(sum(v for _, v, _ in selecionados), 2)
+        todos_pagaveis = all((r['tipo'] == 'Despesa') and int_seguro(r.get('pago')) == 0 for r, _, _ in selecionados)
+        with st.container(border=True):
+            st.markdown("<span class='flow2-selection'></span>", unsafe_allow_html=True)
+            sc1, sc2, sc3 = st.columns([3.4, 1.05, 1.35])
+            sc1.markdown(f"**{len(selecionados)} selecionado(s) · R$ {format_brl(total_sel)}**")
+            sc1.caption("Seleção para organizar pagamentos; não representa saldo bancário.")
+            if sc2.button("Limpar", key=f"{prefixo}_clear", use_container_width=True):
+                for _, _, key in selecionados:
+                    st.session_state[key] = False
+                st.session_state.pop(f'{prefixo}_batch_open', None)
+                st.rerun()
+            if todos_pagaveis:
+                if sc3.button("Pagar selecionadas", key=f"{prefixo}_batch", type="primary", use_container_width=True):
+                    st.session_state[f'{prefixo}_batch_open'] = True
+                    st.rerun()
+            else:
+                sc3.caption("Pagamento em lote só para despesas pendentes")
+
+        if todos_pagaveis and st.session_state.get(f'{prefixo}_batch_open'):
+            with st.container(border=True):
+                st.markdown("<div class='flow2-batch-note'><b>Confirmar pagamento em lote</b><br>Será usado o valor planejado de cada conta. Se algum valor real for diferente, pague essa conta individualmente.</div>", unsafe_allow_html=True)
+                with st.form(f"{prefixo}_batch_form"):
+                    data_lote = st.date_input("Data dos pagamentos", value=hoje, format="DD/MM/YYYY")
+                    bc1, bc2 = st.columns([1.4, 1])
+                    ok_lote = bc1.form_submit_button("Confirmar pagamentos", type="primary", use_container_width=True)
+                    cancel_lote = bc2.form_submit_button("Cancelar", use_container_width=True)
+                if cancel_lote:
+                    st.session_state.pop(f'{prefixo}_batch_open', None)
+                    st.rerun()
+                if ok_lote:
+                    try:
+                        _fluxo2_pagar_lote_planejado([r for r, _, _ in selecionados], data_lote)
+                    except Exception as e:
+                        st.error(f"Não foi possível concluir o pagamento em lote: {e}")
+                    else:
+                        for _, _, key in selecionados:
+                            st.session_state[key] = False
+                        st.session_state.pop(f'{prefixo}_batch_open', None)
+                        flash('success', f"{len(selecionados)} contas marcadas como pagas.")
+                        st.rerun()
+
+    dados = df_visivel.sort_values(['data_vencimento', 'tipo', 'descricao']).copy()
+    for data_ref, grupo in dados.groupby('data_vencimento', sort=True):
+        data_ref = pd.to_datetime(data_ref).date()
+        if data_ref == hoje:
+            titulo_dia, dia_cls, dot_cls = f"HOJE · {data_ref.strftime('%d/%m')}", 'today', 'today'
+        else:
+            titulo_dia, dia_cls, dot_cls = data_ref.strftime('%d/%m'), '', ''
+        st.markdown(f"<div class='flow2-day {dia_cls}'><span class='flow2-dot {dot_cls}'></span>{titulo_dia}</div>", unsafe_allow_html=True)
+
+        for _, r in grupo.iterrows():
+            pago = int_seguro(r.get('pago')) == 1
+            atrasado = bool(r.get('atrasado'))
+            planejado = float_seguro(r.get('valor'))
+            realizado = float_seguro(r.get('valor_pago'))
+            valor_exibir = realizado if pago and realizado > 0 else planejado
+            id_ui = str(r['id_ui'])
+            conta = contas_map.get(id_ui) if r['tipo'] == 'Despesa' else None
+            fonte = fontes_map.get(id_ui) if r['tipo'] == 'Entrada' else None
+            chave_acao = f"{prefixo}:{id_ui}"
+
+            if pago:
+                dt_pago = pd.to_datetime(r.get('data_pagamento'), errors='coerce')
+                data_pago_txt = dt_pago.strftime('%d/%m') if pd.notna(dt_pago) else data_ref.strftime('%d/%m')
+                status_meta = ("Pago" if r['tipo'] == 'Despesa' else "Recebido") + f" em {data_pago_txt}"
+                meta_cls = ''
+            elif atrasado:
+                dias = max((hoje - data_ref).days, 1)
+                status_meta = (f"Venceu há {dias} {'dia' if dias == 1 else 'dias'}" if r['tipo'] == 'Despesa' else f"Esperado há {dias} {'dia' if dias == 1 else 'dias'}")
+                meta_cls = 'danger'
+            elif data_ref == hoje:
+                status_meta = "Vence hoje" if r['tipo'] == 'Despesa' else "Previsto hoje"
+                meta_cls = 'warn' if r['tipo'] == 'Despesa' else ''
+            elif data_ref == hoje + datetime.timedelta(days=1):
+                status_meta = "Vence amanhã" if r['tipo'] == 'Despesa' else "Previsto amanhã"
+                meta_cls = 'warn' if r['tipo'] == 'Despesa' else ''
+            else:
+                status_meta = ("Vence " if r['tipo'] == 'Despesa' else "Previsto para ") + data_ref.strftime('%d/%m')
+                meta_cls = ''
+
+            match_cls, match_text = ('', '')
+            if (not pago) and r['tipo'] == 'Despesa':
+                match_cls, match_text = _fluxo2_texto_cobertura(conta)
+            elif (not pago) and r['tipo'] == 'Entrada' and fonte:
+                futuros = [x for x in fonte.get('compromissos', []) if not x.get('pago')]
+                comprometido = round(sum(float_seguro(x.get('valor')) for x in futuros), 2)
+                match_text = f"R$ {format_brl(comprometido)} comprometidos" if comprometido > 0.004 else "Ainda sem contas atribuídas"
+
+            with st.container(border=True):
+                csel, cdesc, cvalor, caction, cextra = st.columns([.34, 4.25, 2.25, 1.25, .46])
+                csel.checkbox("Selecionar", key=f"{prefixo}_sel_{id_ui}", label_visibility="collapsed")
+                paid_cls = ' flow2-paid' if pago else ''
+                cdesc.markdown(
+                    f"<span class='flow2-row-anchor'></span><div class='{paid_cls.strip()}'>"
+                    f"<div class='flow2-name'>{html.escape(str(r['descricao']))}</div>"
+                    f"<div class='flow2-meta {meta_cls}'>{html.escape(status_meta)}</div></div>",
+                    unsafe_allow_html=True,
+                )
+
+                sinal = '+' if r['tipo'] == 'Entrada' else ''
+                val_cls = 'ux-positive' if r['tipo'] == 'Entrada' else ('ux-negative' if not pago else '')
+                diff = realizado - planejado if pago else 0.0
+                diff_txt = ''
+                if pago and abs(diff) > 0.004:
+                    diff_txt = f"Planejado R$ {format_brl(planejado)}"
+                elif match_text:
+                    diff_txt = match_text
+                cvalor.markdown(
+                    f"<div class='{paid_cls.strip()}'><div class='flow2-amount {val_cls}'>{sinal}R$ {format_brl(valor_exibir)}</div>"
+                    f"<div class='flow2-match {match_cls}'>{html.escape(diff_txt)}</div></div>",
+                    unsafe_allow_html=True,
+                )
+
+                if pago:
+                    caction.caption("Concluído")
+                else:
+                    rotulo = "Pagar" if r['tipo'] == 'Despesa' else "Receber"
+                    if caction.button(rotulo, key=f"{prefixo}_act_{id_ui}", type="primary" if atrasado else "secondary", use_container_width=True):
+                        st.session_state['_pagamento_aberto'] = chave_acao
+                        st.rerun()
+
+                if pago:
+                    if cextra.button("↩", key=f"{prefixo}_undo_{id_ui}", help="Estornar", use_container_width=True):
+                        _marcar_ids(r['ids'], pago=False)
+                        flash('success', 'Baixa desfeita. O planejado foi preservado.')
+                        st.rerun()
+                elif r['tipo'] == 'Entrada' and fonte:
+                    detalhe_key = f"{prefixo}_detail_{id_ui}"
+                    if cextra.button("›", key=f"{prefixo}_detail_btn_{id_ui}", help="Ver contas ligadas a esta renda", use_container_width=True):
+                        st.session_state[detalhe_key] = not bool(st.session_state.get(detalhe_key, False))
+                        st.rerun()
+                else:
+                    cextra.write("")
+
+            if (not pago) and st.session_state.get('_pagamento_aberto') == chave_acao:
+                acao_nome = 'pagamento' if r['tipo'] == 'Despesa' else 'recebimento'
+                with st.container(border=True):
+                    st.markdown(f"**Confirmar {acao_nome} · {r['descricao']}**")
+                    st.caption(f"Planejado: R$ {format_brl(planejado)}")
+                    with st.form(f"{prefixo}_pay_form_{id_ui}"):
+                        f1, f2 = st.columns([1.35, 1])
+                        valor_txt = f1.text_input(
+                            "Quanto foi realmente pago?" if r['tipo'] == 'Despesa' else "Quanto foi realmente recebido?",
+                            value=format_brl(planejado), key=f"{prefixo}_pay_value_{id_ui}",
+                        )
+                        data_real = f2.date_input("Data", value=hoje, format="DD/MM/YYYY", key=f"{prefixo}_pay_date_{id_ui}")
+                        fb1, fb2 = st.columns([1.4, 1])
+                        confirmar = fb1.form_submit_button("Confirmar pagamento" if r['tipo'] == 'Despesa' else "Confirmar recebimento", type="primary", use_container_width=True)
+                        cancelar = fb2.form_submit_button("Cancelar", use_container_width=True)
+                    if cancelar:
+                        st.session_state.pop('_pagamento_aberto', None)
+                        st.rerun()
+                    if confirmar:
+                        valor_informado = parse_valor(valor_txt)
+                        try:
+                            total_real = _registrar_pagamento_ids(r['ids'], valor_real_total=valor_informado, data_pagamento=data_real)
+                        except Exception as e:
+                            st.error(f"Não foi possível registrar o {acao_nome}: {e}")
+                        else:
+                            st.session_state.pop('_pagamento_aberto', None)
+                            dif = total_real - planejado
+                            if abs(dif) > 0.004:
+                                sinal_dif = '+' if dif > 0 else '−'
+                                flash('success', f"{acao_nome.capitalize()} registrado: R$ {format_brl(total_real)} ({sinal_dif} R$ {format_brl(abs(dif))} vs. planejado).")
+                            else:
+                                flash('success', f"{acao_nome.capitalize()} registrado por R$ {format_brl(total_real)}.")
+                            st.rerun()
+
+            detalhe_key = f"{prefixo}_detail_{id_ui}"
+            if (not pago) and r['tipo'] == 'Entrada' and fonte and st.session_state.get(detalhe_key, False):
+                compromissos = [x for x in fonte.get('compromissos', []) if not x.get('pago')]
+                st.markdown("<div class='flow2-income-details'>", unsafe_allow_html=True)
+                if compromissos:
+                    for item in sorted(compromissos, key=lambda x: x['vencimento']):
+                        st.markdown(
+                            f"<div class='flow2-income-line'><span>{item['vencimento'].strftime('%d/%m')}</span>"
+                            f"<span>{html.escape(str(item['descricao']))}</span><b>R$ {format_brl(item['valor'])}</b></div>",
+                            unsafe_allow_html=True,
+                        )
+                    nao_comp = max(float_seguro(fonte.get('restante')), 0.0)
+                    st.caption(f"Ainda não comprometido: R$ {format_brl(nao_comp)}")
+                else:
+                    st.caption("Nenhuma conta pendente foi atribuída a esta renda.")
+                st.markdown("</div>", unsafe_allow_html=True)
+
 def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_editar=False, permitir_selecao=False):
     if df_ops.empty:
         render_empty_state("Nada pendente aqui", "Não há lançamentos que correspondam a este filtro.")
@@ -2504,100 +2896,212 @@ if st.session_state.get('wizard_ativo'):
 # INÍCIO
 # -----------------------------------------------------------------
 elif menu == "🏠 Início":
-    cabecalho_pagina(f"🏠 Visão de {meses[mes_selecionado-1]}", "O que já aconteceu, o que ainda falta e o que exige sua atenção.", "inicio")
     df_mes = _dados_mes()
+
+    # Cabeçalho orientado a contexto, não a análise.
+    st.markdown(
+        f"<div class='home2-head'><div class='home2-hello'>Olá 👋</div>"
+        f"<div class='home2-sub'>{meses[mes_selecionado-1]} de {ano_selecionado} · veja o que precisa da sua atenção agora.</div></div>",
+        unsafe_allow_html=True,
+    )
+
     if df_mes.empty:
-        render_empty_state("Seu mês ainda está vazio", "Comece registrando uma entrada, despesa ou plantão.", "＋")
-        c1, c2 = st.columns(2)
-        if c1.button("＋ Criar primeiro lançamento", type="primary", use_container_width=True):
-            st.session_state.menu_atual = "📝 Lançamentos"; st.rerun()
-        if c2.button("🏥 Registrar plantão", use_container_width=True):
-            st.session_state.menu_atual = "🏥 Escala de Plantões"; st.rerun()
+        render_empty_state("Vamos organizar seu primeiro ciclo financeiro", "Comece informando de onde vem sua renda. Você pode completar o restante depois.", "＋")
+        c1, c2 = st.columns([1.2, 1])
+        if c1.button("💰 Adicionar minha primeira renda", type="primary", use_container_width=True):
+            st.session_state["novo_tipo"] = "Entrada"
+            st.session_state["novo_pago_imediato"] = False
+            st.session_state.menu_atual = "📝 Lançamentos"
+            st.rerun()
+        if c2.button("＋ Registrar uma conta", use_container_width=True):
+            st.session_state["novo_tipo"] = "Despesa"
+            st.session_state["novo_pago_imediato"] = False
+            st.session_state.menu_atual = "📝 Lançamentos"
+            st.rerun()
     else:
+        # Base operacional real: limites mensais continuam no planejamento, não na Home.
         df_mes['valor'] = pd.to_numeric(df_mes['valor'], errors='coerce').fillna(0.0)
         df_mes['valor_pago'] = pd.to_numeric(df_mes['valor_pago'], errors='coerce').fillna(0.0)
-        ent = df_mes[df_mes['tipo']=='Entrada']
-        desp = df_mes[df_mes['tipo']=='Despesa']
-        recebido = float(ent[ent['pago']==1]['valor_pago'].sum())
-        a_receber = float(ent[ent['pago']==0]['valor'].sum())
-        pago = float(desp[(desp['pago']==1) & (desp['eh_orcamento'].fillna(0).astype(int)==0)]['valor_pago'].sum())
-        despesa_projetada = _total_despesa_projetada(df_mes)
-        saldo_proj = recebido + a_receber - despesa_projetada
+        df_real = df_mes.copy()
+        if 'eh_orcamento' in df_real.columns:
+            df_real = df_real[pd.to_numeric(df_real['eh_orcamento'], errors='coerce').fillna(0).astype(int) == 0].copy()
 
+        ent = df_real[df_real['tipo']=='Entrada']
+        desp = df_real[df_real['tipo']=='Despesa']
+        recebido = float(ent[pd.to_numeric(ent['pago'], errors='coerce').fillna(0).astype(int)==1]['valor_pago'].sum())
+        a_receber = float(ent[pd.to_numeric(ent['pago'], errors='coerce').fillna(0).astype(int)==0]['valor'].sum())
+        pago = float(desp[pd.to_numeric(desp['pago'], errors='coerce').fillna(0).astype(int)==1]['valor_pago'].sum())
+        a_pagar = float(desp[pd.to_numeric(desp['pago'], errors='coerce').fillna(0).astype(int)==0]['valor'].sum())
         resultado_atual = recebido - pago
-        m1,m2,m3,m4 = st.columns(4)
-        with m1: render_kpi("Recebido", recebido, "Entradas já confirmadas", "accent")
-        with m2: render_kpi("Pago", pago, "Despesas já confirmadas")
-        with m3: render_kpi("Resultado até agora", resultado_atual, "Recebido − pago", "positive" if resultado_atual >= 0 else "negative")
-        with m4: render_kpi("Resultado projetado", saldo_proj, f"Inclui R$ {format_brl(a_receber)} ainda a receber", "positive" if saldo_proj >= 0 else "negative")
 
-        # O casamento renda → contas também aparece na Home como sinal de decisão,
-        # sem repetir toda a agenda detalhada.
-        df_home_real = df_mes.copy()
-        if 'eh_orcamento' in df_home_real.columns:
-            df_home_real = df_home_real[pd.to_numeric(df_home_real['eh_orcamento'], errors='coerce').fillna(0).astype(int) == 0].copy()
-        ops_home_cobertura = _consolidar_operacional(df_home_real) if not df_home_real.empty else pd.DataFrame()
-        plano_home = _montar_plano_pagamentos(ops_home_cobertura, ano_selecionado, mes_selecionado)
-        pend_home = [c for c in plano_home['contas'] if not c['pago']]
-        total_pend_home = round(sum(c['valor'] for c in pend_home), 2)
-        risco_home = round(sum(c['risco_valor'] for c in plano_home['risco_contas']), 2)
-        coberto_home = max(round(total_pend_home - risco_home, 2), 0.0)
-        pct_home = (coberto_home / total_pend_home * 100.0) if total_pend_home > 0 else 100.0
+        # A Home olha além da borda do mês: no fim de setembro, por exemplo,
+        # a próxima renda de 05/10 precisa aparecer. O resumo mensal continua
+        # restrito ao mês selecionado; apenas orientação, alertas e timeline
+        # usam uma janela curta para frente.
+        data_ref = data_contexto_ativo
+        limite_home = max(fim_periodo, data_ref + datetime.timedelta(days=45))
+        df_janela = fetch_dataframe(
+            "SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento",
+            (inicio_periodo, limite_home),
+        )
+        if df_janela.empty and len(df_janela.columns) == 0:
+            df_janela = df_real.copy()
+        if not df_janela.empty and 'eh_orcamento' in df_janela.columns:
+            df_janela = df_janela[pd.to_numeric(df_janela['eh_orcamento'], errors='coerce').fillna(0).astype(int) == 0].copy()
 
-        st.markdown("<div class='ux-section-title'>Cobertura das próximas contas</div>", unsafe_allow_html=True)
-        with st.container(border=True):
-            hc1, hc2, hc3, hc4 = st.columns([1.5, 1.2, 1.2, .9])
-            hc1.metric("Coberto no prazo", f"{pct_home:.0f}%", f"R$ {format_brl(coberto_home)} de R$ {format_brl(total_pend_home)}")
-            hc2.metric("Em risco", f"R$ {format_brl(risco_home)}", f"{len(plano_home['risco_contas'])} conta(s)")
-            hc3.metric("Colchão necessário", f"R$ {format_brl(plano_home['reserva_sugerida'])}")
-            if hc4.button("Ver casamento →", key="home_ver_cobertura", type="primary", use_container_width=True):
-                st.session_state.menu_atual = "📊 Fluxo e Prioridades"
-                st.rerun()
+        ops_home = _consolidar_operacional(df_janela) if not df_janela.empty else pd.DataFrame()
+        plano_home = _montar_plano_pagamentos(ops_home, ano_selecionado, mes_selecionado)
 
-        st.markdown("<div class='ux-section-title'>Ações rápidas</div>", unsafe_allow_html=True)
-        a1,a2,a3 = st.columns(3)
-        if a1.button("＋ Novo lançamento", type="primary", use_container_width=True):
-            st.session_state.menu_atual="📝 Lançamentos"; st.rerun()
-        if a2.button("🏥 Registrar plantão", use_container_width=True):
-            st.session_state.menu_atual="🏥 Escala de Plantões"; st.rerun()
-        if a3.button("📋 Abrir fluxo do mês", use_container_width=True):
-            st.session_state.menu_atual="📊 Fluxo e Prioridades"; st.rerun()
+        # ---------------------------------------------------------
+        # 1. PRÓXIMA RENDA + PONTE ATÉ ELA
+        # ---------------------------------------------------------
+        fontes_futuras = [f for f in plano_home['fontes'] if (not f['recebido']) and f['data'] >= data_ref]
+        proxima_renda = min(fontes_futuras, key=lambda f: (f['data'], f['descricao'])) if fontes_futuras else None
+        pendentes = [c for c in plano_home['contas'] if not c['pago']]
 
-        st.markdown("<div class='ux-section-title'>Hoje</div>", unsafe_allow_html=True)
-        ops = _consolidar_operacional(df_mes)
-        atrasados = ops[(ops['pago']==0) & (ops['data_vencimento'] < hoje)] if not ops.empty else pd.DataFrame()
-        proximos = ops[(ops['pago']==0) & (ops['data_vencimento'] >= hoje) & (ops['data_vencimento'] <= hoje + datetime.timedelta(days=7))] if not ops.empty else pd.DataFrame()
-        c1,c2,c3 = st.columns(3)
-        c1.metric("🔴 Atrasados", len(atrasados), f"R$ {format_brl(atrasados['valor'].sum())}" if not atrasados.empty else "R$ 0,00")
-        c2.metric("🟡 Próximos 7 dias", len(proximos), f"R$ {format_brl(proximos[proximos['tipo']=='Despesa']['valor'].sum())}" if not proximos.empty else "R$ 0,00")
-        entradas7 = proximos[proximos['tipo']=='Entrada'] if not proximos.empty else pd.DataFrame()
-        c3.metric("🟢 Entradas em 7 dias", len(entradas7), f"R$ {format_brl(entradas7['valor'].sum())}" if not entradas7.empty else "R$ 0,00")
+        if proxima_renda:
+            contas_ate = [c for c in pendentes if data_ref <= c['vencimento'] <= proxima_renda['data']]
+            total_ate = round(sum(c['valor'] for c in contas_ate), 2)
+            risco_ate = round(sum(c['risco_valor'] for c in contas_ate), 2)
+            qtd_ate = len(contas_ate)
+            dias_renda = (proxima_renda['data'] - data_ref).days
+            quando = "hoje" if dias_renda == 0 else ("amanhã" if dias_renda == 1 else proxima_renda['data'].strftime('%d/%m'))
+            if risco_ate <= 0.004:
+                hero_cls, status_cls = "", "ok"
+                status_titulo = "✓ Cobertura suficiente"
+                status_texto = "Suas próximas contas estão cobertas com as rendas registradas."
+            else:
+                hero_cls, status_cls = "danger", "danger"
+                status_titulo = f"⚠ Faltam R$ {format_brl(risco_ate)}"
+                status_texto = "Há contas que vencem antes de existir cobertura suficiente registrada."
 
-        if not atrasados.empty:
-            st.subheader("🔴 Precisa de atenção")
-            _render_linhas_operacionais(atrasados, 'home_atraso', max_linhas=6)
-        if not proximos.empty:
-            st.subheader("Próximos 7 dias")
-            _render_linhas_operacionais(proximos, 'home_7d', max_linhas=7)
-
-        st.markdown("<div class='ux-section-title'>Reserva de emergência</div>", unsafe_allow_html=True)
-        reserva_atual, reserva_atualizada_em = obter_reserva_emergencia()
-        media_despesa_mensal, n_meses_com_dados = calcular_media_despesa_mensal(hoje)
-        meses_sobrevivencia = reserva_atual / media_despesa_mensal if media_despesa_mensal > 0 else 0
-        r1,r2 = st.columns([2,1])
-        with r1:
-            cobertura_txt = f"{meses_sobrevivencia:.1f} meses de despesas · média de {n_meses_com_dados} mês(es) fechado(s)" if media_despesa_mensal > 0 else "Registre ao menos um mês fechado de despesas para calcular a cobertura"
             st.markdown(
-                f"<div class='ux-card'><span class='ux-muted'>Reserva atual</span>"
-                f"<div class='ux-value'>R$ {format_brl(reserva_atual)}</div>"
-                f"<span class='ux-muted'>{cobertura_txt}</span></div>",
+                f"<div class='home2-hero {hero_cls}'><div class='home2-hero-grid'><div>"
+                f"<div class='home2-eyebrow'>Próxima renda</div>"
+                f"<div class='home2-income-name'>{html.escape(proxima_renda['descricao'])}</div>"
+                f"<div class='home2-income-value'>R$ {format_brl(proxima_renda['valor'])}</div>"
+                f"<div class='home2-income-date'>previstos em {proxima_renda['data'].strftime('%d/%m/%Y')} · {quando}</div></div>"
+                f"<div class='home2-hero-side'><div class='home2-eyebrow'>Até essa data vencem</div>"
+                f"<div class='home2-bridge-value'>R$ {format_brl(total_ate)}</div>"
+                f"<div class='home2-income-date'>{qtd_ate} conta(s)</div>"
+                f"<div class='home2-status {status_cls}'><b>{status_titulo}</b><br>{status_texto}</div></div></div></div>",
                 unsafe_allow_html=True,
             )
-        with r2:
-            with st.expander("Atualizar reserva"):
-                novo = st.text_input("Valor (R$)", value=format_brl(reserva_atual), key="reserva_home")
-                if st.button("Salvar", type="primary", key="salvar_reserva_home", use_container_width=True):
-                    atualizar_reserva_emergencia(parse_valor(novo)); flash('success','Reserva atualizada.'); st.rerun()
+            if st.button("Ver contas até essa renda →", key="home2_ver_ponte", use_container_width=True):
+                st.session_state.menu_atual = "📊 Fluxo e Prioridades"
+                st.rerun()
+        else:
+            risco_total = round(sum(c['risco_valor'] for c in plano_home['risco_contas']), 2)
+            st.markdown(
+                f"<div class='home2-hero {'danger' if pendentes else ''}'>"
+                f"<div class='home2-eyebrow'>Próxima renda</div>"
+                f"<div class='home2-income-name'>Nenhuma renda futura cadastrada neste período</div>"
+                f"<div class='home2-income-date'>{'Ainda há R$ ' + format_brl(a_pagar) + ' a pagar.' if a_pagar > 0 else 'Não há contas pendentes registradas.'}</div>"
+                + (f"<div class='home2-status danger'><b>⚠ R$ {format_brl(risco_total)} sem cobertura no prazo</b><br>Cadastre ou confirme uma próxima renda para organizar essas contas.</div>" if risco_total > 0 else "")
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+
+        # ---------------------------------------------------------
+        # 2. PRECISA DA SUA ATENÇÃO — no máximo 3 itens
+        # ---------------------------------------------------------
+        if not ops_home.empty:
+            ops_home = ops_home.copy()
+            ops_home['data_vencimento'] = pd.to_datetime(ops_home['data_vencimento'], errors='coerce').dt.date
+            ops_pend = ops_home[pd.to_numeric(ops_home['pago'], errors='coerce').fillna(0).astype(int) == 0].copy()
+            ops_pend['dias'] = ops_pend['data_vencimento'].apply(lambda d: (d - data_ref).days if pd.notna(d) else 9999)
+            atras_desp = ops_pend[(ops_pend['tipo']=='Despesa') & (ops_pend['dias'] < 0)].sort_values(['dias','data_vencimento'])
+            atras_ent = ops_pend[(ops_pend['tipo']=='Entrada') & (ops_pend['dias'] < 0)].sort_values(['dias','data_vencimento'])
+            proxim_desp = ops_pend[(ops_pend['tipo']=='Despesa') & (ops_pend['dias'] >= 0) & (ops_pend['dias'] <= 2)].sort_values(['dias','data_vencimento'])
+            partes = [x for x in [atras_desp, atras_ent, proxim_desp] if not x.empty]
+            atencao = pd.concat(partes, ignore_index=False).drop_duplicates(subset=['id_ui']).head(3) if partes else pd.DataFrame()
+
+            if not atencao.empty:
+                st.markdown("<div class='ux-section-title'>Precisa da sua atenção</div>", unsafe_allow_html=True)
+                _render_linhas_operacionais(atencao, 'home2_atencao', max_linhas=3)
+                if len(ops_pend) > len(atencao):
+                    if st.button(f"Ver todos os pendentes ({len(ops_pend)}) →", key="home2_ver_todos", use_container_width=True):
+                        st.session_state.menu_atual = "📊 Fluxo e Prioridades"
+                        st.rerun()
+
+        # ---------------------------------------------------------
+        # 3. SEU MÊS — 3 números e previsão secundária
+        # ---------------------------------------------------------
+        st.markdown("<div class='ux-section-title'>Seu mês</div>", unsafe_allow_html=True)
+        sm1, sm2, sm3, sm4 = st.columns([1,1,1,1.08])
+        sm1.markdown(f"<div class='home2-month-card green'><div class='home2-month-value ux-positive'>R$ {format_brl(recebido)}</div><div class='home2-month-label'>Recebido até agora</div></div>", unsafe_allow_html=True)
+        sm2.markdown(f"<div class='home2-month-card red'><div class='home2-month-value ux-negative'>R$ {format_brl(pago)}</div><div class='home2-month-label'>Pago até agora</div></div>", unsafe_allow_html=True)
+        sm3.markdown(f"<div class='home2-month-card blue'><div class='home2-month-value {'ux-positive' if resultado_atual >= 0 else 'ux-negative'}'>R$ {format_brl(resultado_atual)}</div><div class='home2-month-label'>Resultado até agora</div></div>", unsafe_allow_html=True)
+        sm4.markdown(
+            f"<div class='home2-forecast'><div class='home2-forecast-title'>Ainda previsto</div>"
+            f"<div class='home2-forecast-line ux-positive'>↑ + R$ {format_brl(a_receber)} a receber</div>"
+            f"<div class='home2-forecast-line ux-negative'>↓ − R$ {format_brl(a_pagar)} a pagar</div></div>",
+            unsafe_allow_html=True,
+        )
+
+        # ---------------------------------------------------------
+        # 4. PRÓXIMOS ACONTECIMENTOS — timeline curta
+        # ---------------------------------------------------------
+        st.markdown("<div class='ux-section-title'>Seu mês daqui para frente</div>", unsafe_allow_html=True)
+        eventos = []
+        if not ops_home.empty:
+            futuros_ops = ops_home[(pd.to_numeric(ops_home['pago'], errors='coerce').fillna(0).astype(int)==0) & (ops_home['data_vencimento'] >= data_ref)].copy()
+            futuros_ops = futuros_ops.sort_values(['data_vencimento','tipo']).head(3)
+            for _, r in futuros_ops.iterrows():
+                eventos.append({
+                    'data': r['data_vencimento'], 'tipo': r['tipo'], 'descricao': str(r['descricao']),
+                    'valor': float_seguro(r.get('valor')),
+                })
+
+        cards = [
+            f"<div class='home2-event today'><div class='home2-event-date'>Hoje</div><div class='home2-event-name'>{data_ref.strftime('%d/%m/%Y')}</div><div class='home2-event-value ux-accent'>Você está aqui</div></div>"
+        ]
+        for ev in eventos:
+            classe = 'in' if ev['tipo']=='Entrada' else 'out'
+            sinal = '+' if ev['tipo']=='Entrada' else '−'
+            valor_cls = 'ux-positive' if ev['tipo']=='Entrada' else 'ux-negative'
+            cards.append(
+                f"<div class='home2-event {classe}'><div class='home2-event-date'>{ev['data'].strftime('%d/%m')}</div>"
+                f"<div class='home2-event-name'>{html.escape(ev['descricao'])}</div>"
+                f"<div class='home2-event-value {valor_cls}'>{sinal} R$ {format_brl(ev['valor'])}</div></div>"
+            )
+        while len(cards) < 4:
+            cards.append("<div class='home2-event'><div class='home2-event-date'>Depois</div><div class='home2-event-name'>Sem outro evento próximo</div></div>")
+        st.markdown("<div class='home2-timeline'>" + ''.join(cards[:4]) + "</div>", unsafe_allow_html=True)
+        if st.button("Ver no Fluxo →", key="home2_ver_fluxo", use_container_width=True):
+            st.session_state.menu_atual = "📊 Fluxo e Prioridades"
+            st.rerun()
+
+        # ---------------------------------------------------------
+        # 5. REGISTRAR — poucos atalhos, linguagem comum
+        # ---------------------------------------------------------
+        st.markdown("<div class='ux-section-title'>Registrar novo lançamento</div>", unsafe_allow_html=True)
+        q1,q2,q3,q4 = st.columns(4)
+        if q1.button("↓ Gastei", key="home2_gastei", use_container_width=True):
+            st.session_state['novo_tipo'] = 'Despesa'
+            st.session_state['novo_home_origem'] = 'gastei'
+            st.session_state['novo_pago_imediato'] = True
+            st.session_state.menu_atual = "📝 Lançamentos"
+            st.rerun()
+        if q2.button("↑ Recebi", key="home2_recebi", type="primary", use_container_width=True):
+            st.session_state['novo_tipo'] = 'Entrada'
+            st.session_state['novo_home_origem'] = 'recebi'
+            st.session_state['novo_pago_imediato'] = True
+            st.session_state.menu_atual = "📝 Lançamentos"
+            st.rerun()
+        if q3.button("◷ Conta futura", key="home2_conta", use_container_width=True):
+            st.session_state['novo_tipo'] = 'Despesa'
+            st.session_state['novo_home_origem'] = 'futuro'
+            st.session_state['novo_pago_imediato'] = False
+            st.session_state.menu_atual = "📝 Lançamentos"
+            st.rerun()
+        if q4.button("💰 Renda futura", key="home2_renda", use_container_width=True):
+            st.session_state['novo_tipo'] = 'Entrada'
+            st.session_state['novo_home_origem'] = 'futuro'
+            st.session_state['novo_pago_imediato'] = False
+            st.session_state.menu_atual = "📝 Lançamentos"
+            st.rerun()
+        st.markdown("<div class='home2-tip'>💡 Dica: cadastre contas e rendas recorrentes uma vez para reduzir o trabalho nos próximos meses.</div>", unsafe_allow_html=True)
 
 # -----------------------------------------------------------------
 # NOVO LANÇAMENTO
@@ -2629,7 +3133,9 @@ elif menu == "📝 Lançamentos":
             elif rec_label == "Repete todo mês":
                 st.caption("A interface mostra uma recorrência mensal; internamente o app mantém uma janela futura de 60 meses, como na versão anterior.")
                 parcelas = 60
-            pago_imediato = st.checkbox("Já foi pago/recebido")
+            if "novo_pago_imediato" not in st.session_state:
+                st.session_state["novo_pago_imediato"] = False
+            pago_imediato = st.checkbox("Já foi pago/recebido", key="novo_pago_imediato")
             data_pgto = st.date_input("Data efetiva do pagamento/recebimento", value=hoje, format="DD/MM/YYYY", disabled=not pago_imediato)
 
         if st.button("Registrar lançamento", type="primary", use_container_width=True):
@@ -2658,8 +3164,8 @@ elif menu == "📝 Lançamentos":
 # =================================================================
 
 elif menu == "📊 Fluxo e Prioridades":
-    cabecalho_pagina("📋 Fluxo do Mês", "Entenda primeiro como cada renda cobre suas contas; depois faça as baixas no fluxo operacional.", "fluxo")
-    st.caption("A aba Cobertura do mês mostra o casamento entre recebimentos e vencimentos. A aba Fluxo mantém pagamentos, filtros e edição.")
+    cabecalho_pagina("📋 Fluxo", "O que entra, o que sai e quando — com a renda que cobre cada conta.", "fluxo")
+    st.caption("Uma agenda financeira simples: vencimento, valor, status e de onde vem o dinheiro.")
     df_todos_fluxo = fetch_dataframe("SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC", (inicio_periodo, fim_periodo))
     if not df_todos_fluxo.empty:
         if 'eh_orcamento' not in df_todos_fluxo.columns:
@@ -2670,7 +3176,21 @@ elif menu == "📊 Fluxo e Prioridades":
     # Demonstrativo > Limites mensais e entra apenas no planejamento/projeção.
     df = df_todos_fluxo[df_todos_fluxo['eh_orcamento'] == 0].copy() if not df_todos_fluxo.empty else pd.DataFrame()
 
-    tab_plano, tab_fluxo = st.tabs(["🧭 Cobertura do mês", "📋 Fluxo"])
+    # A linha do tempo continua 15 dias no período seguinte. Isso mantém visível a
+    # próxima janela financeira (ex.: fim de setembro → renda do início de outubro)
+    # sem misturar esses lançamentos nas ferramentas avançadas do mês selecionado.
+    fim_contexto_fluxo = fim_periodo + datetime.timedelta(days=15)
+    df_contexto_fluxo = fetch_dataframe(
+        "SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC",
+        (inicio_periodo, fim_contexto_fluxo),
+    )
+    if not df_contexto_fluxo.empty:
+        if 'eh_orcamento' not in df_contexto_fluxo.columns:
+            df_contexto_fluxo['eh_orcamento'] = 0
+        df_contexto_fluxo['eh_orcamento'] = pd.to_numeric(df_contexto_fluxo['eh_orcamento'], errors='coerce').fillna(0).astype(int)
+        df_contexto_fluxo = df_contexto_fluxo[df_contexto_fluxo['eh_orcamento'] == 0].copy()
+
+    tab_fluxo = st.container()
 
     with tab_fluxo:
         if df.empty:
@@ -2679,28 +3199,43 @@ elif menu == "📊 Fluxo e Prioridades":
             df['valor'] = pd.to_numeric(df['valor'], errors='coerce').fillna(0.0)
             df['valor_pago'] = pd.to_numeric(df['valor_pago'], errors='coerce').fillna(0.0)
 
-            # Camada operacional simples: mantém o editor completo abaixo, mas o uso diário
-            # não exige abrir uma planilha com todas as colunas.
-            ops_rapido = _consolidar_operacional(df)
-            filtro_rapido = st.radio("Mostrar", ["Todos","A pagar","A receber","Pagos","Atrasados"], horizontal=True, label_visibility="collapsed", key="fluxo_rapido_status")
+            df_ui = df_contexto_fluxo if not df_contexto_fluxo.empty else df
+            df_ui['valor'] = pd.to_numeric(df_ui['valor'], errors='coerce').fillna(0.0)
+            df_ui['valor_pago'] = pd.to_numeric(df_ui['valor_pago'], errors='coerce').fillna(0.0)
+            ops_rapido = _consolidar_operacional(df_ui)
+            plano_fluxo = _montar_plano_pagamentos(ops_rapido, ano_selecionado, mes_selecionado)
+            _render_fluxo2_ponte(plano_fluxo, ano_selecionado, mes_selecionado)
+
+            filtro_rapido = st.radio(
+                "Mostrar", ["Todos", "A pagar", "A receber", "Pagos", "Atrasados"],
+                horizontal=True, label_visibility="collapsed", key="fluxo_rapido_status"
+            )
             tipos_rapidos, cats_sel_rapidas = [], []
             cats_rapidas = sorted([x for x in ops_rapido['categoria'].dropna().unique().tolist() if x]) if not ops_rapido.empty else []
             with st.expander("Filtros", expanded=False):
                 fr1, fr2 = st.columns(2)
-                tipos_rapidos = fr1.multiselect("Entradas ou despesas", ["Despesa","Entrada"], placeholder="Todos", key="fluxo_rapido_tipos")
+                tipos_rapidos = fr1.multiselect("Entradas ou despesas", ["Despesa", "Entrada"], placeholder="Todos", key="fluxo_rapido_tipos")
                 cats_sel_rapidas = fr2.multiselect("Categoria", cats_rapidas, placeholder="Todas", key="fluxo_rapido_cats")
+
             vis_rapida = ops_rapido.copy()
-            if tipos_rapidos: vis_rapida = vis_rapida[vis_rapida['tipo'].isin(tipos_rapidos)]
-            if filtro_rapido == "A pagar": vis_rapida = vis_rapida[(vis_rapida['tipo']=='Despesa') & (vis_rapida['pago']==0)]
-            elif filtro_rapido == "A receber": vis_rapida = vis_rapida[(vis_rapida['tipo']=='Entrada') & (vis_rapida['pago']==0)]
-            elif filtro_rapido == "Pagos": vis_rapida = vis_rapida[vis_rapida['pago']==1]
-            elif filtro_rapido == "Atrasados": vis_rapida = vis_rapida[vis_rapida['atrasado']]
-            if cats_sel_rapidas: vis_rapida = vis_rapida[vis_rapida['categoria'].isin(cats_sel_rapidas)]
-            _render_linhas_operacionais(vis_rapida, 'fluxo_rapido', permitir_selecao=True)
+            if tipos_rapidos:
+                vis_rapida = vis_rapida[vis_rapida['tipo'].isin(tipos_rapidos)]
+            if filtro_rapido == "A pagar":
+                vis_rapida = vis_rapida[(vis_rapida['tipo'] == 'Despesa') & (vis_rapida['pago'] == 0)]
+            elif filtro_rapido == "A receber":
+                vis_rapida = vis_rapida[(vis_rapida['tipo'] == 'Entrada') & (vis_rapida['pago'] == 0)]
+            elif filtro_rapido == "Pagos":
+                vis_rapida = vis_rapida[vis_rapida['pago'] == 1]
+            elif filtro_rapido == "Atrasados":
+                vis_rapida = vis_rapida[vis_rapida['atrasado']]
+            if cats_sel_rapidas:
+                vis_rapida = vis_rapida[vis_rapida['categoria'].isin(cats_sel_rapidas)]
 
-            st.caption("Edições excepcionais, séries e exclusões em lote ficam fora do uso diário.")
+            _render_fluxo2_timeline(vis_rapida, ops_rapido, plano_fluxo, prefixo='fluxo2')
 
-            with st.expander("🛠️ Ferramentas avançadas", expanded=False):
+            st.caption("Edição estrutural, séries, exclusões e ferramentas técnicas ficam fora do uso diário.")
+
+            with st.expander("••• Ferramentas avançadas", expanded=False):
                 # -----------------------------------------------------------
                 # CONSOLIDAÇÃO (feita sobre TODO o mês, ANTES de qualquer filtro).
                 #
@@ -3026,10 +3561,6 @@ elif menu == "📊 Fluxo e Prioridades":
                                 else:
                                     flash("success", "Lançamento atualizado de forma atômica!"); st.rerun()
 
-
-    with tab_plano:
-        ops_plano = _consolidar_operacional(df) if not df.empty else pd.DataFrame()
-        _render_plano_pagamentos(ops_plano, ano_selecionado, mes_selecionado)
 
     # =================================================================
 # 12. MÓDULO 3: DEMONSTRATIVO (COM ANALÍTICO DE PROVISÕES)
@@ -3520,6 +4051,35 @@ elif menu == "🏥 Escala de Plantões":
                     if ids_todos:
                         with transaction() as cur: cur.execute('DELETE FROM lancamentos WHERE id = ANY(%s)',(ids_todos,))
                         flash('success',f'{len(ids_todos)} plantão(ões) listado(s) apagado(s).'); st.rerun()
+
+# -----------------------------------------------------------------
+# MAIS — concentra recursos que não precisam competir na navegação diária
+# -----------------------------------------------------------------
+elif menu == "⚙️ Mais":
+    cabecalho_pagina("⚙️ Mais", "Recursos avançados e configurações. Você não precisa passar por aqui no dia a dia.", "mais")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("＋ Novo lançamento", use_container_width=True):
+            st.session_state["novo_pago_imediato"] = False
+            st.session_state.menu_atual = "📝 Lançamentos"; st.rerun()
+        if st.button("💳 Dívidas", use_container_width=True):
+            st.session_state.menu_atual = "💳 Dívidas"; st.rerun()
+        if st.button("📈 Balanço anual", use_container_width=True):
+            st.session_state.menu_atual = "📈 Balanço Anual"; st.rerun()
+    with c2:
+        if st.button("⚙️ Categorias e automações", use_container_width=True):
+            st.session_state.menu_atual = "⚙️ Gerenciar Categorias"; st.rerun()
+        if st.button("💾 Backup e restauração", use_container_width=True):
+            st.session_state.menu_atual = "💾 Backup e Restauração"; st.rerun()
+        if st.button("🧰 Manutenção e diagnóstico", use_container_width=True):
+            st.session_state.menu_atual = "🧰 Manutenção e Diagnóstico"; st.rerun()
+    st.divider()
+    if st.button("🧙 Reconfigurar aplicativo", key="mais_reconfigurar", use_container_width=True):
+        st.session_state['wizard_ativo'] = True
+        st.session_state['wizard_passo'] = 0
+        for _wk in ['wizard_hospitais','wizard_fixas','wizard_envelopes','wizard_dividas']:
+            st.session_state[_wk] = []
+        st.rerun()
 
 # -----------------------------------------------------------------
 # CATEGORIAS E AUTOMAÇÕES
