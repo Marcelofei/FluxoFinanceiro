@@ -2021,7 +2021,15 @@ def _registrar_pagamento_ids(ids, valor_real_total=None, data_pagamento=None):
             )
     return total_real
 
-def _consolidar_operacional(df):
+def _consolidar_operacional(df, consolidar_cartao=False):
+    """Prepara os lançamentos exibidos no uso diário.
+
+    Na UX 2.0 a Home e o Fluxo não devem inventar uma entidade financeira que
+    o usuário nunca cadastrou. Por isso, despesas com forma_pagamento='Crédito'
+    permanecem como os próprios lançamentos por padrão. A consolidação legada
+    de cartão continua disponível apenas quando chamada explicitamente com
+    consolidar_cartao=True (ex.: ferramentas avançadas/migração futura).
+    """
     cols_saida = ['id_ui','tipo','categoria','descricao','valor','valor_pago','pago','data_vencimento','data_pagamento','prioridade','ids','consolidado','ordem_pri','atrasado','ordem_atraso']
     if df.empty: return pd.DataFrame(columns=cols_saida)
     base = df.copy()
@@ -2030,7 +2038,13 @@ def _consolidar_operacional(df):
     linhas = []
     # Orçamentos/limites não são contas a pagar e ficam fora do fluxo operacional.
     base = base[base['eh_orcamento'].fillna(0).astype(int) == 0].copy()
-    mask_cred = (base['tipo'] == 'Despesa') & (base['forma_pagamento'] == 'Crédito')
+
+    if consolidar_cartao and 'forma_pagamento' in base.columns:
+        mask_cred = (base['tipo'] == 'Despesa') & (base['forma_pagamento'] == 'Crédito')
+    else:
+        # UX diária: preserve cada despesa real exatamente como foi cadastrada.
+        mask_cred = pd.Series(False, index=base.index)
+
     if mask_cred.any():
         credito = base[mask_cred].copy()
         credito['_mes_fatura'] = pd.to_datetime(credito['data_vencimento']).dt.to_period('M').astype(str)
@@ -2892,6 +2906,7 @@ def _dados_mes():
 if st.session_state.get('wizard_ativo'):
     renderizar_wizard_configuracao()
 
+# Build UX 2.0: fatura-fantasma-fix-v13
 # -----------------------------------------------------------------
 # INÍCIO
 # -----------------------------------------------------------------
@@ -3124,7 +3139,10 @@ elif menu == "📝 Lançamentos":
 
         with st.expander("Mais opções"):
             a1,a2 = st.columns(2)
-            forma_pgto = a1.selectbox("Forma de pagamento", ["À vista","Crédito","Outros"], index=0 if tipo=='Entrada' else 1)
+            forma_pgto = a1.selectbox(
+                "Forma de pagamento", ["À vista","Crédito","Outros"], index=0,
+                help="Use Crédito apenas quando a despesa realmente tiver sido feita no cartão."
+            )
             prioridade = a2.radio("Prioridade", ["Baixa 🟢","Média 🟡","Alta 🔴"], horizontal=True)
             rec_label = st.radio("Repetição", ["Uma vez","Parcelada","Repete todo mês"], horizontal=True)
             parcelas = 1
