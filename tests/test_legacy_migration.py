@@ -1,5 +1,5 @@
 """Upgrade the exact old schema with representative records, then rerun safely."""
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 import os
 import datetime as dt
 from decimal import Decimal
@@ -12,7 +12,7 @@ from tests import legacy_schema
 def test_upgrade_deployed_schema_preserves_financial_records(monkeypatch):
     url=os.environ.get('TEST_DATABASE_URL')
     if not url: pytest.skip('Requires disposable TEST_DATABASE_URL')
-    with psycopg2.connect(url) as conn:
+    with closing(psycopg2.connect(url)) as conn:
         with conn.cursor() as cur:
             cur.execute('DROP SCHEMA IF EXISTS tenant_legacy CASCADE; CREATE SCHEMA tenant_legacy; SET search_path TO tenant_legacy')
             def execute(query, params=None, **kwargs):
@@ -38,7 +38,11 @@ def test_upgrade_deployed_schema_preserves_financial_records(monkeypatch):
             cur.execute('SELECT '+cols+' FROM lancamentos ORDER BY id');before=cur.fetchall()
             cur.execute('SELECT lancamento_id,valor,data_pagamento FROM pagamentos ORDER BY lancamento_id');payments=cur.fetchall()
         conn.commit()
-        migrate(conn,'tenant_legacy');migrate(conn,'tenant_legacy')
+        # Exercise the documented deployment command, not just the helper.
+        import subprocess,sys,json
+        env={**os.environ,'DATABASE_URL':url,'APP_USERS_JSON':json.dumps({'test':{'schema':'tenant_legacy'}})}
+        subprocess.run([sys.executable,'migrate.py'],env=env,check=True,capture_output=True,text=True)
+        migrate(conn,'tenant_legacy')
         with conn.cursor() as cur:
             cur.execute('SET search_path TO tenant_legacy')
             cur.execute('SELECT '+cols+' FROM lancamentos ORDER BY id');assert cur.fetchall()==before

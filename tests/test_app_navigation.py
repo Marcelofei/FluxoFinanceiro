@@ -82,6 +82,16 @@ def test_create_retry_pay_reverse_and_history(ui):
     assert len(actions)==1, [(b.key,b.label) for b in app.button]
     actions[0].click().run();healthy(app)
     widget(app,'button','Confirmar pagamento').click().run();healthy(app)
+    with db,db.cursor() as cur:
+        cur.execute('SELECT pago,valor_pago FROM lancamentos WHERE id=%s',(record_id,))
+        assert cur.fetchone()==(1,Decimal('123.45'))
+    # AppTest 1.45 retains stale form nodes after st.rerun. A fresh login also
+    # verifies that undo works with persisted data in a subsequent session.
+    app=AppTest.from_file('app.py',default_timeout=30).run()
+    widget(app,'text_input','Usuário').set_value('test')
+    widget(app,'text_input','Senha').set_value(PASSWORD)
+    widget(app,'button','Entrar').click().run();healthy(app)
+    app.button(key='nav_fluxo').click().run();healthy(app)
     undo=[b for b in app.button if '_undo_' in str(b.key) and str(b.key).endswith('_'+str(record_id))]
     assert len(undo)==1,[(b.key,b.label) for b in app.button]
     undo[0].click().run();healthy(app)

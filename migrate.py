@@ -1,5 +1,6 @@
 """Versioned PostgreSQL migrations. Run with python migrate.py before starting UI."""
 import os
+from contextlib import closing
 import json
 import psycopg2
 from psycopg2 import sql
@@ -416,6 +417,6 @@ if __name__ == '__main__':
     schemas={'public'}
     accounts=json.loads(os.environ.get('APP_USERS_JSON','{}'))
     if accounts: schemas={a['schema'] for a in accounts.values()}
-    with psycopg2.connect(os.environ['DATABASE_URL']) as connection:
+    with closing(psycopg2.connect(os.environ['DATABASE_URL'])) as connection:
         for schema in sorted(schemas): migrate(connection,schema)
     print('Migrations applied.')
