@@ -1,5 +1,5 @@
 import streamlit as st
-APP_BUILD = "ui-refino-planejamento-v16"
+APP_BUILD = "rendas-tipos-especializado-v20"
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
@@ -322,6 +322,21 @@ def init_db():
         "ALTER TABLE categorias_personalizadas ADD COLUMN IF NOT EXISTS modalidade_renda TEXT;",
     ]:
         execute_query(ddl)
+
+    # V2: o tipo da renda é independente do recurso especializado de Plantões.
+    # Migra somente classificações antigas explícitas/legadas para a nova semântica.
+    execute_query("""
+        UPDATE categorias_personalizadas
+        SET is_producao_variavel=1
+        WHERE tipo='Entrada'
+          AND (TRIM(COALESCE(modalidade_renda,''))='Plantões'
+               OR LOWER(TRIM(COALESCE(categoria,''))) LIKE 'plant%')
+    """)
+    execute_query("""
+        UPDATE categorias_personalizadas
+        SET modalidade_renda='Variável'
+        WHERE tipo='Entrada' AND TRIM(COALESCE(modalidade_renda,''))='Plantões'
+    """)
 
     execute_query('''
         CREATE TABLE IF NOT EXISTS orcamentos_categorias (
@@ -3440,13 +3455,17 @@ def _renda_fonte_nome(categoria, subgrupo):
 
 
 def _renda_modalidade(def_row):
-    if def_row is None: return 'Eventual'
+    """Tipo da renda; Plantões é um recurso independente, não um tipo."""
+    if def_row is None:
+        return 'Variável'
     explicita = str(def_row.get('modalidade_renda') or '').strip()
-    if explicita in ('Mensal','Variável','Eventual','Plantões'): return explicita
-    if int_seguro(def_row.get('is_producao_variavel')) == 1 or str(def_row.get('categoria') or '').strip().casefold().startswith('plant'): return 'Plantões'
-    if int_seguro(def_row.get('is_recorrente')) == 1: return 'Mensal'
-    if float_seguro(def_row.get('valor_padrao')) > 0: return 'Variável'
-    return 'Eventual'
+    if explicita in ('Mensal', 'Variável', 'Eventual'):
+        return explicita
+    if explicita == 'Plantões':  # compatibilidade com bases ainda não migradas
+        return 'Variável'
+    # Fontes antigas sem classificação recebem um padrão neutro; o usuário pode
+    # definir conscientemente Mensal ou Eventual ao editar a fonte.
+    return 'Variável'
 
 
 def _rendas_fontes_periodo(df_mes, ano, mes):
@@ -3466,27 +3485,48 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
     if not defs.empty:
         for _,r in defs.iterrows():
             k=_renda_fonte_key(r.get('categoria'),r.get('subgrupo'))
-            fontes[k]={'key':k,'id':int_seguro(r.get('id')) or None,'categoria':str(r.get('categoria') or ''),'subgrupo':str(r.get('subgrupo') or ''),'nome':_renda_fonte_nome(r.get('categoria'),r.get('subgrupo')),'valor_padrao':float_seguro(r.get('valor_padrao')),'dia_pagamento':int_seguro(r.get('dia_pagamento')),'atraso_meses':int_seguro(r.get('atraso_meses')),'is_recorrente':int_seguro(r.get('is_recorrente')),'modalidade_renda':str(r.get('modalidade_renda') or '').strip(),'especializada':((str(r.get('modalidade_renda') or '').strip()=='Plantões') if str(r.get('modalidade_renda') or '').strip() else (int_seguro(r.get('is_producao_variavel'))==1 or str(r.get('categoria') or '').strip().casefold().startswith('plant'))),'data_inicio':r.get('data_inicio'),'def_row':r}
+            fontes[k]={'key':k,'id':int_seguro(r.get('id')) or None,'categoria':str(r.get('categoria') or ''),'subgrupo':str(r.get('subgrupo') or ''),'nome':_renda_fonte_nome(r.get('categoria'),r.get('subgrupo')),'valor_padrao':float_seguro(r.get('valor_padrao')),'dia_pagamento':int_seguro(r.get('dia_pagamento')),'atraso_meses':int_seguro(r.get('atraso_meses')),'is_recorrente':int_seguro(r.get('is_recorrente')),'modalidade_renda':str(r.get('modalidade_renda') or '').strip(),'especializada':(int_seguro(r.get('is_producao_variavel'))==1),'data_inicio':r.get('data_inicio'),'def_row':r}
     if not entradas.empty:
         for _,r in entradas.iterrows():
             k=_renda_fonte_key(r.get('categoria'),r.get('subgrupo'))
             if k not in fontes:
                 fontes[k]={'key':k,'id':None,'categoria':str(r.get('categoria') or ''),'subgrupo':str(r.get('subgrupo') or ''),'nome':_renda_fonte_nome(r.get('categoria'),r.get('subgrupo')),'valor_padrao':0.0,'dia_pagamento':0,'atraso_meses':0,'is_recorrente':0,'modalidade_renda':'','especializada':False,'data_inicio':None,'def_row':None}
-    comp=datetime.date(int(ano),int(mes),1); hist_ini=(pd.Timestamp(comp)-pd.DateOffset(months=6)).date(); hist_fim=(pd.Timestamp(comp)+pd.DateOffset(months=1)).date()
-    hist=fetch_dataframe('''SELECT categoria,subgrupo,valor,valor_pago,pago,data_vencimento FROM lancamentos WHERE tipo='Entrada' AND data_vencimento >= %s AND data_vencimento < %s''',(hist_ini,hist_fim))
+    # Média histórica: usa somente meses FECHADOS anteriores ao período selecionado
+    # e somente valores efetivamente recebidos. Previsões do mês atual não entram.
+    comp=datetime.date(int(ano),int(mes),1)
+    hist_ini=(pd.Timestamp(comp)-pd.DateOffset(months=6)).date()
+    hist_fim=comp
+    hist=fetch_dataframe(
+        '''SELECT categoria,subgrupo,valor_pago,pago,data_pagamento,data_vencimento
+           FROM lancamentos
+           WHERE tipo='Entrada'
+             AND pago=1
+             AND COALESCE(valor_pago,0) > 0
+             AND COALESCE(data_pagamento,data_vencimento) >= %s
+             AND COALESCE(data_pagamento,data_vencimento) < %s''',
+        (hist_ini,hist_fim)
+    )
     medias={}
+    media_meses={}
     if not hist.empty:
-        hist['valor']=pd.to_numeric(hist['valor'],errors='coerce').fillna(0.0); hist['valor_pago']=pd.to_numeric(hist['valor_pago'],errors='coerce').fillna(0.0); hist['pago']=pd.to_numeric(hist['pago'],errors='coerce').fillna(0).astype(int)
-        hist['_mes']=pd.to_datetime(hist['data_vencimento'],errors='coerce').dt.to_period('M').astype(str); hist['_valor_op']=hist.apply(lambda r:float(r['valor_pago']) if int(r['pago'])==1 and float(r['valor_pago'])>0 else float(r['valor']),axis=1); hist['_key']=hist.apply(lambda r:_renda_fonte_key(r.get('categoria'),r.get('subgrupo')),axis=1)
-        by=hist.groupby(['_key','_mes'])['_valor_op'].sum().reset_index()
-        for k,grp in by.groupby('_key'): medias[k]=float(grp['_valor_op'].mean()) if not grp.empty else 0.0
+        hist['valor_pago']=pd.to_numeric(hist['valor_pago'],errors='coerce').fillna(0.0)
+        hist['_data_real']=pd.to_datetime(hist['data_pagamento'],errors='coerce').fillna(pd.to_datetime(hist['data_vencimento'],errors='coerce'))
+        hist=hist[hist['_data_real'].notna() & (hist['valor_pago']>0)].copy()
+        if not hist.empty:
+            hist['_mes']=hist['_data_real'].dt.to_period('M').astype(str)
+            hist['_key']=hist.apply(lambda r:_renda_fonte_key(r.get('categoria'),r.get('subgrupo')),axis=1)
+            by=hist.groupby(['_key','_mes'])['valor_pago'].sum().reset_index()
+            for k,grp in by.groupby('_key'):
+                meses_validos=int(grp['_mes'].nunique())
+                media_meses[k]=meses_validos
+                medias[k]=float(grp['valor_pago'].mean()) if meses_validos >= 2 else 0.0
     saida=[]
     for k,f in fontes.items():
         if not entradas.empty:
             mask=entradas.apply(lambda r:_renda_fonte_key(r.get('categoria'),r.get('subgrupo'))==k,axis=1); grp=entradas[mask].copy()
         else: grp=pd.DataFrame()
         esperado=float(grp['valor'].sum()) if not grp.empty else 0.0; realizado=float(grp.loc[grp['pago']==1,'valor_pago'].sum()) if not grp.empty else 0.0; pendente=float(grp.loc[grp['pago']==0,'valor'].sum()) if not grp.empty else 0.0
-        if esperado<=0.004 and f['is_recorrente']==1 and f['valor_padrao']>0:
+        if esperado<=0.004 and (f['is_recorrente']==1 or f['especializada']) and f['valor_padrao']>0:
             di=pd.to_datetime(f.get('data_inicio'),errors='coerce')
             if pd.isna(di) or di.date() <= datetime.date(int(ano),int(mes),calendar.monthrange(int(ano),int(mes))[1]): esperado=f['valor_padrao']; pendente=max(esperado-realizado,0.0)
         prox=None
@@ -3494,8 +3534,10 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
             fut=grp[grp['pago']==0].sort_values('data_vencimento')
             if not fut.empty and pd.notna(fut.iloc[0]['data_vencimento']): prox=fut.iloc[0]['data_vencimento'].date()
         if prox is None and f['dia_pagamento']>0 and pendente>0.004: prox=datetime.date(int(ano),int(mes),min(f['dia_pagamento'],calendar.monthrange(int(ano),int(mes))[1]))
-        media=medias.get(k,0.0) or f['valor_padrao'] or esperado; modalidade=_renda_modalidade(f['def_row']); modalidade='Plantões' if f['especializada'] else modalidade
-        f.update({'esperado':round(esperado,2),'realizado':round(realizado,2),'pendente':round(pendente,2),'media':round(float(media),2),'proxima_data':prox,'modalidade':modalidade}); saida.append(f)
+        modalidade=_renda_modalidade(f['def_row'])
+        media=float(medias.get(k,0.0) or 0.0)
+        meses_media=int(media_meses.get(k,0) or 0)
+        f.update({'esperado':round(esperado,2),'realizado':round(realizado,2),'pendente':round(pendente,2),'media':round(media,2),'media_meses':meses_media,'proxima_data':prox,'modalidade':modalidade}); saida.append(f)
     saida.sort(key=lambda x:(x['proxima_data'] or datetime.date.max,-x['esperado'],x['nome'].casefold()))
     return saida
 
@@ -4508,34 +4550,73 @@ elif menu == "💰 Rendas":
             if h2.button('＋ Adicionar fonte',key='income2_add_btn',use_container_width=True): st.session_state['income2_add_open']=not st.session_state.get('income2_add_open',False)
             if st.session_state.get('income2_add_open'):
                 with st.form('income2_add_form',clear_on_submit=False):
-                    a1,a2=st.columns([1.6,1]); nome=a1.text_input('Nome da fonte',placeholder='Ex.: Consultório, Hospital Help'); modalidade=a2.selectbox('Tipo',['Mensal','Variável','Eventual','Plantões'])
-                    b1,b2,b3=st.columns(3); valor=b1.number_input('Valor esperado/médio',min_value=0.0,step=100.0,format='%.2f'); dia=b2.number_input('Dia de recebimento',min_value=1,max_value=31,value=10); atraso=b3.number_input('Meses até receber',min_value=0,max_value=6,value=1 if modalidade=='Plantões' else 0)
+                    a1,a2=st.columns([1.6,1])
+                    nome=a1.text_input('Nome da fonte',placeholder='Ex.: Consultório, Hospital Help')
+                    modalidade=a2.selectbox('Tipo da renda',['Mensal','Variável','Eventual'])
+                    b1,b2,b3=st.columns(3)
+                    valor=b1.number_input('Valor esperado',min_value=0.0,step=100.0,format='%.2f')
+                    dia=b2.number_input('Dia de recebimento',min_value=1,max_value=31,value=10)
+                    atraso=b3.number_input('Meses até receber',min_value=0,max_value=6,value=0)
+                    especial=st.checkbox('Ativar gestão de plantões',value=False,help='Adiciona escala, produção e previsão de pagamento. Não altera o tipo da renda.')
                     if st.form_submit_button('Salvar fonte',type='primary',use_container_width=True):
-                        if not nome.strip(): st.error('Informe um nome para a fonte.')
+                        if not nome.strip():
+                            st.error('Informe um nome para a fonte.')
                         else:
-                            cat='Plantões' if modalidade=='Plantões' else 'Rendas'; rec=1 if modalidade in ('Mensal','Variável') and valor>0 else 0; especial=1 if modalidade=='Plantões' else 0
-                            execute_query('''INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento,is_recorrente,data_inicio,is_producao_variavel,modalidade_renda) VALUES ('Entrada',%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',(cat,nome.strip(),valor if valor>0 else None,int(atraso),int(dia),rec,datetime.date(ano_selecionado,mes_selecionado,1),especial,modalidade))
-                            invalidar_caches_estruturais(); st.session_state.pop(f"rec_processado_{mes_selecionado}_{ano_selecionado}",None); st.session_state['income2_add_open']=False; flash('success','Fonte de renda adicionada.'); st.rerun()
+                            rec=1 if modalidade in ('Mensal','Variável') and valor>0 and not especial else 0
+                            execute_query('''INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento,is_recorrente,data_inicio,is_producao_variavel,modalidade_renda) VALUES ('Entrada',%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',('Rendas',nome.strip(),valor if valor>0 else None,int(atraso),int(dia),rec,datetime.date(ano_selecionado,mes_selecionado,1),1 if especial else 0,modalidade))
+                            invalidar_caches_estruturais()
+                            st.session_state.pop(f"rec_processado_{mes_selecionado}_{ano_selecionado}",None)
+                            st.session_state['income2_add_open']=False
+                            flash('success','Fonte de renda adicionada.')
+                            st.rerun()
             if not fontes: st.markdown("<div class='plan2-empty-inline'>Nenhuma fonte cadastrada. Adicione a primeira para organizar seus recebimentos.</div>",unsafe_allow_html=True)
             for idx,f in enumerate(fontes):
                 with st.container(border=True):
-                    st.markdown("<span class='income2-source-anchor'></span>",unsafe_allow_html=True); c1,c2,c3=st.columns([3.1,1.5,.95],vertical_alignment='center'); badge=_renda_badge_class(f['modalidade'])
-                    c1.markdown(f"<div class='income2-source-name'>{html.escape(f['nome'])}<span class='income2-badge {badge}'>{html.escape(f['modalidade'])}</span></div><div class='income2-source-money'>Média <b>R$ {format_brl(f['media'])}</b></div>"+(f"<div class='income2-source-meta'>▣ Normalmente recebe dia {f['dia_pagamento']}</div>" if f['dia_pagamento'] else "<div class='income2-source-meta'>Sem recorrência fixa</div>"),unsafe_allow_html=True)
-                    prox=f['proxima_data'].strftime('%d/%m') if f['proxima_data'] else '—'; sit='Previsto' if f['pendente']>0.004 else ('Recebido' if f['realizado']>0.004 else 'Sem previsão'); c2.markdown(f"<div class='income2-source-meta'>Próximo recebimento</div><div class='income2-source-money'><b>{prox}</b></div><div class='income2-source-meta'>{sit} · R$ {format_brl(f['pendente'] if f['pendente']>0.004 else f['realizado'])}</div>",unsafe_allow_html=True)
-                    if f['especializada']:
-                        if c3.button('Plantões ›',key=f"income2_plant_{idx}",use_container_width=True): st.session_state['rendas_fonte_filtro']=f['nome']; st.session_state.menu_atual='🏥 Escala de Plantões'; st.rerun()
-                    elif f['id'] and c3.button('Editar ›',key=f"income2_edit_{idx}",use_container_width=True): st.session_state['income2_edit_id']=f['id']; st.rerun()
-                    elif f['pendente']>0.004: c3.markdown("<div style='text-align:right'><span class='income2-status expected'>Previsto</span></div>",unsafe_allow_html=True)
-                    else: c3.markdown("<div style='text-align:right'><span class='income2-status received'>Recebido</span></div>",unsafe_allow_html=True)
-            edit_id=st.session_state.get('income2_edit_id')
-            if edit_id:
-                alvo=next((f for f in fontes if f.get('id')==edit_id),None)
-                if alvo:
-                    with st.expander(f"Editar {alvo['nome']}",expanded=True):
-                        with st.form('income2_edit_form'):
-                            e1,e2=st.columns(2); ev=e1.number_input('Valor esperado/médio',min_value=0.0,value=float(alvo['valor_padrao'] or 0),step=100.0,format='%.2f'); ed=e2.number_input('Dia de recebimento',min_value=1,max_value=31,value=int(alvo['dia_pagamento'] or 10))
-                            if st.form_submit_button('Salvar alterações',type='primary'):
-                                execute_query('UPDATE categorias_personalizadas SET valor_padrao=%s,dia_pagamento=%s WHERE id=%s',(ev if ev>0 else None,int(ed),int(edit_id))); invalidar_caches_estruturais(); st.session_state.pop('income2_edit_id',None); flash('success','Fonte atualizada.'); st.rerun()
+                    st.markdown("<span class='income2-source-anchor'></span>",unsafe_allow_html=True)
+                    c1,c2,c3=st.columns([3.1,1.5,.95],vertical_alignment='center')
+                    badge=_renda_badge_class(f['modalidade'])
+                    media_txt=''
+                    if f.get('media',0)>0.004 and int(f.get('media_meses',0) or 0)>=2:
+                        media_txt=f"<div class='income2-source-meta'>Média histórica ({int(f['media_meses'])} meses): R$ {format_brl(f['media'])}</div>"
+                    especial_txt="<span class='income2-badge blue'>Plantões ativos</span>" if f['especializada'] else ''
+                    c1.markdown(f"<div class='income2-source-name'>{html.escape(f['nome'])}<span class='income2-badge {badge}'>{html.escape(f['modalidade'])}</span>{especial_txt}</div><div class='income2-source-money'>Esperado neste mês <b>R$ {format_brl(f['esperado'])}</b></div>"+media_txt+(f"<div class='income2-source-meta'>▣ Normalmente recebe dia {f['dia_pagamento']}</div>" if f['dia_pagamento'] else "<div class='income2-source-meta'>Sem recorrência fixa</div>"),unsafe_allow_html=True)
+                    prox=f['proxima_data'].strftime('%d/%m') if f['proxima_data'] else '—'
+                    sit='Previsto' if f['pendente']>0.004 else ('Recebido' if f['realizado']>0.004 else 'Sem previsão')
+                    c2.markdown(f"<div class='income2-source-meta'>Próximo recebimento</div><div class='income2-source-money'><b>{prox}</b></div><div class='income2-source-meta'>{sit} · R$ {format_brl(f['pendente'] if f['pendente']>0.004 else f['realizado'])}</div>",unsafe_allow_html=True)
+                    if f['id']:
+                        if c3.button('Editar ›',key=f"income2_edit_{idx}",use_container_width=True):
+                            atual=st.session_state.get('income2_edit_id')
+                            st.session_state['income2_edit_id']=None if atual==f['id'] else f['id']
+                            st.rerun()
+                    else:
+                        c3.markdown("<div style='text-align:right'><span class='income2-status expected'>Importada</span></div>",unsafe_allow_html=True)
+
+                    if st.session_state.get('income2_edit_id')==f.get('id') and f.get('id'):
+                        tipos=['Mensal','Variável','Eventual']
+                        tipo_atual=f['modalidade'] if f['modalidade'] in tipos else 'Variável'
+                        with st.form(f"income2_edit_form_{f['id']}"):
+                            st.caption('O tipo descreve como a renda se comporta. Plantões é um recurso adicional e independente.')
+                            e1,e2=st.columns([1.2,1])
+                            em=e1.selectbox('Tipo da renda',tipos,index=tipos.index(tipo_atual))
+                            ee=e2.checkbox('Gestão de plantões',value=bool(f['especializada']),help='Ativa escala, produção e previsão de pagamento para esta fonte.')
+                            e3,e4,e5=st.columns(3)
+                            ev=e3.number_input('Valor esperado',min_value=0.0,value=float(f['valor_padrao'] or 0),step=100.0,format='%.2f')
+                            ed=e4.number_input('Dia de recebimento',min_value=1,max_value=31,value=int(f['dia_pagamento'] or 10))
+                            ea=e5.number_input('Meses até receber',min_value=0,max_value=6,value=int(f['atraso_meses'] or 0))
+                            sb1,sb2=st.columns(2)
+                            salvar=sb1.form_submit_button('Salvar alterações',type='primary',use_container_width=True)
+                            cancelar=sb2.form_submit_button('Cancelar',use_container_width=True)
+                            if salvar:
+                                rec=1 if em in ('Mensal','Variável') and ev>0 and not ee else 0
+                                execute_query('''UPDATE categorias_personalizadas SET valor_padrao=%s,dia_pagamento=%s,atraso_meses=%s,is_recorrente=%s,is_producao_variavel=%s,modalidade_renda=%s WHERE id=%s''',(ev if ev>0 else None,int(ed),int(ea),rec,1 if ee else 0,em,int(f['id'])))
+                                invalidar_caches_estruturais()
+                                st.session_state.pop(f"rec_processado_{mes_selecionado}_{ano_selecionado}",None)
+                                st.session_state.pop('income2_edit_id',None)
+                                flash('success','Fonte atualizada.')
+                                st.rerun()
+                            if cancelar:
+                                st.session_state.pop('income2_edit_id',None)
+                                st.rerun()
 
     with right:
         with st.container(border=True):
@@ -4547,13 +4628,30 @@ elif menu == "💰 Rendas":
             for f in sorted(fontes,key=lambda x:x['esperado'],reverse=True)[:6]:
                 pct=(f['realizado']/f['esperado']*100) if f['esperado']>0 else (100 if f['realizado']>0 else 0); st.markdown(f"<div class='income2-progress-row'><div class='income2-name'>{html.escape(f['nome'])}</div><div class='income2-mini-bar'><span style='width:{min(max(pct,0),100):.1f}%'></span></div><div class='income2-mini-values'><b>R$ {format_brl(f['realizado'])}</b> de R$ {format_brl(f['esperado'])}</div></div>",unsafe_allow_html=True)
 
-    especiais=[f for f in fontes if f['especializada']]
     with st.container(border=True):
-        st.markdown("<span class='income2-panel-anchor'></span><div class='income2-panel-title'>Modo especializado</div><div class='income2-panel-note'>Recursos extras para fontes específicas, como escala, produção e previsão de pagamento.</div>",unsafe_allow_html=True)
-        if not especiais: st.markdown("<div class='plan2-empty-inline'>Nenhuma fonte usa modo especializado. Você pode ativá-lo ao editar uma fonte.</div>",unsafe_allow_html=True)
-        for i,f in enumerate(especiais):
-            x1,x2=st.columns([4.8,1.2],vertical_alignment='center'); x1.markdown(f"<div class='income2-special-copy'><b>{html.escape(f['nome'])}</b><span>Plantões ativos · gestão de escala e produção disponível</span></div>",unsafe_allow_html=True)
-            if x2.button('Gerenciar ›',key=f'income2_special_{i}',use_container_width=True): st.session_state['rendas_fonte_filtro']=f['nome']; st.session_state.menu_atual='🏥 Escala de Plantões'; st.rerun()
+        st.markdown("<span class='income2-panel-anchor'></span><div class='income2-panel-title'>Modo especializado</div><div class='income2-panel-note'>Plantões é um recurso adicional. A fonte continua sendo Mensal, Variável ou Eventual.</div>",unsafe_allow_html=True)
+        configuradas=[f for f in fontes if f.get('id')]
+        if not configuradas:
+            st.markdown("<div class='plan2-empty-inline'>Cadastre uma fonte para ativar recursos especializados.</div>",unsafe_allow_html=True)
+        for i,f in enumerate(configuradas):
+            x1,x2,x3=st.columns([4.2,1.1,1.2],vertical_alignment='center')
+            estado='Plantões ativos' if f['especializada'] else 'Modo padrão'
+            x1.markdown(f"<div class='income2-special-copy'><b>{html.escape(f['nome'])}</b><span>{html.escape(f['modalidade'])} · {estado}</span></div>",unsafe_allow_html=True)
+            desejado=x2.toggle('Plantões',value=bool(f['especializada']),key=f"income2_special_toggle_{f['id']}")
+            if desejado!=bool(f['especializada']):
+                rec=1 if f['modalidade'] in ('Mensal','Variável') and float_seguro(f['valor_padrao'])>0 and not desejado else 0
+                execute_query('UPDATE categorias_personalizadas SET is_producao_variavel=%s,is_recorrente=%s WHERE id=%s',(1 if desejado else 0,rec,int(f['id'])))
+                invalidar_caches_estruturais()
+                st.session_state.pop(f"rec_processado_{mes_selecionado}_{ano_selecionado}",None)
+                flash('success','Gestão de plantões atualizada.')
+                st.rerun()
+            if f['especializada']:
+                if x3.button('Gerenciar ›',key=f'income2_special_{i}',use_container_width=True):
+                    st.session_state['rendas_fonte_filtro']=f['nome']
+                    st.session_state.menu_atual='🏥 Escala de Plantões'
+                    st.rerun()
+            else:
+                x3.caption('Opcional')
 
 # -----------------------------------------------------------------
 # PLANTÕES — modo especializado de Rendas
@@ -4588,7 +4686,7 @@ elif menu == "🏥 Escala de Plantões":
                 st.markdown(f"<div class='ux-row'>🏥 <b>{r['subgrupo']}</b> · R$ {format_brl(r['valor'])} · recebe {pd.to_datetime(r['data_vencimento']).strftime('%d/%m')}</div>",unsafe_allow_html=True)
     with tab_add:
         modo=st.radio('Modo',['Dia específico','Plantões fixos na semana'],horizontal=True)
-        defs_plant=fetch_dataframe("SELECT subgrupo FROM categorias_personalizadas WHERE tipo='Entrada' AND (COALESCE(is_producao_variavel,0)=1 OR LOWER(COALESCE(categoria,'')) LIKE 'plant%') AND COALESCE(subgrupo,'')<>'' ORDER BY subgrupo"); locais=sorted(defs_plant['subgrupo'].dropna().astype(str).unique().tolist()) if not defs_plant.empty else []
+        defs_plant=fetch_dataframe("SELECT subgrupo FROM categorias_personalizadas WHERE tipo='Entrada' AND COALESCE(is_producao_variavel,0)=1 AND COALESCE(subgrupo,'')<>'' ORDER BY subgrupo"); locais=sorted(defs_plant['subgrupo'].dropna().astype(str).unique().tolist()) if not defs_plant.empty else []
         if not locais: st.warning('Ative o modo Plantões em uma fonte de renda antes de cadastrar a escala.')
         else:
             loc_default=locais.index(fonte_especial) if fonte_especial in locais else 0; loc=st.selectbox('Local',locais,index=loc_default); defaults={'v':1000.0,'m':1,'d':10}; res=fetch_dataframe("SELECT valor_padrao,atraso_meses,dia_pagamento FROM categorias_personalizadas WHERE subgrupo=%s AND tipo='Entrada' LIMIT 1",(loc,))
@@ -4600,7 +4698,7 @@ elif menu == "🏥 Escala de Plantões":
             if modo=='Dia específico': data_p=a.date_input('Data do plantão',value=data_contexto_ativo); dias_sem=None; repetir=1
             else: dias_sem=a.multiselect('Dias da semana',range(7),format_func=lambda x:['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'][x]); repetir=a.number_input('Repetir por meses',1,24,6); data_p=None
             if st.button('Registrar plantão',type='primary',use_container_width=True):
-                cat=next((c for c,subs in ESTRUTURA.get('Entrada',{}).items() if loc in subs),'Plantões'); regs=[]
+                src_def=fetch_dataframe("SELECT categoria FROM categorias_personalizadas WHERE tipo='Entrada' AND COALESCE(is_producao_variavel,0)=1 AND subgrupo=%s LIMIT 1",(loc,)); cat=(str(src_def.iloc[0]['categoria']) if not src_def.empty else 'Rendas'); regs=[]
                 datas=[]
                 if modo=='Dia específico': datas=[data_p]
                 else:
@@ -4628,7 +4726,7 @@ elif menu == "🏥 Escala de Plantões":
                     imp=pd.read_csv(arq); imp.columns=[c.strip().lower() for c in imp.columns]; cd=next((c for c in imp if c in ('data','data_plantao','date')),None); cl=next((c for c in imp if c in ('local','hospital','subgrupo')),None); cv=next((c for c in imp if c in ('valor','value')),None)
                     if not cd or not cl: st.error("O CSV precisa de 'data' e 'local'.")
                     else:
-                        defs=fetch_dataframe("SELECT categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento FROM categorias_personalizadas WHERE tipo='Entrada' AND (COALESCE(is_producao_variavel,0)=1 OR LOWER(COALESCE(categoria,'')) LIKE 'plant%')"); exist=set(df_t['descricao'].tolist()) if not df_t.empty else set(); novos=[]; problemas=[]
+                        defs=fetch_dataframe("SELECT categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento FROM categorias_personalizadas WHERE tipo='Entrada' AND COALESCE(is_producao_variavel,0)=1"); exist=set(df_t['descricao'].tolist()) if not df_t.empty else set(); novos=[]; problemas=[]
                         for _,r in imp.iterrows():
                             try: dt=pd.to_datetime(str(r[cd]).strip(),format='%d/%m/%Y').date()
                             except: problemas.append(str(r[cd])); continue
