@@ -3654,7 +3654,7 @@ elif menu == "📊 Fluxo e Prioridades":
 
                 st.divider()
 
-                with st.expander("📱 Despesas Pendentes para WhatsApp (Copiar)", expanded=False):
+                if st.toggle("📱 Mostrar despesas pendentes para copiar", value=False, key="fluxo_texto_whatsapp"):
                     df_despesas_pendentes = edit_df[(edit_df['tipo'] == 'Despesa') & (~edit_df['Pago'])].sort_values(['ordem_pri', 'Data'])
 
                     if df_despesas_pendentes.empty:

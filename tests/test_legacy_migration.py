@@ -1,4 +1,5 @@
 """Upgrade the exact old schema with representative records, then rerun safely."""
+from contextlib import contextmanager
 import os
 import datetime as dt
 from decimal import Decimal
@@ -18,6 +19,10 @@ def test_upgrade_deployed_schema_preserves_financial_records(monkeypatch):
                 cur.execute(query,params)
                 return cur.fetchall() if kwargs.get('fetch') else None
             monkeypatch.setattr(legacy_schema,'execute_query',execute,raising=False)
+            @contextmanager
+            def transaction():
+                yield cur
+            monkeypatch.setattr(legacy_schema,'transaction',transaction,raising=False)
             legacy_schema.init_db()
             cur.execute("""INSERT INTO categorias_personalizadas(tipo,categoria,subgrupo,valor_padrao,is_recorrente,dia_pagamento,data_inicio)
                 VALUES ('Despesa','Casa','Escola',100,1,5,'2026-08-01') RETURNING id""")
