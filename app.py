@@ -2109,8 +2109,44 @@ def _registrar_pagamento_ids(ids, valor_real_total=None, data_pagamento=None):
     with transaction() as cur:
         return settle(cur, ids, valor_real_total, data_pagamento or hoje)
 
+def _estado_reorganizacao():
+    df = fetch_dataframe("SELECT valor FROM preferencias_app WHERE chave='cobertura_reorganizacao'")
+    return json.loads(df.iloc[0]['valor']) if not df.empty else {'ids':[]}
+
+
+def _render_reorganizar_contas():
+    from operations import reorganize_coverage
+    state = _estado_reorganizacao()
+    if st.button('Reorganizar contas pendentes', key='reorganizar_contas'):
+        st.session_state['reorganizar_aberto'] = True
+    if state.get('ids'):
+        st.caption('Casamento reorganizado: os recebimentos selecionados continuam no histórico, mas não cobrem novas pendências.')
+    if 'anterior' in state and st.button('Desfazer reorganização',key='desfazer_reorganizacao'):
+        with transaction() as cur: reorganize_coverage(cur,undo=True)
+        st.session_state['reorganizar_aberto'] = False
+        st.rerun()
+    if not st.session_state.get('reorganizar_aberto'): return
+    with st.container(border=True):
+        st.write('Quais recebimentos não estão mais disponíveis para pagar estas contas?')
+        st.caption('Selecione, por exemplo, o recebimento do Hospital A. As contas pendentes serão ligadas às outras entradas, por vencimento. Nada será marcado como pago.')
+        received = fetch_dataframe("SELECT id,descricao,valor_pago,data_pagamento FROM lancamentos WHERE tipo='Entrada' AND pago=1 AND data_pagamento <= %s ORDER BY data_pagamento DESC,id DESC",(hoje,))
+        labels = {int(r['id']): f"{r['descricao']} · {pd.to_datetime(r['data_pagamento']):%d/%m/%Y} · R$ {format_brl(r['valor_pago'])}" for _,r in received.iterrows() if int(r['id']) not in state.get('ids',[])}
+        selected = st.multiselect('Recebimentos a desconsiderar',list(labels),format_func=lambda i: labels[i],key='reorganizar_ids')
+        if st.button('Aplicar reorganização',key='aplicar_reorganizacao',disabled=not selected):
+            with transaction() as cur: reorganize_coverage(cur,selected)
+            st.session_state['reorganizar_aberto'] = False
+            flash('success','Contas pendentes reorganizadas. Confira os novos vínculos e os avisos de falta de cobertura.')
+            st.rerun()
+        if st.button('Cancelar',key='cancelar_reorganizacao'):
+            st.session_state['reorganizar_aberto'] = False
+            st.rerun()
+
+
 def _consolidar_operacional(df, consolidar_cartao=False):
-    return finance._consolidar_operacional(df, consolidar_cartao=consolidar_cartao, hoje=hoje)
+    base = df.copy()
+    if not base.empty:
+        base['desconsiderar_cobertura'] = base['id'].isin(_estado_reorganizacao().get('ids',[]))
+    return finance._consolidar_operacional(base, consolidar_cartao=consolidar_cartao, hoje=hoje)
 
 
 
@@ -3402,6 +3438,7 @@ elif menu == "📝 Lançamentos":
 elif menu == "📊 Fluxo e Prioridades":
     cabecalho_pagina("📋 Fluxo", "O que entra, o que sai e quando — com a renda que cobre cada conta.", "fluxo")
     st.caption("Uma agenda financeira simples: vencimento, valor, status e de onde vem o dinheiro.")
+    _render_reorganizar_contas()
     _historico_baixas()
     df_todos_fluxo = fetch_dataframe("SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC", (inicio_periodo, fim_periodo))
     df = df_todos_fluxo.copy()

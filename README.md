@@ -23,3 +23,7 @@ O modo privado aceita `APP_PASSWORD`. Para contas separadas, configure `APP_USER
 `pip install -r requirements-dev.txt` e `python -m pytest -q`.
 
 Defina `TEST_DATABASE_URL` para uma base **descartável**: os testes removem e recriam os schemas `tenant_test`/`tenant_other`. Sem essa variável, os testes de integração são pulados. O GitHub Actions usa PostgreSQL 16 descartável e executa a suíte completa.
+
+## Reorganizar o casamento das contas
+
+Em **Fluxo → Reorganizar contas pendentes**, selecione os recebimentos que não estão mais disponíveis (por exemplo, Hospital A) e aplique. O app mantém o histórico e redistribui as pendências por vencimento entre as outras entradas. Valores não cobertos e rendas que chegam depois do vencimento continuam sinalizados. A seleção fica salva por cliente e pode ser desfeita pelo botão **Desfazer reorganização** (última alteração). Novos recebimentos não são automaticamente descartados, mesmo quando pertencem ao mesmo hospital. A ação não paga, cancela ou altera valores dos lançamentos e não exige informar saldo bancário.

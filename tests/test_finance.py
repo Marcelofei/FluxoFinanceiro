@@ -95,3 +95,32 @@ def test_closing_day_and_month_end():
     assert f.invoice_due(dt.date(2026,9,24),25,5)==dt.date(2026,10,5)
     assert f.invoice_due(dt.date(2026,9,25),25,5)==dt.date(2026,11,5)
     assert f.invoice_due(dt.date(2026,2,2),10,31)==dt.date(2026,2,28)
+
+
+def test_reorganization_uses_other_income_preserves_paid_history():
+    rows=[row(1,'Entrada',1000,'2026-09-25',1,1000,'2026-09-25'),
+          row(2,'Entrada',500,'2026-10-05'),
+          row(3,'Despesa',100,'2026-09-26',1,100,'2026-09-26'),
+          row(4,'Despesa',400,'2026-09-30')]
+    base=pd.DataFrame(rows); base['desconsiderar_cobertura']=base['id'].eq(1)
+    ops=f._consolidar_operacional(base,True,hoje=TODAY)
+    p=f._montar_plano_pagamentos(ops,2026,9,hoje=TODAY)
+    paid=next(c for c in p['contas'] if c['id']=='3')
+    pending=next(c for c in p['contas'] if c['id']=='4')
+    assert paid['alocacoes'][0]['fonte_id']=='1'
+    assert pending['alocacoes'][0]['fonte_id']=='2'
+    assert pending['risco_valor']==400
+    assert p['reserva_minima']==400
+    assert p['recebido_nao_alocado']==0
+
+
+def test_reorganization_does_not_discard_new_receipt_in_same_group():
+    rows=[row(1,'Entrada',100,'2026-09-30',1,100,'2026-09-30'),
+          row(2,'Entrada',200,'2026-09-30',1,200,'2026-09-30'),row(3,'Despesa',250,'2026-09-30')]
+    rows[0]['descricao']=rows[1]['descricao']='Plantão Hospital'
+    base=pd.DataFrame(rows);base['desconsiderar_cobertura']=base['id'].eq(1)
+    ops=f._consolidar_operacional(base,True,hoje=TODAY)
+    p=f._montar_plano_pagamentos(ops,2026,9,hoje=TODAY)
+    pending=p['contas'][0]
+    assert sum(a['valor'] for a in pending['alocacoes'])==200
+    assert pending['descoberto']==50

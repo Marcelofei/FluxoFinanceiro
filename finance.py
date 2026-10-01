@@ -138,6 +138,10 @@ def _consolidar_operacional(df, consolidar_cartao=False, hoje=None):
         out['atrasado'] = (out['pago'] == 0) & (out['data_vencimento'] < hoje)
         out['ordem_atraso'] = (~out['atrasado']).astype(int)
         out = out.sort_values(['ordem_atraso','data_vencimento','ordem_pri']).reset_index(drop=True)
+    if not out.empty:
+        excluded = {int(r['id']): money(r['valor_pago']) for _,r in base.iterrows()
+                    if r['tipo']=='Entrada' and int_seguro(r.get('pago'))==1 and r.get('desconsiderar_cobertura',False)}
+        out['valor_desconsiderado'] = out['ids'].map(lambda ids: float(sum((excluded.get(int(i),Decimal('0')) for i in ids),Decimal('0'))))
     return out
 
 def _valor_operacional(r):
@@ -188,6 +192,7 @@ def _montar_plano_pagamentos(df_ops, ano, mes, hoje=None):
             'restante': round(valor, 2),
             'recebido': int_seguro(r.get('pago')) == 1,
             'atrasada': int_seguro(r.get('pago')) == 0 and _data_operacional(r) < hoje,
+            'desconsiderado': min(valor,money(r.get('valor_desconsiderado',0))) if int_seguro(r.get('pago'))==1 else Decimal('0'),
             'compromissos': [],
         }
         fontes.append(fonte)
@@ -242,6 +247,12 @@ def _montar_plano_pagamentos(df_ops, ano, mes, hoje=None):
             resultado['uso_externo_historico'] += faltante
             conta['descoberto'] = faltante
 
+    # Keep historical allocations; only the pending plan loses unavailable receipts.
+    for fonte in fontes:
+        if fonte['recebido']:
+            fonte['restante'] = min(fonte['restante'],max(fonte['valor']-fonte['desconsiderado'],Decimal('0')))
+    saldos_replanejados = {f['id']:f['restante'] for f in fontes if f['recebido']}
+
     # Contas futuras usam primeiro recursos que chegam até o vencimento; só depois
     # recorrem a entradas posteriores, que indicam risco de atraso sem reserva.
     for conta in pendentes:
@@ -268,6 +279,10 @@ def _montar_plano_pagamentos(df_ops, ano, mes, hoje=None):
         data_ev = _data_operacional(r)
         sinal = 1 if r['tipo'] == 'Entrada' else -1
         eventos.append((data_ev, 0 if sinal > 0 else 1, sinal * valor))
+    if any(f['desconsiderado'] > 0 for f in fontes):
+        eventos = [(hoje,0,v) for v in saldos_replanejados.values()]
+        eventos += [(max(f['data'],hoje),0,f['valor']) for f in fontes if not f['recebido'] and not f['atrasada']]
+        eventos += [(max(c['vencimento'],hoje),1,-c['valor']) for c in pendentes]
     eventos.sort(key=lambda x: (x[0], x[1]))
     acumulado = Decimal("0.00")
     minimo = Decimal("0.00")
