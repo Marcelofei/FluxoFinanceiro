@@ -147,3 +147,24 @@ def test_reorganize_pending_preserves_records_and_can_undo(ui):
         cur.execute("SELECT valor FROM preferencias_app WHERE chave='cobertura_reorganizacao:2026-09'")
         assert json.loads(cur.fetchone()[0])['ids']==[]
         cur.execute("SELECT count(*) FROM auditoria WHERE entidade='cobertura'");assert cur.fetchone()[0]==2
+
+
+def test_invoice_composition_shows_exact_members_without_mutation(ui):
+    app,db=ui
+    with db,db.cursor() as cur:
+        cur.execute("""INSERT INTO lancamentos(tipo,categoria,descricao,valor,forma_pagamento,
+          data_vencimento,data_competencia,parcela_atual,total_parcelas,pago)
+          VALUES ('Despesa','Casa','Notebook detalhado',3000,'Crédito','2026-09-30','2026-08-10',2,3,0),
+                 ('Despesa','Casa','Compra detalhada',500,'Crédito','2026-09-30','2026-09-15',1,1,0),
+                 ('Despesa','Casa','Outra fatura',900,'Crédito','2026-10-10','2026-09-15',1,1,0)""")
+    app.button(key='nav_fluxo').click().run();healthy(app)
+    toggle=next(w for w in app.toggle if w.label=='Ver composição da fatura · 2 lançamento(s)')
+    toggle.set_value(True).run();healthy(app)
+    tables=[w.value for w in app.dataframe if 'Valor nesta fatura' in w.value.columns]
+    assert len(tables)==1
+    assert tables[0]['Descrição'].tolist()==['Notebook detalhado','Compra detalhada']
+    assert tables[0]['Parcela'].tolist()==['2/3','À vista']
+    assert any('Total dos lançamentos: R$ 3.500,00' in w.value for w in app.markdown)
+    with db,db.cursor() as cur:
+        cur.execute("SELECT sum(valor),sum(pago) FROM lancamentos WHERE forma_pagamento='Crédito'")
+        assert cur.fetchone()==(4400,0)

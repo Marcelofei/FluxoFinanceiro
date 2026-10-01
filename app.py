@@ -2414,6 +2414,42 @@ def _fluxo2_pagar_lote_planejado(linhas, data_pagamento):
             settle(cur, r['ids'], None, data_pagamento)
 
 
+def _fatura_detalhes(r, prefixo, controle=False):
+    if not str(r.get('id_ui', '')).startswith('cartao_'): return
+    key = f"{prefixo}_fatura_itens_{r['id_ui']}"
+    if controle:
+        st.toggle(f"Ver composição da fatura · {len(r['ids'])} lançamento(s)", key=key)
+        return
+    if not st.session_state.get(key): return
+    ids = [int(i) for i in r['ids']]
+    itens = fetch_dataframe("""SELECT id,descricao,categoria,subgrupo,valor,valor_pago,pago,
+        parcela_atual,total_parcelas,data_competencia,data_vencimento,data_pagamento
+        FROM lancamentos WHERE id=ANY(%s) ORDER BY data_competencia,id""", (ids,))
+    with st.container(border=True):
+        st.markdown(f"**Composição — {r['descricao']}**")
+        st.caption('Somente os lançamentos que compõem esta linha da fatura. Outras parcelas e valores já baixados em outra linha não entram neste total.')
+        if 'não identificado' in str(r['descricao']).lower():
+            st.info('Estes lançamentos estão no crédito, mas ainda não têm um cartão identificado no cadastro.')
+        if itens.empty:
+            st.warning('Os lançamentos foram alterados. Atualize a página para conferir a fatura.')
+            return
+        linhas=[]
+        total=money(0)
+        for _, item in itens.iterrows():
+            valor=money(_valor_operacional(item)); total+=valor
+            n=int_seguro(item.get('total_parcelas'))
+            parcela=f"{int_seguro(item.get('parcela_atual'))}/{n}" if 1<n<999 else 'À vista'
+            data=pd.to_datetime(item.get('data_competencia'),errors='coerce')
+            linhas.append({'Descrição':item['descricao'], 'Categoria':item['categoria'],
+                'Referência':data.strftime('%d/%m/%Y') if pd.notna(data) else 'Não informada',
+                'Parcela':parcela, 'Status':'Pago' if int_seguro(item['pago']) else 'Pendente',
+                'Valor nesta fatura':f'R$ {format_brl(valor)}'})
+        st.dataframe(pd.DataFrame(linhas),hide_index=True,use_container_width=True)
+        st.markdown(f"**Total dos lançamentos: R$ {format_brl(total)}**")
+        if abs(total-money(_valor_operacional(r)))>money('0.01'):
+            st.warning('O total mudou desde a exibição da fatura. Atualize a página antes de pagar.')
+
+
 def _render_fluxo2_timeline(df_visivel, df_todos, plano, prefixo='fluxo2'):
     if df_visivel.empty:
         render_empty_state("Nada por aqui", "Não há lançamentos que correspondam a este filtro.", "○")
@@ -2532,6 +2568,9 @@ def _render_fluxo2_timeline(df_visivel, df_todos, plano, prefixo='fluxo2'):
                     unsafe_allow_html=True,
                 )
 
+                with cdesc:
+                    _fatura_detalhes(r, prefixo, controle=True)
+
                 sinal = '+' if r['tipo'] == 'Entrada' else ''
                 val_cls = 'ux-positive' if r['tipo'] == 'Entrada' else ('ux-negative' if not pago else '')
                 diff = realizado - planejado if pago else 0.0
@@ -2566,6 +2605,8 @@ def _render_fluxo2_timeline(df_visivel, df_todos, plano, prefixo='fluxo2'):
                         st.rerun()
                 else:
                     cextra.write("")
+
+            _fatura_detalhes(r, prefixo)
 
             if (not pago) and st.session_state.get('_pagamento_aberto') == chave_acao:
                 acao_nome = 'pagamento' if r['tipo'] == 'Despesa' else 'recebimento'
@@ -2694,6 +2735,9 @@ def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_edita
             unsafe_allow_html=True,
         )
 
+        with c1:
+            _fatura_detalhes(r, prefixo, controle=True)
+
         if pago:
             principal = realizado
             sub = f"Planejado R$ {format_brl(planejado)}" if abs(principal-planejado) > 0.004 else "Realizado"
@@ -2708,6 +2752,8 @@ def _render_linhas_operacionais(df_ops, prefixo, max_linhas=None, permitir_edita
                 f"<div class='ux-flow-value-main'>R$ {format_brl(planejado)}</div>"
                 f"<div class='ux-flow-value-sub'>Planejado</div></div>", unsafe_allow_html=True
             )
+
+        _fatura_detalhes(r, prefixo)
 
         chave_acao = f"{prefixo}:{r['id_ui']}"
         if pago:
