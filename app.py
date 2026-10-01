@@ -3120,6 +3120,7 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
     removed=fetch_dataframe("SELECT valor FROM preferencias_app WHERE chave LIKE 'fonte_excluida:%%'")
     removed_keys={_renda_fonte_key(v.get('categoria'),v.get('subgrupo')) for v in (json.loads(x) for x in removed.get('valor',[]))}
     entradas = df_mes[df_mes['tipo']=='Entrada'].copy() if df_mes is not None and not df_mes.empty else pd.DataFrame()
+    entradas=finance.align_shift_sources(entradas,defs)
     if not entradas.empty:
         entradas['valor']=pd.to_numeric(entradas['valor'],errors='coerce').fillna(0.0)
         entradas['valor_pago']=pd.to_numeric(entradas['valor_pago'],errors='coerce').fillna(0.0)
@@ -3141,7 +3142,7 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
     hist_ini=(pd.Timestamp(comp)-pd.DateOffset(months=6)).date()
     hist_fim=min(comp,hoje.replace(day=1))
     hist=fetch_dataframe(
-        '''SELECT categoria,subgrupo,valor_pago,pago,data_pagamento,data_vencimento
+        '''SELECT tipo,descricao,categoria,subgrupo,valor_pago,pago,data_pagamento,data_vencimento
            FROM lancamentos
            WHERE tipo='Entrada'
              AND pago=1
@@ -3150,6 +3151,7 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
              AND COALESCE(data_pagamento,data_vencimento) < %s''',
         (hist_ini,hist_fim)
     )
+    hist=finance.align_shift_sources(hist,defs)
     medias={}
     media_meses={}
     if not hist.empty:
@@ -3167,7 +3169,7 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
                 meses_validos=len(serie)
                 media_meses[k]=meses_validos
                 medias[k]=float(serie.mean()) if meses_validos >= 2 else 0.0
-    caixa_rendas = _dados_caixa()
+    caixa_rendas = finance.align_shift_sources(_dados_caixa(),defs)
     saida=[]
     for k,f in fontes.items():
         if not entradas.empty:
@@ -3176,9 +3178,10 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
         esperado=float(grp['valor'].sum()) if not grp.empty else 0.0; realizado=float(grp.loc[grp['pago']==1,'valor_pago'].sum()) if not grp.empty else 0.0; pendente=float(grp.loc[grp['pago']==0,'valor'].sum()) if not grp.empty else 0.0
         recebimentos_fonte = caixa_rendas[(caixa_rendas['tipo']=='Entrada') & (caixa_rendas['categoria']==f['categoria']) & (caixa_rendas['subgrupo'].fillna('')==f['subgrupo'])]
         realizado = float(recebimentos_fonte['valor_pago'].sum())
-        if esperado<=0.004 and (f['is_recorrente']==1 or f['especializada']) and f['valor_padrao']>0:
+        if esperado<=0.004 and f['is_recorrente']==1 and not f['especializada'] and f['valor_padrao']>0:
             di=pd.to_datetime(f.get('data_inicio'),errors='coerce')
             if pd.isna(di) or di.date() <= datetime.date(int(ano),int(mes),calendar.monthrange(int(ano),int(mes))[1]): esperado=f['valor_padrao']; pendente=max(esperado-realizado,0.0)
+        f['quantidade_plantoes']=int(grp['descricao'].str.match(r'(?i)^plant[ãa]o\s',na=False).sum()) if not grp.empty else 0
         prox=None
         if not grp.empty:
             fut=grp[grp['pago']==0].sort_values('data_vencimento')
@@ -4183,21 +4186,21 @@ elif menu == "💰 Rendas":
             h1.markdown("<div class='income2-panel-title'>Fontes de renda</div><div class='income2-panel-note'>Uma visão simples das origens do seu dinheiro.</div>",unsafe_allow_html=True)
             if h2.button('＋ Adicionar fonte',key='income2_add_btn',use_container_width=True): st.session_state['income2_add_open']=not st.session_state.get('income2_add_open',False)
             if st.session_state.get('income2_add_open'):
+                especial=st.checkbox('Ativar gestão de plantões',value=False,key='income2_new_shifts',help='A renda será calculada automaticamente pela agenda.')
                 with st.form('income2_add_form',clear_on_submit=False):
                     a1,a2=st.columns([1.6,1])
                     nome=a1.text_input('Nome da fonte',placeholder='Ex.: Consultório, Hospital Help')
                     modalidade=a2.selectbox('Tipo da renda',['Mensal','Variável','Eventual'])
                     b1,b2,b3=st.columns(3)
-                    valor=b1.number_input('Valor esperado',min_value=0.0,step=100.0,format='%.2f')
+                    valor=b1.number_input('Calculado pela agenda' if especial else 'Valor esperado',min_value=0.0,step=100.0,format='%.2f',disabled=especial)
                     dia=b2.number_input('Dia de recebimento',min_value=1,max_value=31,value=10)
                     atraso=b3.number_input('Meses até receber',min_value=0,max_value=6,value=0)
-                    especial=st.checkbox('Ativar gestão de plantões',value=False,help='Adiciona escala, produção e previsão de pagamento. Não altera o tipo da renda.')
                     if st.form_submit_button('Salvar fonte',type='primary',use_container_width=True):
                         if not nome.strip():
                             st.error('Informe um nome para a fonte.')
                         else:
                             rec=1 if modalidade in ('Mensal','Variável') and valor>0 and not especial else 0
-                            execute_query('''INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento,is_recorrente,data_inicio,is_producao_variavel,modalidade_renda) VALUES ('Entrada',%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',('Rendas',nome.strip(),valor if valor>0 else None,int(atraso),int(dia),rec,datetime.date(ano_selecionado,mes_selecionado,1),1 if especial else 0,modalidade))
+                            execute_query('''INSERT INTO categorias_personalizadas (tipo,categoria,subgrupo,valor_padrao,atraso_meses,dia_pagamento,is_recorrente,data_inicio,is_producao_variavel,modalidade_renda) VALUES ('Entrada',%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',('Rendas',nome.strip(),valor if valor>0 and not especial else None,int(atraso),int(dia),rec,datetime.date(ano_selecionado,mes_selecionado,1),1 if especial else 0,modalidade))
                             invalidar_caches_estruturais()
                             st.session_state.pop(f"rec_processado_{mes_selecionado}_{ano_selecionado}",None)
                             st.session_state['income2_add_open']=False
@@ -4214,6 +4217,12 @@ elif menu == "💰 Rendas":
                         media_txt=f"<div class='income2-source-meta'>Média histórica ({int(f['media_meses'])} meses): R$ {format_brl(f['media'])}</div>"
                     especial_txt="<span class='income2-badge blue'>Plantões ativos</span>" if f['especializada'] else ''
                     c1.markdown(f"<div class='income2-source-name'>{html.escape(f['nome'])}<span class='income2-badge {badge}'>{html.escape(f['modalidade'])}</span>{especial_txt}</div><div class='income2-source-money'>Esperado neste mês <b>R$ {format_brl(f['esperado'])}</b></div>"+media_txt+(f"<div class='income2-source-meta'>▣ Normalmente recebe dia {f['dia_pagamento']}</div>" if f['dia_pagamento'] else "<div class='income2-source-meta'>Sem recorrência fixa</div>"),unsafe_allow_html=True)
+                    if f['especializada'] or f.get('quantidade_plantoes',0):
+                        c1.caption(f"Calculado pela agenda · {f.get('quantidade_plantoes',0)} plantão(ões) com recebimento previsto neste mês")
+                        if c1.button('Ver plantões',key=f"income2_agenda_{idx}"):
+                            st.session_state['rendas_fonte_filtro']=f['nome']
+                            st.session_state.menu_atual='🏥 Escala de Plantões'
+                            st.rerun()
                     prox=f['proxima_data'].strftime('%d/%m') if f['proxima_data'] else '—'
                     sit='Previsto' if f['pendente']>0.004 else ('Recebido' if f['realizado']>0.004 else 'Sem previsão')
                     c2.markdown(f"<div class='income2-source-meta'>Próximo recebimento</div><div class='income2-source-money'><b>{prox}</b></div><div class='income2-source-meta'>{sit} · R$ {format_brl(f['pendente'] if f['pendente']>0.004 else f['realizado'])}</div>",unsafe_allow_html=True)
@@ -4229,15 +4238,15 @@ elif menu == "💰 Rendas":
                     if c3.button('Excluir fonte',key=delete_key):
                         st.session_state['income2_delete_key']=f['key']
                     if st.session_state.get('income2_delete_key')==f['key']:
-                        st.warning('Excluir esta fonte interrompe novas recorrências. Os recebimentos e as pendências já cadastrados serão preservados no Fluxo.')
+                        st.warning(f'Excluir esta fonte também apaga da agenda os plantões de {hoje:%d/%m/%Y} em diante. Plantões anteriores e lançamentos que não são plantões serão preservados. A exclusão ficará no histórico.')
                         yes,no=st.columns(2)
                         if yes.button('Confirmar exclusão da fonte',key=delete_key+'_confirm'):
                             from operations import delete_income_source
                             with transaction() as cur:
-                                delete_income_source(cur,f['categoria'],f['subgrupo'])
+                                deleted=delete_income_source(cur,f['categoria'],f['subgrupo'],hoje)
                             invalidar_caches_estruturais()
                             st.session_state.pop('income2_delete_key',None)
-                            flash('success','Fonte excluída. Histórico e pendências preservados.')
+                            flash('success',f'Fonte excluída e {deleted} plantão(ões) removido(s) a partir de hoje. Plantões anteriores preservados.')
                             st.rerun()
                         if no.button('Cancelar exclusão',key=delete_key+'_cancel'):
                             st.session_state.pop('income2_delete_key',None)
@@ -4246,13 +4255,14 @@ elif menu == "💰 Rendas":
                     if st.session_state.get('income2_edit_id')==f.get('id') and f.get('id'):
                         tipos=['Mensal','Variável','Eventual']
                         tipo_atual=f['modalidade'] if f['modalidade'] in tipos else 'Variável'
+                        ee=st.checkbox('Gestão de plantões',value=bool(f['especializada']),key=f"income2_edit_shifts_{f['id']}",help='O valor da renda vem exclusivamente da agenda.')
                         with st.form(f"income2_edit_form_{f['id']}"):
                             st.caption('Alterar o dia ou os meses até receber reorganiza as pendências com vencimento no mês atual e seguintes. Recebimentos concluídos e pendências de meses anteriores são preservados.')
                             e1,e2=st.columns([1.2,1])
                             em=e1.selectbox('Tipo da renda',tipos,index=tipos.index(tipo_atual))
-                            ee=e2.checkbox('Gestão de plantões',value=bool(f['especializada']),help='Ativa escala, produção e previsão de pagamento para esta fonte.')
                             e3,e4,e5=st.columns(3)
-                            ev=e3.number_input('Valor esperado',min_value=0.0,value=float(f['valor_padrao'] or 0),step=100.0,format='%.2f')
+                            ev=e3.number_input('Calculado pela agenda' if ee else 'Valor esperado',min_value=0.0,value=float(f['esperado'] if ee else (f['valor_padrao'] or 0)),step=100.0,format='%.2f',disabled=ee)
+                            if ee: st.caption('Para alterar a renda, edite os plantões na agenda.')
                             ed=e4.number_input('Dia de recebimento',min_value=1,max_value=31,value=int(f['dia_pagamento'] or 10))
                             ea=e5.number_input('Meses até receber',min_value=0,max_value=6,value=int(f['atraso_meses'] or 0))
                             sb1,sb2=st.columns(2)
@@ -4390,7 +4400,7 @@ elif menu == "🏥 Escala de Plantões":
                             if desc in exist: continue
                             val=parse_valor(r[cv]) if cv and pd.notna(r.get(cv)) else float_seguro(inf.get('valor_padrao'))
                             if val<=0: problemas.append(f'{desc} · sem valor'); continue
-                            am=int(inf['atraso_meses'] or 1); dp=int(inf['dia_pagamento'] or 10); mf=(dt.month+am-1)%12+1; af=dt.year+(dt.month+am-1)//12; venc=datetime.date(af,mf,min(dp,calendar.monthrange(af,mf)[1])); novos.append(('Entrada',inf['categoria'],inf['subgrupo'],desc,val,venc,1,1,0,str(uuid.uuid4()),'Outros','Baixa 🟢',0.0,dt)); exist.add(desc)
+                            am=int(inf['atraso_meses']) if pd.notna(inf['atraso_meses']) else 1; dp=int(inf['dia_pagamento'] or 10); mf=(dt.month+am-1)%12+1; af=dt.year+(dt.month+am-1)//12; venc=datetime.date(af,mf,min(dp,calendar.monthrange(af,mf)[1])); novos.append(('Entrada',inf['categoria'],inf['subgrupo'],desc,val,venc,1,1,0,str(uuid.uuid4()),'Outros','Baixa 🟢',0.0,dt)); exist.add(desc)
                         st.write(f"Novos: **{len(novos)}** · Problemas: **{len(problemas)}**")
                         if problemas: st.caption('Problemas: '+', '.join(problemas[:10]))
                         if novos and st.button('Confirmar importação',type='primary'): _inserir_plantoes(novos); flash('success','Importação concluída. Plantões já existentes foram preservados.'); st.rerun()
@@ -4404,6 +4414,13 @@ elif menu == "🏥 Escala de Plantões":
                 filtro_locais=st.multiselect('Filtrar por hospital/local',locais_ger,placeholder='Todos os locais',key='plant_ger_filtro')
                 if filtro_locais: dm=dm[dm['subgrupo'].astype(str).isin(filtro_locais)].copy()
                 dm=dm.sort_values('d_p').reset_index(drop=True); dm['Apagar']=False; dm['Data']=pd.to_datetime(dm['d_p']).dt.strftime('%d/%m/%Y'); ed=st.data_editor(dm[['id','Apagar','Data','subgrupo','valor']],hide_index=True,use_container_width=True,column_config={'id':st.column_config.NumberColumn(disabled=True),'valor':st.column_config.NumberColumn('Valor',format='R$ %.2f')})
+                st.caption('Alterações de valor atualizam automaticamente a previsão de renda. Plantões já recebidos preservam seus valores.')
+                if st.button('Salvar valores dos plantões',key='plant_save_values'):
+                    from operations import update_shift_values
+                    with transaction() as cur:
+                        changed=update_shift_values(cur,[(int(r['id']),r['valor']) for _,r in ed.iterrows()])
+                    flash('success',f'{changed} plantão(ões) atualizado(s). A previsão de renda acompanha os novos valores.')
+                    st.rerun()
                 conf=st.checkbox('Confirmo a exclusão dos itens marcados',key='conf_del_plant')
                 pb1,pb2=st.columns(2)
                 if pb1.button('Excluir selecionados',disabled=not conf,use_container_width=True):

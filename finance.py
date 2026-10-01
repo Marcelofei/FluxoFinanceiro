@@ -111,7 +111,7 @@ def _consolidar_operacional(df, consolidar_cartao=False, hoje=None):
             cat = str(r.get('categoria') or '').strip()
             sub = str(r.get('subgrupo') or '').strip()
             cat_norm = cat.lower().replace('õ','o').replace('ã','a')
-            return sub if cat_norm in ('plantoes','plantao') and sub else cat
+            return sub or cat
         plant['_grupo_hospital'] = plant.apply(_grupo_hospital, axis=1)
         plant['_pagamento'] = pd.to_datetime(plant['data_pagamento'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('pendente')
         for (hospital, dt, status, pagamento), grp in plant.groupby(['_grupo_hospital','data_vencimento','pago','_pagamento']):
@@ -374,3 +374,25 @@ def coverage_month_scope(df, year, month, state):
         base = base[(dates.dt.year == year) & (dates.dt.month == month)].copy()
     base['desconsiderar_cobertura'] = base['id'].isin(state.get('ids', []))
     return base
+
+
+def align_shift_sources(entries, definitions):
+    """Resolve legacy shift categories only when the hospital identifies one source."""
+    result=entries.copy()
+    if result.empty or definitions.empty: return result
+    def norm(v): return '' if pd.isna(v) else str(v).strip().casefold()
+    by_location={}
+    exact=set()
+    for _,source in definitions.iterrows():
+        key=(norm(source.get('categoria')),norm(source.get('subgrupo')))
+        exact.add(key)
+        if key[1]: by_location.setdefault(key[1],[]).append(source)
+    for i,row in result.iterrows():
+        if row.get('tipo')!='Entrada' or not str(row.get('descricao','')).casefold().startswith(('plantão ','plantao ')): continue
+        key=(norm(row.get('categoria')),norm(row.get('subgrupo')))
+        if key in exact: continue
+        candidates=by_location.get(key[1],[])
+        if len(candidates)==1:
+            result.at[i,'categoria']=candidates[0]['categoria']
+            result.at[i,'subgrupo']=candidates[0]['subgrupo']
+    return result

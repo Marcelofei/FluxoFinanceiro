@@ -139,3 +139,21 @@ def test_monthly_reorganization_never_uses_other_months():
     unchanged=f.coverage_month_scope(df,2026,10,{'ids':[]})
     assert unchanged.id.tolist()==df.id.tolist()
     assert not unchanged.desconsiderar_cobertura.any()
+
+
+def test_shift_hospitals_stay_separate_in_coverage():
+    a=row(101,'Entrada',1000,'2026-09-30');a.update(categoria='Rendas',subgrupo='Hospital A',descricao='Plantão Hospital A')
+    b=row(102,'Entrada',2000,'2026-09-30');b.update(categoria='Rendas',subgrupo='Hospital B',descricao='Plantão Hospital B')
+    ops=f._consolidar_operacional(pd.DataFrame([a,b]),True,hoje=TODAY)
+    assert len(ops)==2
+    assert set(ops.descricao)=={'🏥 Hospital A','🏥 Hospital B'}
+
+
+def test_legacy_shift_links_only_to_unambiguous_source():
+    df=pd.DataFrame([dict(tipo='Entrada',descricao='Plantão Hospital A',categoria='Plantões',subgrupo='Hospital A',valor=100)])
+    definitions=pd.DataFrame([dict(categoria='Rendas',subgrupo='Hospital A')])
+    linked=f.align_shift_sources(df,definitions)
+    assert linked.iloc[0].categoria=='Rendas'
+    assert df.iloc[0].categoria=='Plantões'
+    ambiguous=pd.concat([definitions,pd.DataFrame([dict(categoria='Outra',subgrupo='Hospital A')])])
+    assert f.align_shift_sources(df,ambiguous).iloc[0].categoria=='Plantões'

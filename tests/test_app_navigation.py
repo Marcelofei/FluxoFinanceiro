@@ -215,3 +215,49 @@ def test_planning_category_details_reconcile_and_isolate(ui):
     assert set(tables[0]['Descrição'])=={'Mensalidade paga','Material crédito','Taxa pendente'}
     assert any('Realizado: R$ 150,00 · Ainda previsto: R$ 30,00' in w.value for w in app.markdown)
     assert any('orçamento definido de R$ 200,00' in w.value for w in app.caption)
+
+
+def test_income_source_sums_schedule_and_no_phantom_monthly_rate(ui):
+    app,db=ui
+    with db,db.cursor() as cur:
+        cur.execute("UPDATE categorias_personalizadas SET valor_padrao=1200,dia_pagamento=10,atraso_meses=1 WHERE subgrupo='Hospital Teste'")
+        cur.execute("""INSERT INTO lancamentos(tipo,categoria,subgrupo,descricao,valor,pago,data_competencia,data_vencimento)
+          VALUES ('Entrada','Plantões','Hospital Teste','Plantão Hospital Teste (01/09/2026)',1200,0,'2026-09-01','2026-10-10'),
+                 ('Entrada','Rendas','Hospital Teste','Plantão Hospital Teste (02/09/2026)',1500,0,'2026-09-02','2026-10-10')""")
+    app.button(key='nav_rendas').click().run();healthy(app)
+    # September has no shifts due: the per-shift rate must not appear as monthly income.
+    source=next(m.value for m in app.markdown if "income2-source-name" in m.value and 'Hospital Teste' in m.value)
+    assert 'R$ 0,00' in source
+    app.button(key='sb_next').click().run();healthy(app)
+    sources=[m.value for m in app.markdown if "income2-source-name" in m.value and 'Hospital Teste' in m.value]
+    assert len(sources)==1 and 'R$ 2.700,00' in sources[0]
+    assert any('2 plantão(ões)' in c.value for c in app.caption)
+    # Removing a pending schedule item must immediately reduce the source projection.
+    with db,db.cursor() as cur:
+        cur.execute("DELETE FROM lancamentos WHERE descricao='Plantão Hospital Teste (02/09/2026)'")
+    app.run();healthy(app)
+    source=next(m.value for m in app.markdown if "income2-source-name" in m.value and 'Hospital Teste' in m.value)
+    assert 'R$ 1.200,00' in source
+
+
+def test_shift_source_value_is_read_only_in_income_screen(ui):
+    app,db=ui
+    app.button(key='nav_rendas').click().run();healthy(app)
+    widget(app,'button','Editar ›').click().run();healthy(app)
+    assert widget(app,'number_input','Calculado pela agenda').disabled
+    assert not any(w.label=='Valor esperado' for w in app.number_input)
+
+
+def test_source_delete_removes_today_and_future_shifts_only(ui):
+    app,db=ui
+    with db,db.cursor() as cur:
+        cur.execute("""INSERT INTO lancamentos(tipo,categoria,subgrupo,descricao,valor,pago,data_competencia,data_vencimento)
+            VALUES ('Entrada','Rendas','Hospital Teste','Plantão antes corte',100,0,'2026-09-29','2026-10-10'),
+                   ('Entrada','Rendas','Hospital Teste','Plantão no corte',200,0,'2026-09-30','2026-10-10'),
+                   ('Entrada','Rendas','Hospital Teste','Plantão após corte',300,0,'2026-10-01','2026-11-10')""")
+    app.button(key='nav_rendas').click().run();healthy(app)
+    next(b for b in app.button if b.label=='Excluir fonte' and 'hospital teste' in str(b.key)).click().run();healthy(app)
+    widget(app,'button','Confirmar exclusão da fonte').click().run();healthy(app)
+    with db,db.cursor() as cur:
+        cur.execute("SELECT descricao FROM lancamentos WHERE descricao LIKE 'Plantão %%'")
+        assert cur.fetchall()==[('Plantão antes corte',)]

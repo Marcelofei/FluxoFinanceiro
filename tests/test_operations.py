@@ -48,6 +48,36 @@ def test_income_dates_and_delete_preserve_history(db):
         dates=dict(cur.fetchall())
         assert dates=={'atual':dt.date(2026,11,30),'futuro':dt.date(2026,12,31),'recebido':dt.date(2026,10,10),'antigo':dt.date(2026,9,10),'outro':dt.date(2026,10,10)}
         cur.execute('SELECT row_to_json(l) FROM lancamentos l ORDER BY id');before=cur.fetchall()
-        delete_income_source(cur,'Rendas','Hospital datas')
+        delete_income_source(cur,'Rendas','Hospital datas',dt.date(2026,10,1))
         cur.execute('SELECT row_to_json(l) FROM lancamentos l ORDER BY id');assert cur.fetchall()==before
         cur.execute('SELECT count(*) FROM categorias_personalizadas WHERE id=%s',(source,));assert cur.fetchone()[0]==0
+
+
+def test_shift_value_edit_preserves_received_amounts(db):
+    from operations import update_shift_values
+    with db,db.cursor() as cur:
+        cur.execute("""INSERT INTO lancamentos(tipo,categoria,subgrupo,descricao,valor,pago,valor_pago,data_vencimento,data_pagamento)
+          VALUES ('Entrada','Rendas','Hospital A','Plantão pendente',100,0,0,'2026-10-10',NULL),
+                 ('Entrada','Rendas','Hospital A','Plantão recebido',200,1,200,'2026-10-10','2026-10-10') RETURNING id""")
+        a,b=[r[0] for r in cur.fetchall()]
+        assert update_shift_values(cur,[(a,150),(b,999)])==1
+        cur.execute('SELECT valor,valor_pago FROM lancamentos WHERE id=%s',(b,));assert cur.fetchone()==(200,200)
+        cur.execute('SELECT valor FROM lancamentos WHERE id=%s',(a,));assert cur.fetchone()[0]==150
+
+
+def test_delete_source_cascades_by_shift_day_not_receipt_day(db):
+    import datetime as dt
+    from operations import delete_income_source
+    with db,db.cursor() as cur:
+        cur.execute("INSERT INTO categorias_personalizadas(tipo,categoria,subgrupo) VALUES ('Entrada','Rendas','Hospital corte')")
+        cur.execute("""INSERT INTO lancamentos(tipo,categoria,subgrupo,descricao,valor,pago,data_competencia,data_vencimento)
+          VALUES ('Entrada','Plantões','Hospital corte','Plantão anterior',100,0,'2026-09-30','2026-11-10'),
+                 ('Entrada','Rendas','Hospital corte','Plantão hoje',200,0,'2026-10-01','2026-11-10'),
+                 ('Entrada','Plantões','Hospital corte','Plantão futuro',300,0,'2026-11-01','2026-12-10'),
+                 ('Entrada','Rendas','Outro','Plantão outro',400,0,'2026-10-01','2026-11-10'),
+                 ('Entrada','Rendas','Hospital corte','Renda avulsa',500,0,'2026-10-01','2026-11-10')""")
+        assert delete_income_source(cur,'Rendas','Hospital corte',dt.date(2026,10,1))==2
+        cur.execute('SELECT descricao FROM lancamentos')
+        assert {r[0] for r in cur.fetchall()}=={'Plantão anterior','Plantão outro','Renda avulsa'}
+        cur.execute("SELECT count(*) FROM auditoria WHERE operacao='EXCLUIR_PLANTAO_FONTE'")
+        assert cur.fetchone()[0]==2
