@@ -32,27 +32,29 @@ def insert_shifts(cur, records):
     return inserted
 
 
-def reorganize_coverage(cur, ids=(), undo=False):
+def reorganize_coverage(cur, year, month, undo=False):
     """Persist coverage choices atomically without mutating financial records."""
+    import datetime as dt
     from psycopg2.extras import Json
+    start = dt.date(year, month, 1)
+    end = (start.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+    key = f"cobertura_reorganizacao:{year:04d}-{month:02d}"
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(current_schema() || ':coverage'))")
-    cur.execute("SELECT valor FROM preferencias_app WHERE chave='cobertura_reorganizacao'")
+    cur.execute("SELECT valor FROM preferencias_app WHERE chave=%s", (key,))
     row=cur.fetchone()
     old=json.loads(row[0]) if row else {'ids':[]}
     if undo:
         if 'anterior' not in old: return
-        new={'ids':old['anterior']}
+        new=old['anterior']
     else:
-        selected=sorted(set(int(i) for i in ids))
-        if not selected: raise ValueError('Selecione ao menos um recebimento.')
-        cur.execute("SELECT id FROM lancamentos WHERE id=ANY(%s) AND tipo='Entrada' AND pago=1 FOR UPDATE",(selected,))
-        if len(cur.fetchall())!=len(selected): raise ValueError('Um recebimento mudou. Atualize a tela.')
-        merged=sorted(set(old.get('ids',[]))|set(selected))
-        if merged==old.get('ids',[]): return
-        new={'ids':merged,'anterior':old.get('ids',[])}
+        cur.execute("""SELECT id FROM lancamentos WHERE tipo='Entrada' AND pago=1
+            AND data_vencimento >= %s AND data_vencimento < %s ORDER BY id FOR UPDATE""", (start,end))
+        selected=[r[0] for r in cur.fetchall()]
+        if old.get('ativo') and selected==old.get('ids',[]): return
+        new={'ativo':True,'ids':selected,'anterior':{k:v for k,v in old.items() if k!='anterior'}}
     cur.execute("""INSERT INTO preferencias_app(chave,valor,atualizado_em)
-        VALUES ('cobertura_reorganizacao',%s,NOW()) ON CONFLICT(chave)
-        DO UPDATE SET valor=EXCLUDED.valor,atualizado_em=NOW()""",(json.dumps(new),))
+        VALUES (%s,%s,NOW()) ON CONFLICT(chave)
+        DO UPDATE SET valor=EXCLUDED.valor,atualizado_em=NOW()""",(key,json.dumps(new)))
     cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
         VALUES ('cobertura',%s,%s,%s,current_setting('app.actor',true))""",
-        ('DESFAZER_REORGANIZACAO' if undo else 'REORGANIZAR',Json(old),Json(new)))
+        ('DESFAZER_REORGANIZACAO' if undo else 'REORGANIZAR',Json(dict(old,periodo=start.isoformat())),Json(dict(new,periodo=start.isoformat()))))
