@@ -291,9 +291,17 @@ def processar_recorrencias_lazy(mes, ano):
     try:
         with transaction() as cur:
             for _, contrato in df_contratos.iterrows():
+                # Re-read under lock: an edited or deleted source cannot generate stale dates.
+                cur.execute('SELECT row_to_json(c) FROM categorias_personalizadas c WHERE id=%s AND is_recorrente=1 FOR UPDATE',(int(contrato['id']),))
+                current=cur.fetchone()
+                if not current: continue
+                contrato=current[0]
                 dt_inicio = pd.to_datetime(contrato['data_inicio']).date() if pd.notna(contrato['data_inicio']) else competencia
                 dia_alvo = min(int(contrato['dia_pagamento'] or 1), ultimo_dia_mes)
                 dt_limite_alvo = datetime.date(ano, mes, dia_alvo)
+                if contrato['tipo']=='Entrada':
+                    from operations import income_due_date
+                    dt_limite_alvo=income_due_date(competencia,int(contrato['atraso_meses'] or 0),int(contrato['dia_pagamento'] or 1))
                 if dt_limite_alvo < dt_inicio:
                     continue
 
@@ -3072,6 +3080,8 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
         FROM categorias_personalizadas WHERE tipo='Entrada'
         ORDER BY categoria,subgrupo
     ''')
+    removed=fetch_dataframe("SELECT valor FROM preferencias_app WHERE chave LIKE 'fonte_excluida:%%'")
+    removed_keys={_renda_fonte_key(v.get('categoria'),v.get('subgrupo')) for v in (json.loads(x) for x in removed.get('valor',[]))}
     entradas = df_mes[df_mes['tipo']=='Entrada'].copy() if df_mes is not None and not df_mes.empty else pd.DataFrame()
     if not entradas.empty:
         entradas['valor']=pd.to_numeric(entradas['valor'],errors='coerce').fillna(0.0)
@@ -3086,7 +3096,7 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
     if not entradas.empty:
         for _,r in entradas.iterrows():
             k=_renda_fonte_key(r.get('categoria'),r.get('subgrupo'))
-            if k not in fontes:
+            if k not in fontes and k not in removed_keys:
                 fontes[k]={'key':k,'id':None,'categoria':str(r.get('categoria') or ''),'subgrupo':str(r.get('subgrupo') or ''),'nome':_renda_fonte_nome(r.get('categoria'),r.get('subgrupo')),'valor_padrao':0.0,'dia_pagamento':0,'atraso_meses':0,'is_recorrente':0,'modalidade_renda':'','especializada':False,'data_inicio':None,'def_row':None}
     # Média histórica: usa somente meses FECHADOS anteriores ao período selecionado
     # e somente valores efetivamente recebidos. Previsões do mês atual não entram.
@@ -4177,11 +4187,29 @@ elif menu == "💰 Rendas":
                     else:
                         c3.markdown("<div style='text-align:right'><span class='income2-status expected'>Importada</span></div>",unsafe_allow_html=True)
 
+                    delete_key=f"income2_delete_{f['key']}"
+                    if c3.button('Excluir fonte',key=delete_key):
+                        st.session_state['income2_delete_key']=f['key']
+                    if st.session_state.get('income2_delete_key')==f['key']:
+                        st.warning('Excluir esta fonte interrompe novas recorrências. Os recebimentos e as pendências já cadastrados serão preservados no Fluxo.')
+                        yes,no=st.columns(2)
+                        if yes.button('Confirmar exclusão da fonte',key=delete_key+'_confirm'):
+                            from operations import delete_income_source
+                            with transaction() as cur:
+                                delete_income_source(cur,f['categoria'],f['subgrupo'])
+                            invalidar_caches_estruturais()
+                            st.session_state.pop('income2_delete_key',None)
+                            flash('success','Fonte excluída. Histórico e pendências preservados.')
+                            st.rerun()
+                        if no.button('Cancelar exclusão',key=delete_key+'_cancel'):
+                            st.session_state.pop('income2_delete_key',None)
+                            st.rerun()
+
                     if st.session_state.get('income2_edit_id')==f.get('id') and f.get('id'):
                         tipos=['Mensal','Variável','Eventual']
                         tipo_atual=f['modalidade'] if f['modalidade'] in tipos else 'Variável'
                         with st.form(f"income2_edit_form_{f['id']}"):
-                            st.caption('O tipo descreve como a renda se comporta. Plantões é um recurso adicional e independente.')
+                            st.caption('Alterar o dia ou os meses até receber reorganiza as pendências com vencimento no mês atual e seguintes. Recebimentos concluídos e pendências de meses anteriores são preservados.')
                             e1,e2=st.columns([1.2,1])
                             em=e1.selectbox('Tipo da renda',tipos,index=tipos.index(tipo_atual))
                             ee=e2.checkbox('Gestão de plantões',value=bool(f['especializada']),help='Ativa escala, produção e previsão de pagamento para esta fonte.')
@@ -4194,11 +4222,13 @@ elif menu == "💰 Rendas":
                             cancelar=sb2.form_submit_button('Cancelar',use_container_width=True)
                             if salvar:
                                 rec=1 if em in ('Mensal','Variável') and ev>0 and not ee else 0
-                                execute_query('''UPDATE categorias_personalizadas SET valor_padrao=%s,dia_pagamento=%s,atraso_meses=%s,is_recorrente=%s,is_producao_variavel=%s,modalidade_renda=%s WHERE id=%s''',(ev if ev>0 else None,int(ed),int(ea),rec,1 if ee else 0,em,int(f['id'])))
+                                from operations import edit_income_source
+                                with transaction() as cur:
+                                    reagendados=edit_income_source(cur,int(f['id']),ev if ev>0 else None,int(ed),int(ea),rec,1 if ee else 0,em,hoje)
                                 invalidar_caches_estruturais()
                                 st.session_state.pop(f"rec_processado_{mes_selecionado}_{ano_selecionado}",None)
                                 st.session_state.pop('income2_edit_id',None)
-                                flash('success','Fonte atualizada.')
+                                flash('success',f'Fonte atualizada. {reagendados} recebimento(s) pendente(s) reagendado(s) no mês atual e seguintes.')
                                 st.rerun()
                             if cancelar:
                                 st.session_state.pop('income2_edit_id',None)
