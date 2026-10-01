@@ -363,3 +363,14 @@ def invoice_due(purchase_date, closing_day, due_day):
     if due_day <= closing_day:
         month = (month.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
     return month.replace(day=min(due_day, calendar.monthrange(month.year, month.month)[1]))
+
+
+def coverage_month_scope(df, year, month, state):
+    """A monthly reorganization cannot consume entries from another month."""
+    base = df.copy()
+    if base.empty: return base
+    if state.get('ativo'):
+        dates = pd.to_datetime(base['data_vencimento'])
+        base = base[(dates.dt.year == year) & (dates.dt.month == month)].copy()
+    base['desconsiderar_cobertura'] = base['id'].isin(state.get('ids', []))
+    return base

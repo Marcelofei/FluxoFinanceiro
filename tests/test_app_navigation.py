@@ -132,10 +132,9 @@ def test_reorganize_pending_preserves_records_and_can_undo(ui):
         cur.execute('SELECT id,pago,valor,valor_pago,data_pagamento FROM lancamentos ORDER BY id');before=cur.fetchall()
         cur.execute("SELECT id FROM lancamentos WHERE descricao='Renda confirmada'");income=cur.fetchone()[0]
     app.button(key='reorganizar_contas').click().run();healthy(app)
-    app.multiselect(key='reorganizar_ids').set_value([income]).run()
-    app.button(key='aplicar_reorganizacao').click().run();healthy(app)
+    assert not any(w.key=='reorganizar_ids' for w in app.multiselect)
     with db,db.cursor() as cur:
-        cur.execute("SELECT valor FROM preferencias_app WHERE chave='cobertura_reorganizacao'")
+        cur.execute("SELECT valor FROM preferencias_app WHERE chave='cobertura_reorganizacao:2026-09'")
         assert json.loads(cur.fetchone()[0])['ids']==[income]
         cur.execute('SELECT id,pago,valor,valor_pago,data_pagamento FROM lancamentos ORDER BY id');assert cur.fetchall()==before
     # A fresh session confirms persistence and avoids AppTest's stale conditional form nodes.
@@ -145,6 +144,6 @@ def test_reorganize_pending_preserves_records_and_can_undo(ui):
     app.button(key='nav_fluxo').click().run();healthy(app)
     app.button(key='desfazer_reorganizacao').click().run();healthy(app)
     with db,db.cursor() as cur:
-        cur.execute("SELECT valor FROM preferencias_app WHERE chave='cobertura_reorganizacao'")
+        cur.execute("SELECT valor FROM preferencias_app WHERE chave='cobertura_reorganizacao:2026-09'")
         assert json.loads(cur.fetchone()[0])['ids']==[]
         cur.execute("SELECT count(*) FROM auditoria WHERE entidade='cobertura'");assert cur.fetchone()[0]==2

@@ -124,3 +124,18 @@ def test_reorganization_does_not_discard_new_receipt_in_same_group():
     pending=p['contas'][0]
     assert sum(a['valor'] for a in pending['alocacoes'])==200
     assert pending['descoberto']==50
+
+
+def test_monthly_reorganization_never_uses_other_months():
+    df=pd.DataFrame([row(1,'Entrada',1000,'2026-09-20',1,1000,'2026-09-20'),
+        row(2,'Entrada',700,'2026-09-30'),row(3,'Despesa',500,'2026-09-30'),
+        row(4,'Despesa',900,'2026-08-31'),row(5,'Entrada',3000,'2026-10-01')])
+    scoped=f.coverage_month_scope(df,2026,9,{'ativo':True,'ids':[1]})
+    assert scoped.id.tolist()==[1,2,3]
+    ops=f._consolidar_operacional(scoped,True,hoje=TODAY)
+    p=f._montar_plano_pagamentos(ops,2026,9,hoje=TODAY)
+    assert len(p['contas'])==1
+    assert p['contas'][0]['alocacoes'][0]['fonte_id']=='2'
+    unchanged=f.coverage_month_scope(df,2026,10,{'ids':[]})
+    assert unchanged.id.tolist()==df.id.tolist()
+    assert not unchanged.desconsiderar_cobertura.any()
