@@ -196,3 +196,22 @@ def test_edit_income_source_updates_pending_dates(ui):
     with db,db.cursor() as cur:
         cur.execute("SELECT data_vencimento,pago FROM lancamentos WHERE descricao='Renda reagendar'")
         assert cur.fetchone()==(dt.date(2026,10,20),0)
+
+
+def test_planning_category_details_reconcile_and_isolate(ui):
+    app,db=ui
+    with db,db.cursor() as cur:
+        cur.execute("""INSERT INTO lancamentos(tipo,categoria,subgrupo,descricao,valor,valor_pago,pago,forma_pagamento,data_competencia,data_vencimento,data_pagamento)
+            VALUES ('Despesa','Casa','Escola','Mensalidade paga',100,100,1,'Outros','2026-09-01','2026-09-10','2026-09-10'),
+                   ('Despesa','Casa','Escola','Material crédito',50,0,0,'Crédito','2026-09-15','2026-10-10',NULL),
+                   ('Despesa','Casa','Escola','Taxa pendente',30,0,0,'Outros','2026-09-20','2026-09-30',NULL),
+                   ('Despesa','Casa','Outro','Não incluir subgrupo',900,0,0,'Outros','2026-09-01','2026-09-30',NULL),
+                   ('Despesa','Casa','Escola','Não incluir mês',800,0,0,'Outros','2026-10-01','2026-10-10',NULL)""")
+        cur.execute("INSERT INTO orcamentos_categorias(competencia,categoria,subgrupo,valor_planejado) VALUES ('2026-09-01','Casa','Escola',200)")
+    app.button(key='nav_planejamento').click().run();healthy(app)
+    widget(app,'toggle','Ver custos de Escola').set_value(True).run();healthy(app)
+    tables=[w.value for w in app.dataframe if 'No realizado' in w.value.columns]
+    assert len(tables)==1
+    assert set(tables[0]['Descrição'])=={'Mensalidade paga','Material crédito','Taxa pendente'}
+    assert any('Realizado: R$ 150,00 · Ainda previsto: R$ 30,00' in w.value for w in app.markdown)
+    assert any('orçamento definido de R$ 200,00' in w.value for w in app.caption)

@@ -2883,6 +2883,46 @@ def _salvar_orcamento_categoria(ano, mes, categoria, subgrupo, valor):
                 ''', (competencia, categoria, sub, valor))
 
 
+def _planejamento_valores_item(item):
+    if int_seguro(item.get('pago')) == 1:
+        return float_seguro(item.get('valor_pago')), 0.0
+    data=pd.to_datetime(item.get('data_competencia'),errors='coerce')
+    if pd.isna(data): data=pd.to_datetime(item['data_vencimento'])
+    if item.get('forma_pagamento')=='Crédito' and data.date()<=hoje:
+        return float_seguro(item.get('valor')), 0.0
+    return 0.0, float_seguro(item.get('valor'))
+
+
+def _planejamento_detalhes(row):
+    key=request_key('plan-details',[ano_selecionado,mes_selecionado,row['categoria'],row['subgrupo']])
+    if not st.toggle(f"Ver custos de {row['nome']}",key=key): return
+    itens=row.get('itens',[])
+    if row['tem_orcamento']:
+        st.caption(f"Planejado: orçamento definido de R$ {format_brl(row['planejado'])}. Esse limite não é a soma dos lançamentos.")
+    else:
+        st.caption('Planejado: soma dos valores previstos dos lançamentos abaixo.')
+    st.caption('Itens do mês pela competência. Compras no crédito já realizadas entram no gasto mesmo antes de pagar a fatura; o pagamento da fatura não é somado novamente.')
+    if not itens:
+        st.info('Nenhum custo lançado nesta categoria no mês selecionado.')
+        return
+    linhas=[]
+    for item in itens:
+        realizado,pendente=_planejamento_valores_item(item)
+        n=int_seguro(item.get('total_parcelas'))
+        def data_txt(field):
+            d=pd.to_datetime(item.get(field),errors='coerce')
+            return d.strftime('%d/%m/%Y') if pd.notna(d) else '—'
+        linhas.append({'Descrição':item['descricao'],
+            'Competência':data_txt('data_competencia'),'Vencimento':data_txt('data_vencimento'),
+            'Parcela':f"{int_seguro(item.get('parcela_atual'))}/{n}" if 1<n<999 else '—',
+            'Pagamento':item.get('forma_pagamento') or 'Não informado',
+            'Status':'Pago' if int_seguro(item.get('pago')) else ('Crédito a pagar' if item.get('forma_pagamento')=='Crédito' else 'Pendente'),
+            'Previsto':f"R$ {format_brl(item['valor'])}",
+            'No realizado':f'R$ {format_brl(realizado)}','Ainda previsto':f'R$ {format_brl(pendente)}'})
+    st.dataframe(pd.DataFrame(linhas),hide_index=True,use_container_width=True)
+    st.markdown(f"**Realizado: R$ {format_brl(row['realizado'])} · Ainda previsto: R$ {format_brl(row['comprometido'])}**")
+
+
 def _planejamento_unidades(df, ano=None, mes=None):
     """Planejado x realizado por categoria/subgrupo, sem lançamentos de orçamento."""
     ano = int(ano if ano is not None else ano_selecionado)
@@ -2914,16 +2954,13 @@ def _planejamento_unidades(df, ano=None, mes=None):
         comprometido = 0.0
         if not g.empty:
             for _, item in g.iterrows():
-                if int_seguro(item.get('pago')) == 1:
-                    realizado += float_seguro(item.get('valor_pago'))
-                elif item.get('forma_pagamento') == 'Crédito' and pd.to_datetime(item.get('data_competencia') or item['data_vencimento']).date() <= hoje:
-                    realizado += float_seguro(item.get('valor'))
-                else:
-                    comprometido += float_seguro(item.get('valor'))
+                gasto,pendente=_planejamento_valores_item(item)
+                realizado += gasto
+                comprometido += pendente
         diferenca = realizado - planejado
         percentual = (realizado / planejado * 100.0) if planejado > 0 else (100.0 if realizado > 0 else 0.0)
-        rows.append({'categoria':cat,'subgrupo':sub,'nome':sub if sub else cat,'planejado':planejado,'realizado':realizado,'diferenca':diferenca,'percentual':percentual,'tem_orcamento':tem_orcamento,'comprometido':comprometido})
-    return pd.DataFrame(rows, columns=['categoria','subgrupo','nome','planejado','realizado','diferenca','percentual','tem_orcamento','comprometido'])
+        rows.append({'categoria':cat,'subgrupo':sub,'nome':sub if sub else cat,'planejado':planejado,'realizado':realizado,'diferenca':diferenca,'percentual':percentual,'tem_orcamento':tem_orcamento,'comprometido':comprometido,'itens':g.to_dict('records') if not g.empty else []})
+    return pd.DataFrame(rows, columns=['categoria','subgrupo','nome','planejado','realizado','diferenca','percentual','tem_orcamento','comprometido','itens'])
 
 
 def _planejamento_resumo(df, ano=None, mes=None, unidades=None):
@@ -3948,6 +3985,7 @@ elif menu == "📑 Demonstrativo":
                 else:
                     for _, r in view.iterrows():
                         _render_plan2_unidade(r, mostrar_categoria=True)
+                        _planejamento_detalhes(r)
 
             with st.expander("✏️ Definir orçamento deste mês", expanded=False):
                 st.caption("Opcional: defina quanto pretende gastar em uma categoria. Isso não cria conta nem lançamento.")
