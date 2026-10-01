@@ -228,7 +228,7 @@ def test_income_source_sums_schedule_and_no_phantom_monthly_rate(ui):
     # September has no shifts due: the per-shift rate must not appear as monthly income.
     source=next(m.value for m in app.markdown if "income2-source-name" in m.value and 'Hospital Teste' in m.value)
     assert 'R$ 0,00' in source
-    app.button(key='sb_next').click().run();healthy(app)
+    app.selectbox(key='income2_period_picker').set_value((2026,10)).run();healthy(app)
     sources=[m.value for m in app.markdown if "income2-source-name" in m.value and 'Hospital Teste' in m.value]
     assert len(sources)==1 and 'R$ 2.700,00' in sources[0]
     assert any('2 plantão(ões)' in c.value for c in app.caption)
