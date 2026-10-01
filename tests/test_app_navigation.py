@@ -168,3 +168,31 @@ def test_invoice_composition_shows_exact_members_without_mutation(ui):
     with db,db.cursor() as cur:
         cur.execute("SELECT sum(valor),sum(pago) FROM lancamentos WHERE forma_pagamento='Crédito'")
         assert cur.fetchone()==(4400,0)
+
+
+def test_delete_income_source_does_not_reappear_from_history(ui):
+    app,db=ui
+    with db,db.cursor() as cur:
+        cur.execute("INSERT INTO lancamentos(tipo,categoria,subgrupo,descricao,valor,data_vencimento,pago) VALUES ('Entrada','Rendas','Hospital Teste','Histórico preservado',123,'2026-09-30',0)")
+    app.button(key='nav_rendas').click().run();healthy(app)
+    buttons=[b for b in app.button if b.label=='Excluir fonte' and 'hospital teste' in str(b.key)]
+    assert len(buttons)==1
+    buttons[0].click().run();healthy(app)
+    widget(app,'button','Confirmar exclusão da fonte').click().run();healthy(app)
+    assert not any(b.label=='Excluir fonte' and 'hospital teste' in str(b.key) for b in app.button)
+    with db,db.cursor() as cur:
+        cur.execute("SELECT valor FROM lancamentos WHERE descricao='Histórico preservado'");assert cur.fetchone()[0]==123
+
+
+def test_edit_income_source_updates_pending_dates(ui):
+    app,db=ui
+    with db,db.cursor() as cur:
+        cur.execute("INSERT INTO lancamentos(tipo,categoria,subgrupo,descricao,valor,data_competencia,data_vencimento,pago) VALUES ('Entrada','Rendas','Hospital Teste','Renda reagendar',123,'2026-09-01','2026-09-30',0)")
+    app.button(key='nav_rendas').click().run();healthy(app)
+    widget(app,'button','Editar ›').click().run();healthy(app)
+    widget(app,'number_input','Dia de recebimento').set_value(20)
+    widget(app,'number_input','Meses até receber').set_value(1)
+    widget(app,'button','Salvar alterações').click().run();healthy(app)
+    with db,db.cursor() as cur:
+        cur.execute("SELECT data_vencimento,pago FROM lancamentos WHERE descricao='Renda reagendar'")
+        assert cur.fetchone()==(dt.date(2026,10,20),0)

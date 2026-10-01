@@ -58,3 +58,60 @@ def reorganize_coverage(cur, year, month, undo=False):
     cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
         VALUES ('cobertura',%s,%s,%s,current_setting('app.actor',true))""",
         ('DESFAZER_REORGANIZACAO' if undo else 'REORGANIZAR',Json(dict(old,periodo=start.isoformat())),Json(dict(new,periodo=start.isoformat()))))
+
+
+def income_due_date(competence, delay, day):
+    import datetime as dt
+    import calendar
+    offset=competence.year*12+competence.month-1+int(delay)
+    year,month=divmod(offset,12);month+=1
+    return dt.date(year,month,min(int(day),calendar.monthrange(year,month)[1]))
+
+
+def edit_income_source(cur, source_id, value, day, delay, recurring, shifts, modality, today):
+    """Update the definition and pending current/future dates in one transaction."""
+    from psycopg2.extras import Json
+    cur.execute("SELECT row_to_json(c) FROM categorias_personalizadas c WHERE id=%s AND tipo='Entrada' FOR UPDATE",(source_id,))
+    result=cur.fetchone()
+    if not result: raise ValueError('Esta fonte foi excluída. Atualize a tela.')
+    old=result[0]
+    cur.execute("""UPDATE categorias_personalizadas SET valor_padrao=%s,dia_pagamento=%s,
+        atraso_meses=%s,is_recorrente=%s,is_producao_variavel=%s,modalidade_renda=%s WHERE id=%s""",
+        (value,day,delay,recurring,shifts,modality,source_id))
+    count=0
+    if (int(old.get('dia_pagamento') or 1),int(old.get('atraso_meses') or 0)) != (day,delay):
+        cur.execute("""SELECT id,data_competencia,data_vencimento FROM lancamentos
+            WHERE tipo='Entrada' AND pago=0 AND data_vencimento >= %s
+            AND categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,'') FOR UPDATE""",
+            (today.replace(day=1),old['categoria'],old['subgrupo']))
+        for item,competence,due in cur.fetchall():
+            if competence is None:
+                competence=income_due_date(due,-int(old.get('atraso_meses') or 0),1)
+            new_due=income_due_date(competence,delay,day)
+            if new_due==due: continue
+            cur.execute('UPDATE lancamentos SET data_vencimento=%s WHERE id=%s',(new_due,item))
+            cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
+                VALUES ('lancamento','REAGENDAR_RENDA',%s,%s,current_setting('app.actor',true))""",
+                (Json({'id':item,'data_vencimento':due.isoformat()}),Json({'id':item,'data_vencimento':new_due.isoformat()})))
+            count+=1
+    cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
+        VALUES ('fonte_renda','EDITAR',%s,%s,current_setting('app.actor',true))""",
+        (Json(old),Json({'id':source_id,'dia_pagamento':day,'atraso_meses':delay,'reagendados':count})))
+    return count
+
+
+def delete_income_source(cur, category, subgroup):
+    """Remove the source definition, preserving all financial entries."""
+    from psycopg2.extras import Json
+    cur.execute("""SELECT row_to_json(c) FROM categorias_personalizadas c
+        WHERE tipo='Entrada' AND categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,'') FOR UPDATE""",(category,subgroup))
+    old=[r[0] for r in cur.fetchall()]
+    key='fonte_excluida:'+request_key('source',[category,subgroup or ''])
+    cur.execute("""INSERT INTO preferencias_app(chave,valor) VALUES (%s,%s)
+        ON CONFLICT(chave) DO UPDATE SET valor=EXCLUDED.valor""",
+        (key,json.dumps({'categoria':category,'subgrupo':subgroup or ''})))
+    cur.execute("""DELETE FROM categorias_personalizadas WHERE tipo='Entrada'
+        AND categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,'')""",(category,subgroup))
+    cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
+        VALUES ('fonte_renda','EXCLUIR',%s,%s,current_setting('app.actor',true))""",
+        (Json(old),Json({'categoria':category,'subgrupo':subgroup,'lancamentos_preservados':True})))

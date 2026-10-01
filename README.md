@@ -27,3 +27,9 @@ Defina `TEST_DATABASE_URL` para uma base **descartável**: os testes removem e r
 ## Reorganizar o casamento das contas
 
 Em **Fluxo → Reorganizar contas pendentes**, um clique desconsidera automaticamente as entradas do mês selecionado já marcadas como recebidas. O casamento passa a usar apenas contas e rendas desse mês, definido pela data de vencimento. Outros meses não participam nem têm suas preferências alteradas. O histórico dos lançamentos é preservado. A ação pode ser desfeita no mesmo mês. Novos recebimentos são desconsiderados ao clicar novamente. Preferências da antiga seleção global não são aplicadas ao novo modo mensal. Não é necessário selecionar recebimentos nem informar saldo bancário.
+
+## Editar ou excluir fontes de renda
+
+Em Rendas, Excluir fonte remove o cadastro e interrompe novas recorrências, após confirmação. Os lançamentos existentes, recebidos ou pendentes, permanecem no Fluxo e no histórico. A fonte excluída não reaparece como importada por causa desses lançamentos.
+
+Alterar Dia de recebimento ou Meses até receber atualiza, na mesma transação, os lançamentos não recebidos dessa fonte cujo vencimento esteja no mês atual ou posterior. O mês atual é o mês de hoje, mesmo se outro mês estiver selecionado. A nova data usa a competência original acrescida do prazo; dias 29–31 são limitados ao último dia do mês. Valores, baixas confirmadas e pendências anteriores ao mês atual são preservados. A cobertura é recalculada com as novas datas. Novas recorrências também respeitam o prazo configurado. Alterações ficam registradas em auditoria.
