@@ -82,26 +82,26 @@ def edit_income_source(cur, source_id, value, day, delay, recurring, shifts, mod
         atraso_meses=%s,is_recorrente=%s,is_producao_variavel=%s,modalidade_renda=%s WHERE id=%s""",
         (value,day,delay,recurring,shifts,modality,source_id))
     count=0
-    if (int(old.get('dia_pagamento') or 1),int(old.get('atraso_meses') or 0)) != (day,delay):
-        cur.execute("""SELECT count(*) FROM categorias_personalizadas WHERE tipo='Entrada'
-            AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,'')))""",(old['subgrupo'],))
-        unique_location=bool(old['subgrupo']) and cur.fetchone()[0]==1
-        cur.execute("""SELECT id,data_competencia,data_vencimento FROM lancamentos
-            WHERE tipo='Entrada' AND pago=0 AND data_vencimento >= %s
-            AND ((categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,''))
-                OR (%s AND descricao LIKE 'Plantão %%'
-                    AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,''))))) FOR UPDATE""",
-            (today.replace(day=1),old['categoria'],old['subgrupo'],unique_location,old['subgrupo']))
-        for item,competence,due in cur.fetchall():
-            if competence is None:
-                competence=income_due_date(due,-int(old.get('atraso_meses') or 0),1)
-            new_due=income_due_date(competence,delay,day)
-            if new_due==due: continue
-            cur.execute('UPDATE lancamentos SET data_vencimento=%s WHERE id=%s',(new_due,item))
-            cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
-                VALUES ('lancamento','REAGENDAR_RENDA',%s,%s,current_setting('app.actor',true))""",
-                (Json({'id':item,'data_vencimento':due.isoformat()}),Json({'id':item,'data_vencimento':new_due.isoformat()})))
-            count+=1
+    # Reconcile even when the saved settings already match: old shifts may be stale.
+    cur.execute("""SELECT count(*) FROM categorias_personalizadas WHERE tipo='Entrada'
+        AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,'')))""",(old['subgrupo'],))
+    unique_location=bool(old['subgrupo']) and cur.fetchone()[0]==1
+    cur.execute("""SELECT id,data_competencia,data_vencimento FROM lancamentos
+        WHERE tipo='Entrada' AND pago=0 AND data_vencimento >= %s
+        AND ((categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,''))
+            OR (%s AND descricao LIKE 'Plantão %%'
+                AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,''))))) FOR UPDATE""",
+        (today.replace(day=1),old['categoria'],old['subgrupo'],unique_location,old['subgrupo']))
+    for item,competence,due in cur.fetchall():
+        if competence is None:
+            competence=income_due_date(due,-int(old.get('atraso_meses') or 0),1)
+        new_due=income_due_date(competence,delay,day)
+        if new_due==due: continue
+        cur.execute('UPDATE lancamentos SET data_vencimento=%s WHERE id=%s',(new_due,item))
+        cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
+            VALUES ('lancamento','REAGENDAR_RENDA',%s,%s,current_setting('app.actor',true))""",
+            (Json({'id':item,'data_vencimento':due.isoformat()}),Json({'id':item,'data_vencimento':new_due.isoformat()})))
+        count+=1
     cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
         VALUES ('fonte_renda','EDITAR',%s,%s,current_setting('app.actor',true))""",
         (Json(old),Json({'id':source_id,'dia_pagamento':day,'atraso_meses':delay,'reagendados':count})))

@@ -81,3 +81,20 @@ def test_delete_source_cascades_by_shift_day_not_receipt_day(db):
         assert {r[0] for r in cur.fetchall()}=={'Plantão anterior','Plantão outro','Renda avulsa'}
         cur.execute("SELECT count(*) FROM auditoria WHERE operacao='EXCLUIR_PLANTAO_FONTE'")
         assert cur.fetchone()[0]==2
+
+
+def test_resaving_income_rule_repairs_stale_shift_dates(db):
+    import datetime as dt
+    from operations import edit_income_source
+    with db,db.cursor() as cur:
+        cur.execute("""INSERT INTO categorias_personalizadas
+            (tipo,categoria,subgrupo,dia_pagamento,atraso_meses,is_producao_variavel)
+            VALUES ('Entrada','Rendas','Hospital regra',1,3,1) RETURNING id""")
+        source=cur.fetchone()[0]
+        cur.execute("""INSERT INTO lancamentos
+            (tipo,categoria,subgrupo,descricao,valor,pago,data_competencia,data_vencimento)
+            VALUES ('Entrada','Plantões','Hospital regra','Plantão regra',100,0,'2026-08-10','2026-10-28')""")
+        assert edit_income_source(cur,source,None,1,3,0,1,'Variável',dt.date(2026,10,1))==1
+        cur.execute("SELECT data_vencimento FROM lancamentos WHERE descricao='Plantão regra'")
+        assert cur.fetchone()[0]==dt.date(2026,11,1)
+        assert edit_income_source(cur,source,None,1,3,0,1,'Variável',dt.date(2026,10,1))==0
