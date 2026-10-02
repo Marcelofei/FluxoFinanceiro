@@ -75,15 +75,23 @@ def edit_income_source(cur, source_id, value, day, delay, recurring, shifts, mod
     result=cur.fetchone()
     if not result: raise ValueError('Esta fonte foi excluída. Atualize a tela.')
     old=result[0]
+    if shifts:
+        value=old.get('valor_padrao')
+        recurring=0
     cur.execute("""UPDATE categorias_personalizadas SET valor_padrao=%s,dia_pagamento=%s,
         atraso_meses=%s,is_recorrente=%s,is_producao_variavel=%s,modalidade_renda=%s WHERE id=%s""",
         (value,day,delay,recurring,shifts,modality,source_id))
     count=0
     if (int(old.get('dia_pagamento') or 1),int(old.get('atraso_meses') or 0)) != (day,delay):
+        cur.execute("""SELECT count(*) FROM categorias_personalizadas WHERE tipo='Entrada'
+            AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,'')))""",(old['subgrupo'],))
+        unique_location=bool(old['subgrupo']) and cur.fetchone()[0]==1
         cur.execute("""SELECT id,data_competencia,data_vencimento FROM lancamentos
             WHERE tipo='Entrada' AND pago=0 AND data_vencimento >= %s
-            AND categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,'') FOR UPDATE""",
-            (today.replace(day=1),old['categoria'],old['subgrupo']))
+            AND ((categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,''))
+                OR (%s AND descricao LIKE 'Plantão %%'
+                    AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,''))))) FOR UPDATE""",
+            (today.replace(day=1),old['categoria'],old['subgrupo'],unique_location,old['subgrupo']))
         for item,competence,due in cur.fetchall():
             if competence is None:
                 competence=income_due_date(due,-int(old.get('atraso_meses') or 0),1)
@@ -100,12 +108,27 @@ def edit_income_source(cur, source_id, value, day, delay, recurring, shifts, mod
     return count
 
 
-def delete_income_source(cur, category, subgroup):
-    """Remove the source definition, preserving all financial entries."""
+def delete_income_source(cur, category, subgroup, cutoff):
+    """Delete the source and its shifts from cutoff, retaining earlier shifts."""
     from psycopg2.extras import Json
     cur.execute("""SELECT row_to_json(c) FROM categorias_personalizadas c
         WHERE tipo='Entrada' AND categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,'') FOR UPDATE""",(category,subgroup))
     old=[r[0] for r in cur.fetchall()]
+    cur.execute("""SELECT count(*) FROM categorias_personalizadas WHERE tipo='Entrada'
+        AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,'')))""",(subgroup,))
+    unique_location=bool(subgroup) and cur.fetchone()[0]<=1
+    cur.execute("""SELECT row_to_json(l) FROM lancamentos l WHERE tipo='Entrada'
+        AND descricao LIKE 'Plantão %%' AND COALESCE(data_competencia,data_vencimento)>=%s
+        AND ((categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,''))
+            OR (%s AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,''))))) FOR UPDATE""",
+        (cutoff,category,subgroup,unique_location,subgroup))
+    shifts=[r[0] for r in cur.fetchall()]
+    for shift in shifts:
+        cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
+            VALUES ('lancamento','EXCLUIR_PLANTAO_FONTE',%s,%s,current_setting('app.actor',true))""",
+            (Json(shift),Json({'excluido':True,'data_corte':cutoff.isoformat()})))
+    if shifts:
+        cur.execute('DELETE FROM lancamentos WHERE id=ANY(%s)',([r['id'] for r in shifts],))
     key='fonte_excluida:'+request_key('source',[category,subgroup or ''])
     cur.execute("""INSERT INTO preferencias_app(chave,valor) VALUES (%s,%s)
         ON CONFLICT(chave) DO UPDATE SET valor=EXCLUDED.valor""",
@@ -114,4 +137,24 @@ def delete_income_source(cur, category, subgroup):
         AND categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,'')""",(category,subgroup))
     cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
         VALUES ('fonte_renda','EXCLUIR',%s,%s,current_setting('app.actor',true))""",
-        (Json(old),Json({'categoria':category,'subgrupo':subgroup,'lancamentos_preservados':True})))
+        (Json(old),Json({'categoria':category,'subgrupo':subgroup,'data_corte':cutoff.isoformat(),'plantoes_excluidos':len(shifts),'anteriores_preservados':True})))
+    return len(shifts)
+
+
+def update_shift_values(cur, changes):
+    """Save schedule amounts; confirmed receipts and their history stay intact."""
+    from finance import money
+    from psycopg2.extras import Json
+    count=0
+    for item,value in changes:
+        value=money(value)
+        if value<0: raise ValueError('O valor do plantão não pode ser negativo.')
+        cur.execute("SELECT valor,pago FROM lancamentos WHERE id=%s AND tipo='Entrada' AND descricao LIKE 'Plantão %%' FOR UPDATE",(item,))
+        row=cur.fetchone()
+        if not row or row[1] or money(row[0])==value: continue
+        cur.execute('UPDATE lancamentos SET valor=%s WHERE id=%s',(value,item))
+        cur.execute("""INSERT INTO auditoria(entidade,operacao,anterior,posterior,ator)
+            VALUES ('lancamento','EDITAR_PLANTAO',%s,%s,current_setting('app.actor',true))""",
+            (Json({'id':item,'valor':str(row[0])}),Json({'id':item,'valor':str(value)})))
+        count+=1
+    return count

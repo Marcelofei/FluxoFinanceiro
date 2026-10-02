@@ -30,6 +30,14 @@ Em **Fluxo → Reorganizar contas pendentes**, um clique desconsidera automatica
 
 ## Editar ou excluir fontes de renda
 
-Em Rendas, Excluir fonte remove o cadastro e interrompe novas recorrências, após confirmação. Os lançamentos existentes, recebidos ou pendentes, permanecem no Fluxo e no histórico. A fonte excluída não reaparece como importada por causa desses lançamentos.
+Em Rendas, Excluir fonte remove o cadastro e os plantões com data de trabalho a partir do dia da exclusão, após confirmação. O corte usa a data do plantão, não a data de recebimento. Plantões anteriores e lançamentos que não são plantões são preservados. Os registros removidos ficam documentados em auditoria. A fonte excluída não reaparece como importada por causa dos lançamentos antigos.
 
 Alterar Dia de recebimento ou Meses até receber atualiza, na mesma transação, os lançamentos não recebidos dessa fonte cujo vencimento esteja no mês atual ou posterior. O mês atual é o mês de hoje, mesmo se outro mês estiver selecionado. A nova data usa a competência original acrescida do prazo; dias 29–31 são limitados ao último dia do mês. Valores, baixas confirmadas e pendências anteriores ao mês atual são preservados. A cobertura é recalculada com as novas datas. Novas recorrências também respeitam o prazo configurado. Alterações ficam registradas em auditoria.
+
+## Agenda de plantões e fontes de renda
+
+O total da fonte vem dos plantões com recebimento previsto no mês selecionado; o mês do trabalho continua visível na agenda. O valor por plantão não substitui o total mensal quando a agenda está vazia. Plantões antigos com outra categoria são associados visualmente à fonte pelo hospital quando existe uma única correspondência, sem reescrever o histórico. Hospitais diferentes permanecem separados na cobertura.
+
+Ver plantões abre a agenda da fonte. Salvar valores dos plantões atualiza os registros pendentes e, automaticamente, a previsão de renda; valores já recebidos são preservados. O CSV respeita também prazo de zero meses. Alterar a data da fonte alcança plantões antigos do mesmo hospital quando a identificação é inequívoca.
+
+Para fontes marcadas como Plantões, o campo de valor em Rendas é somente leitura. O total vem da agenda. Adicionar, alterar ou excluir um plantão atualiza a previsão automaticamente, no mês previsto de recebimento.
