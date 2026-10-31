@@ -112,3 +112,21 @@ def test_new_tables_do_not_cross_tenant_boundary(database):
         with storage.connection(database) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(other)))
+
+
+def test_edit_future_preserves_paid_other_series_and_previous(database):
+    with storage.connection(database) as conn:
+        create(conn,due=date(2026,10,31),count=4,divide=True,value=10001)
+        create(conn,due=date(2026,12,10),value=8000)
+        november=storage.list_entries(conn,2026,11)[0]
+        december=storage.list_entries(conn,2026,12)[1]
+        storage.settle_entry(conn,december,2500,datetime.now(ZoneInfo('America/Fortaleza')).date())
+        assert storage.edit_entry(conn,november,'Renomeada (2/4)',3000,date(2026,11,15),future=True)==2
+        assert storage.list_entries(conn,2026,10)[0]['expected_cents']==2501
+        january=storage.list_entries(conn,2027,1)[0]
+        assert january['due_date']==date(2027,1,15)
+        assert january['description']=='Renomeada (4/4)'
+        assert january['expected_cents']==3000
+        december=storage.list_entries(conn,2026,12)
+        assert december[0]['expected_cents']==8000
+        assert december[1]['settled']

@@ -1,5 +1,6 @@
 """Persistência nova, sem chamadas aos módulos ou tabelas do app anterior."""
 import os
+import re
 from contextlib import contextmanager
 from datetime import datetime
 from uuid import UUID
@@ -49,6 +50,9 @@ def initialize(conn):
                     OR (NOT settled AND actual_cents IS NULL AND settled_date IS NULL))
             );
             ALTER TABLE simple_entries ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'A revisar';
+            ALTER TABLE simple_entries ADD COLUMN IF NOT EXISTS series_key TEXT;
+            UPDATE simple_entries SET series_key=request_id::text WHERE series_key IS NULL;
+            CREATE INDEX IF NOT EXISTS simple_entries_series ON simple_entries(series_key);
             CREATE INDEX IF NOT EXISTS simple_entries_due ON simple_entries(due_date);
             CREATE TABLE IF NOT EXISTS simple_balance (
                 id INTEGER PRIMARY KEY CHECK (id=1),
@@ -95,20 +99,35 @@ def create_entries(conn, request_id, kind, description, value, due, count=1, div
         amount = value // count + (index < value % count) if divide else value
         description_row = f'{description.strip()} ({index+1}/{count})' if divide else description.strip()
         with conn.cursor() as cur:
-            cur.execute('''INSERT INTO simple_entries(request_id,occurrence,kind,description,expected_cents,due_date,category)
-                           VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(request_id,occurrence) DO NOTHING''',
-                        (str(request_id), index, kind, description_row, amount, add_months(due, index), category))
+            cur.execute('''INSERT INTO simple_entries(request_id,occurrence,kind,description,expected_cents,due_date,category,series_key)
+                           VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(request_id,occurrence) DO NOTHING''',
+                        (str(request_id), index, kind, description_row, amount, add_months(due, index), category, str(request_id)))
 
 
-def edit_entry(conn, entry, description, value, due, category=None):
+def edit_entry(conn, entry, description, value, due, category=None, future=False):
     if not description.strip() or len(description.strip()) > 160 or value <= 0:
         raise ValueError('Confira descrição e valor.')
-    with conn.cursor() as cur:
-        cur.execute('''UPDATE simple_entries SET description=%s,expected_cents=%s,due_date=%s,category=%s,version=version+1
-                       WHERE id=%s AND version=%s AND NOT settled''',
-                    (description.strip(), value, due, category or entry.get("category", "A revisar"), entry['id'], entry['version']))
-        if not cur.rowcount:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM simple_entries WHERE COALESCE(series_key,request_id::text)=%s ORDER BY id FOR UPDATE",
+                    (entry.get('series_key') or str(entry['request_id']),))
+        series = list(cur.fetchall())
+        current = next((r for r in series if r['id']==entry['id']), None)
+        if not current or current['version'] != entry['version'] or current['settled']:
             raise ValueError('Este lançamento mudou. Atualize a página.')
+        targets = [r for r in series if not r['settled'] and
+                   (r['id']==entry['id'] or (future and r['due_date']>=current['due_date']))]
+        for row in targets:
+            new_description = row['description']
+            if description.strip() != current['description']:
+                suffix = re.search(r' \(\d+/\d+\)$',row['description'])
+                new_description = re.sub(r' \(\d+/\d+\)$','',description.strip()) + (suffix.group() if suffix else '')
+            months = (row['due_date'].year-current['due_date'].year)*12 + row['due_date'].month-current['due_date'].month
+            new_due = add_months(due,months) if due != current['due_date'] else row['due_date']
+            new_value = value if value != current['expected_cents'] else row['expected_cents']
+            new_category = category if category and category != current['category'] else row['category']
+            cur.execute('UPDATE simple_entries SET description=%s,expected_cents=%s,due_date=%s,category=%s,version=version+1 WHERE id=%s',
+                        (new_description,new_value,new_due,new_category,row['id']))
+        return len(targets)
 
 
 def settle_entry(conn, entry, actual, paid_on, balance_after=None, balance_version=None):
