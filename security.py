@@ -1,4 +1,4 @@
-"""Credential and tenant validation; no database access and no plaintext storage."""
+"""Acesso privado compatível com as variáveis já usadas no Railway."""
 import base64
 import hashlib
 import hmac
@@ -7,43 +7,42 @@ import os
 import re
 
 
-def validate_schema(schema):
-    if not isinstance(schema, str) or not re.fullmatch(r'(public|tenant_[a-z0-9_]{1,48})', schema):
-        raise ValueError('Schema de cliente inválido')
-    return schema
-
-
-def new_password_hash(password, salt=None):
-    if len(password) < 12:
-        raise ValueError('Use uma senha com pelo menos 12 caracteres')
-    salt = salt or os.urandom(16)
-    digest = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 600000)
-    return 'pbkdf2_sha256$600000$'+base64.b64encode(salt).decode()+'$'+base64.b64encode(digest).decode()
+def validate_schema(value):
+    if not isinstance(value, str) or not re.fullmatch(r'(public|tenant_[a-z0-9_]{1,48})', value):
+        raise ValueError('Schema inválido.')
+    return value
 
 
 def verify_password(password, encoded):
     try:
-        algorithm, iterations, salt, expected = encoded.split('$')
-        if algorithm != 'pbkdf2_sha256' or not 100000 <= int(iterations) <= 2000000:
+        algorithm, rounds, salt, expected = encoded.split('$')
+        rounds = int(rounds)
+        if algorithm != 'pbkdf2_sha256' or not 100000 <= rounds <= 2000000:
             return False
-        result = hashlib.pbkdf2_hmac('sha256', password.encode(), base64.b64decode(salt), int(iterations))
-        return hmac.compare_digest(result, base64.b64decode(expected))
+        digest = hashlib.pbkdf2_hmac('sha256', password.encode(), base64.b64decode(salt), rounds)
+        return hmac.compare_digest(digest, base64.b64decode(expected))
     except (ValueError, TypeError, AttributeError):
         return False
 
 
-def load_accounts(raw):
-    accounts = json.loads(raw or '{}')
-    if not isinstance(accounts, dict): raise ValueError('Configuração de contas inválida')
-    for username, account in accounts.items():
-        if not username or not isinstance(account, dict): raise ValueError('Conta inválida')
-        schema = validate_schema(account.get('schema'))
-        if schema == 'public': raise ValueError('Contas nomeadas exigem schema tenant_ dedicado')
+def accounts():
+    result = json.loads(os.getenv('APP_USERS_JSON') or '{}')
+    if not isinstance(result, dict):
+        raise ValueError('Configuração de acesso inválida.')
+    for user, account in result.items():
+        if not user or not isinstance(account, dict):
+            raise ValueError('Conta inválida.')
+        if validate_schema(account.get('schema')) == 'public':
+            raise ValueError('Conta nomeada exige schema próprio.')
         if not str(account.get('password_hash', '')).startswith('pbkdf2_sha256$'):
-            raise ValueError('Configure hashes de senha, não senhas em texto')
-    return accounts
+            raise ValueError('Configure hash de senha.')
+    return result
 
 
-if __name__ == '__main__':
-    import getpass
-    print(new_password_hash(getpass.getpass('Nova senha: ')))
+def authenticate(user, password):
+    configured = accounts()
+    if configured:
+        account = configured.get(user, {})
+        return account.get('schema') if verify_password(password, account.get('password_hash')) else None
+    secret = os.getenv('APP_PASSWORD', '')
+    return 'public' if secret and hmac.compare_digest(password.encode(), secret.encode()) else None

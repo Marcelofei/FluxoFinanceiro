@@ -27,5 +27,5 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -r requirements-dev.txt
-      - run: python -m compileall -q app.py finance.py payments.py backup.py migrate.py security.py operations.py
+      - run: python -m compileall -q app.py finance.py storage.py migrate.py security.py
       - run: python -m pytest -q
