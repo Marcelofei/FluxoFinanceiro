@@ -1,4 +1,5 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from uuid import uuid4
 import pytest
 import storage
@@ -39,7 +40,7 @@ def test_received_preserves_expected_and_does_not_add_balance(database):
         create(conn,kind='income')
         row = storage.list_entries(conn,2026,11)[0]
         storage.set_balance(conn,5000,0)
-        storage.settle_entry(conn,row,12000,date.today())
+        storage.settle_entry(conn,row,12000,datetime.now(ZoneInfo('America/Fortaleza')).date())
         result = storage.list_entries(conn,2026,11)[0]
         assert (result['expected_cents'],result['actual_cents']) == (10000,12000)
         assert storage.get_balance(conn)['cents'] == 5000
@@ -54,14 +55,14 @@ def test_payment_and_confirmed_balance_saved_atomically(database):
         row = storage.list_entries(conn,2026,11)[0]
     with pytest.raises(ValueError):
         with storage.connection(database) as conn:
-            storage.settle_entry(conn,row,9000,date.today(),2000,999)
+            storage.settle_entry(conn,row,9000,datetime.now(ZoneInfo('America/Fortaleza')).date(),2000,999)
     with storage.connection(database) as conn:
         assert not storage.list_entries(conn,2026,11)[0]['settled']
-        storage.settle_entry(conn,row,9000,date.today(),2000,0)
+        storage.settle_entry(conn,row,9000,datetime.now(ZoneInfo('America/Fortaleza')).date(),2000,0)
         assert storage.get_balance(conn)['cents'] == 2000
     with pytest.raises(ValueError):
         with storage.connection(database) as conn:
-            storage.settle_entry(conn,row,9000,date.today(),0,1)
+            storage.settle_entry(conn,row,9000,datetime.now(ZoneInfo('America/Fortaleza')).date(),0,1)
     with storage.connection(database) as conn:
         assert storage.get_balance(conn)['cents'] == 2000
 
@@ -86,7 +87,7 @@ def test_invalid_settlement_and_tenant_isolation(database):
         create(conn)
         row = storage.list_entries(conn,2026,11)[0]
         with pytest.raises(ValueError):
-            storage.settle_entry(conn,row,100,date.today()+timedelta(days=1))
+            storage.settle_entry(conn,row,100,datetime.now(ZoneInfo('America/Fortaleza')).date()+timedelta(days=1))
         assert storage.validate_schema(database) == database
         with pytest.raises(ValueError):
             storage.validate_schema('public; DROP TABLE simple_entries')
