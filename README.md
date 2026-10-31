@@ -19,8 +19,7 @@ envelopes, gráficos, categorias ou motores antigos de recorrência.
   incerta; dinheiro posterior ao vencimento gera aviso. Nenhum centavo é alocado duas vezes.
 - Não há transferência automática de pendências ou sobras entre meses. Antes de informar
   o disponível, reserve valores para compromissos fora do mês selecionado.
-- Repetições têm duração explícita e geram previsões independentes. Alterar uma ocorrência
-  não muda as demais. Parcelamento divide o valor total com precisão de centavos.
+- Repetições têm duração explícita e geram previsões independentes. A edição permite escolher somente a ocorrência ou ela e as próximas pendentes da série. Pagos e recebidos são preservados. Parcelamento divide o valor total com precisão de centavos.
 - Edição/exclusão só de pendentes; confirmações podem ser desfeitas. Concorrência usa
   versões para recusar alterações sobre dados desatualizados.
 

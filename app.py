@@ -153,8 +153,10 @@ def entry_actions(entry, balance):
             description = st.text_input('Descrição', value=entry['description'], max_chars=160)
             value = st.number_input('Valor previsto (R$)', min_value=0.0, value=entry['expected_cents'] / 100, format='%.2f')
             due = st.date_input('Vencimento / previsão', value=entry['due_date'], format='DD/MM/YYYY')
+            scope = st.radio('Aplicar alteração a', ['Somente este lançamento', 'Este e os próximos pendentes da mesma série'])
+            st.caption('Na série, o valor informado vale para cada parcela. Datas mantêm a distância em meses. Pagos e recebidos são preservados.')
             submitted_edit = st.form_submit_button('Salvar alteração')
-        if submitted_edit and mutate(lambda conn: storage.edit_entry(conn, entry, description, cents(value), due, category), 'Previsão atualizada.'):
+        if submitted_edit and mutate(lambda conn: storage.edit_entry(conn, entry, description, cents(value), due, category, scope != 'Somente este lançamento'), 'Previsão atualizada.'):
             st.rerun()
         confirm = st.checkbox('Confirmo excluir somente este lançamento', key=f'delete_confirm_{entry["id"]}')
         if st.button('Excluir previsão', key=f'delete_{entry["id"]}', disabled=not confirm):

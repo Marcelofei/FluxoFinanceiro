@@ -43,7 +43,7 @@ def prepare_backup(data, start):
         current = int(float(r.get('parcela_atual') or 1))
         description = r['descricao']
         if 1 < total < 999: description += f' ({current}/{total})'
-        row=dict(source='legacy-entry:'+r['id'],kind='expense',description=description,
+        row=dict(series_key='legacy-series:'+r['compra_id'] if r.get('compra_id') else 'legacy-entry:'+r['id'],source='legacy-entry:'+r['id'],kind='expense',description=description,
                  category=classify(r['categoria'],r['subgrupo'],r['descricao']),
                  expected_cents=cents(value),due_date=r['data_vencimento'],settled=paid,
                  actual_cents=cents(actual) if paid else None,settled_date=paid_date if paid else None)
@@ -65,7 +65,7 @@ def prepare_backup(data, start):
         remainder=max(0,amount-recorded)
         for day,value in [(1,(remainder+1)//2),(16,remainder//2)]:
             if not value: continue
-            rows.append(dict(source=f'legacy-budget:{month}:{budget["categoria"]}:{budget["subgrupo"]}:{day}',
+            rows.append(dict(series_key=f'legacy-budget-series:{budget["categoria"]}:{budget["subgrupo"]}:{day}',source=f'legacy-budget:{month}:{budget["categoria"]}:{budget["subgrupo"]}:{day}',
                 kind='expense',description=f'{budget["subgrupo"]} — {1 if day==1 else 2}ª quinzena (previsão restante)',
                 category=classify(budget['categoria'],budget['subgrupo'],budget['subgrupo']),
                 expected_cents=value,due_date=f'{month}-{day:02d}',settled=False,actual_cents=None,settled_date=None))
@@ -78,9 +78,9 @@ def import_rows(conn, rows):
     with conn.cursor() as cur:
         for r in rows:
             cur.execute('''INSERT INTO simple_entries(request_id,kind,description,category,expected_cents,due_date,
-                          settled,actual_cents,settled_date) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                          ON CONFLICT(request_id,occurrence) DO NOTHING''',
+                          settled,actual_cents,settled_date,series_key) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                          ON CONFLICT(request_id,occurrence) DO UPDATE SET series_key=EXCLUDED.series_key WHERE simple_entries.series_key IS DISTINCT FROM EXCLUDED.series_key''',
                         (str(uuid5(NAMESPACE_URL,r['source'])),r['kind'],r['description'],r['category'],r['expected_cents'],
-                         r['due_date'],r['settled'],r['actual_cents'],r['settled_date']))
+                         r['due_date'],r['settled'],r['actual_cents'],r['settled_date'],r.get('series_key',r['source'])))
             inserted+=cur.rowcount
     return inserted
