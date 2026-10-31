@@ -15,6 +15,8 @@ import streamlit as st
 from finance import brl, cents, schedule
 from security import accounts, authenticate
 import storage
+from categories import CATEGORIES
+from legacy_import import prepare_backup, import_rows
 
 st.set_page_config(page_title='Fluxo Essencial', page_icon='◷', layout='wide')
 TODAY = datetime.now(ZoneInfo('America/Fortaleza')).date()
@@ -101,6 +103,7 @@ def new_entry(kind):
             return
         token = st.session_state.setdefault(f'request_{kind}', str(uuid4()))
         with st.form(f'new_{kind}_{token}'):
+            category = st.selectbox('Categoria', CATEGORIES) if kind == 'expense' else 'Renda'
             description = st.text_input('Fonte de renda' if kind == 'income' else 'Descrição', max_chars=160)
             a, b = st.columns(2)
             value = a.number_input('Valor previsto (R$)', min_value=0.0, step=100.0, format='%.2f')
@@ -112,12 +115,13 @@ def new_entry(kind):
             submitted = st.form_submit_button('Salvar previsão', type='primary')
         if submitted:
             if mutate(lambda conn: storage.create_entries(conn, token, kind, description, cents(value), due,
-                       1 if repetition == 'Uma vez' else count, repetition == 'Parcelar valor total'), 'Previsão salva.'):
+                       1 if repetition == 'Uma vez' else count, repetition == 'Parcelar valor total', category), 'Previsão salva.'):
                 st.session_state[f'created_{kind}'] = True
                 st.rerun()
 
 
 def entry_actions(entry, balance):
+    st.caption(entry.get('category', 'A revisar'))
     label = 'recebido' if entry['kind'] == 'income' else 'pago'
     if entry['settled']:
         st.caption(f"{label.capitalize()} em {entry['settled_date']:%d/%m/%Y} · {brl(entry['actual_cents'])} · previsto {brl(entry['expected_cents'])}")
@@ -145,11 +149,12 @@ def entry_actions(entry, balance):
             st.rerun()
     if st.toggle('Editar ou excluir previsão', key=f'edit_toggle_{entry["id"]}'):
         with st.form(f'edit_{entry["id"]}_{entry["version"]}'):
+            category = st.selectbox('Categoria', CATEGORIES, index=CATEGORIES.index(entry.get('category')) if entry.get('category') in CATEGORIES else len(CATEGORIES)-1)
             description = st.text_input('Descrição', value=entry['description'], max_chars=160)
             value = st.number_input('Valor previsto (R$)', min_value=0.0, value=entry['expected_cents'] / 100, format='%.2f')
             due = st.date_input('Vencimento / previsão', value=entry['due_date'], format='DD/MM/YYYY')
             submitted_edit = st.form_submit_button('Salvar alteração')
-        if submitted_edit and mutate(lambda conn: storage.edit_entry(conn, entry, description, cents(value), due), 'Previsão atualizada.'):
+        if submitted_edit and mutate(lambda conn: storage.edit_entry(conn, entry, description, cents(value), due, category), 'Previsão atualizada.'):
             st.rerun()
         confirm = st.checkbox('Confirmo excluir somente este lançamento', key=f'delete_confirm_{entry["id"]}')
         if st.button('Excluir previsão', key=f'delete_{entry["id"]}', disabled=not confirm):
@@ -238,10 +243,28 @@ for item in plan:
 
 with st.expander('Baixar dados deste mês'):
     stream = io.StringIO()
-    columns = ['id', 'kind', 'description', 'due_date', 'expected_cents', 'settled', 'actual_cents', 'settled_date']
+    columns = ['id', 'kind', 'category', 'description', 'due_date', 'expected_cents', 'settled', 'actual_cents', 'settled_date']
     writer = csv.DictWriter(stream, fieldnames=columns, extrasaction='ignore')
     writer.writeheader()
     writer.writerows(entries)
     st.download_button('Baixar CSV', stream.getvalue().encode('utf-8-sig'),
                        file_name=f'fluxo_{year}_{month:02d}.csv', mime='text/csv')
     st.caption('Valores monetários exportados em centavos. O CSV contém somente o mês selecionado.')
+
+
+with st.expander('Trazer contas do backup antigo'):
+    st.caption('A prévia mantém valores, vencimentos e parcelas do backup. Orçamentos mensais restantes são distribuídos nos dias 1 e 16. O backup pode estar desatualizado: confira antes de importar.')
+    upload = st.file_uploader('Backup ZIP', type=['zip'])
+    import_start = st.date_input('Importar a partir de', value=selected_date)
+    if upload:
+        try:
+            preview, warnings = prepare_backup(upload.getvalue(), import_start)
+            for warning in warnings:
+                st.warning(warning)
+            st.dataframe(preview, hide_index=True)
+            confirmed = st.checkbox('Conferi valores, pendências, duplicidades e itens A revisar')
+            if st.button('Importar contas revisadas', disabled=not confirmed):
+                if mutate(lambda conn: import_rows(conn, preview), 'Contas importadas. Reenvios do mesmo backup não duplicam lançamentos.'):
+                    st.rerun()
+        except (ValueError, KeyError, UnicodeError, __import__('zipfile').BadZipFile):
+            st.error('Backup inválido ou incompatível. Confira o arquivo.')
