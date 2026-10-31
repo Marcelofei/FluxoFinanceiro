@@ -48,6 +48,7 @@ def initialize(conn):
                 CHECK ((settled AND actual_cents IS NOT NULL AND settled_date IS NOT NULL)
                     OR (NOT settled AND actual_cents IS NULL AND settled_date IS NULL))
             );
+            ALTER TABLE simple_entries ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'A revisar';
             CREATE INDEX IF NOT EXISTS simple_entries_due ON simple_entries(due_date);
             CREATE TABLE IF NOT EXISTS simple_balance (
                 id INTEGER PRIMARY KEY CHECK (id=1),
@@ -82,7 +83,7 @@ def list_entries(conn, year, month):
         return [dict(row) for row in cur.fetchall()]
 
 
-def create_entries(conn, request_id, kind, description, value, due, count=1, divide=False):
+def create_entries(conn, request_id, kind, description, value, due, count=1, divide=False, category="A revisar"):
     UUID(str(request_id))
     if kind not in ('income', 'expense') or not description.strip() or len(description.strip()) > 160:
         raise ValueError('Confira o tipo e a descrição (até 160 caracteres).')
@@ -94,18 +95,18 @@ def create_entries(conn, request_id, kind, description, value, due, count=1, div
         amount = value // count + (index < value % count) if divide else value
         description_row = f'{description.strip()} ({index+1}/{count})' if divide else description.strip()
         with conn.cursor() as cur:
-            cur.execute('''INSERT INTO simple_entries(request_id,occurrence,kind,description,expected_cents,due_date)
-                           VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(request_id,occurrence) DO NOTHING''',
-                        (str(request_id), index, kind, description_row, amount, add_months(due, index)))
+            cur.execute('''INSERT INTO simple_entries(request_id,occurrence,kind,description,expected_cents,due_date,category)
+                           VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(request_id,occurrence) DO NOTHING''',
+                        (str(request_id), index, kind, description_row, amount, add_months(due, index), category))
 
 
-def edit_entry(conn, entry, description, value, due):
+def edit_entry(conn, entry, description, value, due, category=None):
     if not description.strip() or len(description.strip()) > 160 or value <= 0:
         raise ValueError('Confira descrição e valor.')
     with conn.cursor() as cur:
-        cur.execute('''UPDATE simple_entries SET description=%s,expected_cents=%s,due_date=%s,version=version+1
+        cur.execute('''UPDATE simple_entries SET description=%s,expected_cents=%s,due_date=%s,category=%s,version=version+1
                        WHERE id=%s AND version=%s AND NOT settled''',
-                    (description.strip(), value, due, entry['id'], entry['version']))
+                    (description.strip(), value, due, category or entry.get("category", "A revisar"), entry['id'], entry['version']))
         if not cur.rowcount:
             raise ValueError('Este lançamento mudou. Atualize a página.')
 
