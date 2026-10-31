@@ -1,43 +1,50 @@
-# FluxoFinanceiro
+# Fluxo Essencial
 
-Agenda financeira para relacionar rendas e contas cadastradas, com pouco trabalho de manutenção. A cobertura é uma projeção baseada nesses registros, não um saldo bancário; não exige conciliação ou cadastro de cada pequeno gasto.
+Reescrita independente do aplicativo anterior. Uma tela mensal com entradas manuais,
+contas, saldo disponível informado e casamento por data. Sem agenda de plantões,
+envelopes, gráficos, categorias ou motores antigos de recorrência.
 
-## Executar
+## Regras
 
-Python 3.12 e PostgreSQL. Instale `requirements.txt`, configure `DATABASE_URL` e a autenticação, execute `python migrate.py` e então `streamlit run app.py`. A migração deve rodar como etapa de release antes da aplicação. Faça backup antes da atualização e valide a migração em uma cópia. A aplicação bloqueia acesso com migrações pendentes.
+- O mês é definido pelo vencimento previsto, inclusive para registros confirmados.
+- Previsto e realizado são guardados separadamente. Receber não aumenta o disponível.
+- O disponível é um retrato manual atual, compartilhado entre os meses. Cada mês é
+  uma simulação independente; as projeções de meses diferentes não podem ser somadas.
+- Ao confirmar pagamento, o formulário pede o disponível restante. Confira o valor:
+  a sugestão considera o valor previsto. Isso permite registrar também pagamentos
+  já feitos sem descontá-los novamente. Pagamento e saldo são salvos na mesma transação.
+- Desfazer uma confirmação não altera o saldo manual. A interface pede sua conferência.
+- Casamento: contas pendentes por vencimento; disponível hoje, depois entradas por
+  data. Renda recebida não é usada outra vez. Renda atrasada aparece como dependência
+  incerta; dinheiro posterior ao vencimento gera aviso. Nenhum centavo é alocado duas vezes.
+- Não há transferência automática de pendências ou sobras entre meses. Antes de informar
+  o disponível, reserve valores para compromissos fora do mês selecionado.
+- Repetições têm duração explícita e geram previsões independentes. Alterar uma ocorrência
+  não muda as demais. Parcelamento divide o valor total com precisão de centavos.
+- Edição/exclusão só de pendentes; confirmações podem ser desfeitas. Concorrência usa
+  versões para recusar alterações sobre dados desatualizados.
 
-O modo privado aceita `APP_PASSWORD`. Para contas separadas, configure `APP_USERS_JSON` conforme `security.py`: cada conta tem `password_hash` e um `schema` próprio. Gere hashes com `new_password_hash`; execute migrações para todas as contas antes de abrir o app. O banco continua usando uma credencial de serviço compartilhada; o isolamento por schema depende da aplicação.
+## Base anterior
 
-## Uso e integridade
+`python migrate.py` cria **somente** `simple_entries` e `simple_balance`, sem ler,
+apagar ou modificar as tabelas anteriores. A nova tela começa vazia. Não há importação
+implícita de plantões, rendas ou dívidas antigas, para não carregar duplicidades ou
+regras abandonadas. A versão anterior permanece no histórico Git e seus dados no banco.
+A transferência de dados deve ser revisada separadamente antes de trocar a produção.
 
-- **Desfazer pagamento/recebimento** reabre a obrigação e preserva o valor planejado. O histórico em Fluxo mostra as últimas 100 alterações, com data, ator e valores. Eventos completos integram o backup.
-- **Repetição de clique:** cada rascunho possui uma chave persistida no banco por parcela. Uma nova operação intencional com os mesmos dados usa o botão **Novo lançamento**. Operações diferentes continuam livres.
-- **Importação e escala de plantões:** local e data identificam o plantão. Reimportações e gerações simultâneas preservam registros existentes, inclusive valores pagos. Este fluxo considera um plantão por local/dia; dois turnos no mesmo local/dia precisam ser diferenciados antes de ampliar essa regra.
-- **Recorrências:** a reserva de categoria/competência e o lançamento ocorrem na mesma transação, protegendo contra duas sessões simultâneas.
-- **Situação em DD/MM/AAAA:** usa a data atual em São Paulo, mesmo ao consultar outro mês. Distingue baixas confirmadas de previsões futuras; não simula o estado histórico de um dia passado.
-- Cartões/faturas possuem identidade própria. Encargos e descontos não alteram as categorias das compras; ao desfazer, o ajuste vinculado à baixa é removido com registro em auditoria.
-- Backups ZIP são restaurações integrais, não importações incrementais; a restauração é transacional. CSV legado não contém todos os vínculos e configurações novos.
+## Railway
 
-## Testes
+Dependências: `pip install -r requirements.txt`.
+Pre-Deploy Command: `python migrate.py`.
+Start Command: `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`.
+
+Variáveis existentes continuam aceitas: `DATABASE_URL`, `APP_PASSWORD`, ou
+`APP_USERS_JSON` com usuários, `password_hash` PBKDF2 e schemas `tenant_...` já criados.
+TLS é obrigatório por padrão. `DB_SSLMODE=disable` é destinado somente a banco local de testes.
+Nenhum dado financeiro ou credencial deve ser versionado.
+
+## Verificação
 
 `pip install -r requirements-dev.txt` e `python -m pytest -q`.
-
-Defina `TEST_DATABASE_URL` para uma base **descartável**: os testes removem e recriam os schemas `tenant_test`/`tenant_other`. Sem essa variável, os testes de integração são pulados. O GitHub Actions usa PostgreSQL 16 descartável e executa a suíte completa.
-
-## Reorganizar o casamento das contas
-
-Em **Fluxo → Reorganizar contas pendentes**, um clique desconsidera automaticamente as entradas do mês selecionado já marcadas como recebidas. O casamento passa a usar apenas contas e rendas desse mês, definido pela data de vencimento. Outros meses não participam nem têm suas preferências alteradas. O histórico dos lançamentos é preservado. A ação pode ser desfeita no mesmo mês. Novos recebimentos são desconsiderados ao clicar novamente. Preferências da antiga seleção global não são aplicadas ao novo modo mensal. Não é necessário selecionar recebimentos nem informar saldo bancário.
-
-## Editar ou excluir fontes de renda
-
-Em Rendas, Excluir fonte remove o cadastro e os plantões com data de trabalho a partir do dia da exclusão, após confirmação. O corte usa a data do plantão, não a data de recebimento. Plantões anteriores e lançamentos que não são plantões são preservados. Os registros removidos ficam documentados em auditoria. A fonte excluída não reaparece como importada por causa dos lançamentos antigos.
-
-Alterar Dia de recebimento ou Meses até receber atualiza, na mesma transação, os lançamentos não recebidos dessa fonte cujo vencimento esteja no mês atual ou posterior. O mês atual é o mês de hoje, mesmo se outro mês estiver selecionado. A nova data usa a competência original acrescida do prazo; dias 29–31 são limitados ao último dia do mês. Valores, baixas confirmadas e pendências anteriores ao mês atual são preservados. A cobertura é recalculada com as novas datas. Novas recorrências também respeitam o prazo configurado. Alterações ficam registradas em auditoria.
-
-## Agenda de plantões e fontes de renda
-
-O total da fonte vem dos plantões com recebimento previsto no mês selecionado; o mês do trabalho continua visível na agenda. O valor por plantão não substitui o total mensal quando a agenda está vazia. Plantões antigos com outra categoria são associados visualmente à fonte pelo hospital quando existe uma única correspondência, sem reescrever o histórico. Hospitais diferentes permanecem separados na cobertura.
-
-Ver plantões abre a agenda da fonte. Salvar valores dos plantões atualiza os registros pendentes e, automaticamente, a previsão de renda; valores já recebidos são preservados. O CSV respeita também prazo de zero meses. Alterar a data da fonte alcança plantões antigos do mesmo hospital quando a identificação é inequívoca.
-
-Para fontes marcadas como Plantões, o campo de valor em Rendas é somente leitura. O total vem da agenda. Adicionar, alterar ou excluir um plantão atualiza a previsão automaticamente, no mês previsto de recebimento.
+Para testes reais de PostgreSQL e interface defina `TEST_DATABASE_URL` apontando para
+um banco descartável. Os testes criam e apagam schemas próprios nesse banco.
