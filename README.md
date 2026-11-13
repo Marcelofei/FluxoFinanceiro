@@ -47,3 +47,17 @@ Nenhum dado financeiro ou credencial deve ser versionado.
 `pip install -r requirements-dev.txt` e `python -m pytest -q`.
 Para testes reais de PostgreSQL e interface defina `TEST_DATABASE_URL` apontando para
 um banco descartável. Os testes criam e apagam schemas próprios nesse banco.
+
+
+## Prestações e lembretes
+
+A aba de prestações acompanha todas as parcelas cadastradas da série. A barra avança
+pela contagem de parcelas confirmadas e recua ao desfazer pagamento. O histórico anterior
+a uma importação não é presumido como pago. Recorrências abertas ficam fora desse controle.
+Lembretes sem previsão ficam em simple_reminders, sem participar de consultas de caixa,
+casamento ou balanços. Marcar um lembrete resolvido não registra pagamento.
+
+Uma seleção privada no formato fluxo-selection-v1 pode ser carregada pela aba de prestações,
+com prévia de previsões e lembretes antes de confirmar. Reenvios das mesmas origens não duplicam
+registros; lançamentos existentes são preservados. Arquivos de seleção pessoais não devem ser
+incluídos no repositório público.
