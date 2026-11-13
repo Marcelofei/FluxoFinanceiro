@@ -43,7 +43,7 @@ def prepare_backup(data, start):
         current = int(float(r.get('parcela_atual') or 1))
         description = r['descricao']
         if 1 < total < 999: description += f' ({current}/{total})'
-        row=dict(series_key='legacy-series:'+r['compra_id'] if r.get('compra_id') else 'legacy-entry:'+r['id'],source='legacy-entry:'+r['id'],kind='expense',description=description,
+        row=dict(installment_total=total if 1<total<999 else 1,installment_number=current if 1<total<999 else 1,series_key='legacy-series:'+r['compra_id'] if r.get('compra_id') else 'legacy-entry:'+r['id'],source='legacy-entry:'+r['id'],kind='expense',description=description,
                  category=classify(r['categoria'],r['subgrupo'],r['descricao']),
                  expected_cents=cents(value),due_date=r['data_vencimento'],settled=paid,
                  actual_cents=cents(actual) if paid else None,settled_date=paid_date if paid else None)
@@ -78,9 +78,9 @@ def import_rows(conn, rows):
     with conn.cursor() as cur:
         for r in rows:
             cur.execute('''INSERT INTO simple_entries(request_id,kind,description,category,expected_cents,due_date,
-                          settled,actual_cents,settled_date,series_key) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                          settled,actual_cents,settled_date,series_key,installment_total,installment_number) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                           ON CONFLICT(request_id,occurrence) DO UPDATE SET series_key=EXCLUDED.series_key WHERE simple_entries.series_key IS DISTINCT FROM EXCLUDED.series_key''',
                         (str(uuid5(NAMESPACE_URL,r['source'])),r['kind'],r['description'],r['category'],r['expected_cents'],
-                         r['due_date'],r['settled'],r['actual_cents'],r['settled_date'],r.get('series_key',r['source'])))
+                         r['due_date'],r['settled'],r['actual_cents'],r['settled_date'],r.get('series_key',r['source']),r.get('installment_total',1),r.get('installment_number',1)))
             inserted+=cur.rowcount
     return inserted

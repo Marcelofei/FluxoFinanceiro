@@ -15,6 +15,7 @@ import streamlit as st
 from finance import brl, cents, schedule
 from security import accounts, authenticate
 import storage
+from installments import progress, read_selection
 from categories import CATEGORIES
 from legacy_import import prepare_backup, import_rows
 
@@ -183,90 +184,146 @@ except Exception:
     st.error('Não foi possível carregar a base. Confira a conexão e execute python migrate.py antes de iniciar.')
     st.stop()
 
-with st.container(border=True):
-    st.subheader('Quanto tenho disponível para pagar contas agora')
-    with st.form(f'balance_{balance["version"]}'):
-        available = st.number_input('Disponível (R$)', min_value=0.0, value=balance['cents'] / 100, format='%.2f', label_visibility='collapsed')
-        if st.form_submit_button('Atualizar disponível'):
-            if mutate(lambda conn: storage.set_balance(conn, cents(available), balance['version']), 'Disponível atualizado. Casamento recalculado.'):
-                st.rerun()
-    if balance['updated_at']:
-        timestamp = balance['updated_at'].astimezone(ZoneInfo('America/Fortaleza'))
-        st.caption(f'Atualizado em {timestamp:%d/%m/%Y às %H:%M}. Este valor é compartilhado entre os meses; cada mês é uma simulação independente.')
-    else:
-        st.caption('Informe o saldo disponível para começar. Confirmar uma renda não altera este campo automaticamente.')
-    st.caption('Se houver contas de outros meses que você pretende pagar, reserve esse dinheiro antes de informar o disponível deste planejamento.')
-
-income = [e for e in entries if e['kind'] == 'income']
-expenses = [e for e in entries if e['kind'] == 'expense']
-a, b, c, d = st.columns(4)
-a.metric('Previsto receber', brl(sum(e['expected_cents'] for e in income)))
-b.metric('Recebido', brl(sum(e['actual_cents'] for e in income if e['settled'])))
-c.metric('Previsto pagar', brl(sum(e['expected_cents'] for e in expenses)))
-d.metric('Pago', brl(sum(e['actual_cents'] for e in expenses if e['settled'])))
-st.caption('Histórico agrupado pelo vencimento previsto. O valor real é preservado junto da previsão original.')
-
-left, right = st.columns(2)
-with left:
-    st.subheader('Entradas')
-    new_entry('income')
-    if not income:
-        st.caption('Nenhuma entrada neste mês.')
-    for entry in income:
-        with st.expander(f"{'✓' if entry['settled'] else '○'} {entry['due_date']:%d/%m} · {entry['description']} · {brl(entry['expected_cents'])}"):
-            entry_actions(entry, balance)
-with right:
-    st.subheader('Contas')
-    new_entry('expense')
-    if not expenses:
-        st.caption('Nenhuma conta neste mês.')
-    for entry in expenses:
-        with st.expander(f"{'✓' if entry['settled'] else '○'} {entry['due_date']:%d/%m} · {entry['description']} · {brl(entry['expected_cents'])}"):
-            entry_actions(entry, balance)
-
-st.subheader('Casamento das contas pendentes')
-st.caption('Recalculado ao salvar. Primeiro o disponível de hoje, depois as entradas por data. Recebimentos confirmados ficam fora. Contas anteriores ao dia de hoje já venceram.')
-plan = schedule(entries, balance['cents'], TODAY)
-if not plan:
-    st.info('Nenhuma conta pendente neste mês.')
-for item in plan:
-    bill = item['entry']
+monthly_tab, installments_tab = st.tabs(['Planejamento mensal', 'Prestações e lembretes'])
+with monthly_tab:
     with st.container(border=True):
-        st.markdown(f"**{bill['due_date']:%d/%m} · {bill['description']} · {brl(bill['expected_cents'])}**")
-        if item['status'] == 'Coberta no prazo':
-            st.success(item['status'])
-        else:
-            st.warning(item['status'])
-        for allocation in item['allocations']:
-            suffix = ' · renda ainda não recebida e atrasada' if allocation['overdue_income'] else ''
-            st.write(f"{allocation['source']} · {allocation['date']:%d/%m/%Y} · {brl(allocation['cents'])}{suffix}")
-        if item['uncovered_cents']:
-            st.write(f"Faltam {brl(item['uncovered_cents'])}")
-
-with st.expander('Baixar dados deste mês'):
-    stream = io.StringIO()
-    columns = ['id', 'kind', 'category', 'description', 'due_date', 'expected_cents', 'settled', 'actual_cents', 'settled_date']
-    writer = csv.DictWriter(stream, fieldnames=columns, extrasaction='ignore')
-    writer.writeheader()
-    writer.writerows(entries)
-    st.download_button('Baixar CSV', stream.getvalue().encode('utf-8-sig'),
-                       file_name=f'fluxo_{year}_{month:02d}.csv', mime='text/csv')
-    st.caption('Valores monetários exportados em centavos. O CSV contém somente o mês selecionado.')
-
-
-with st.expander('Trazer contas do backup antigo'):
-    st.caption('A prévia mantém valores, vencimentos e parcelas do backup. Orçamentos mensais restantes são distribuídos nos dias 1 e 16. O backup pode estar desatualizado: confira antes de importar.')
-    upload = st.file_uploader('Backup ZIP', type=['zip'])
-    import_start = st.date_input('Importar a partir de', value=selected_date)
-    if upload:
-        try:
-            preview, warnings = prepare_backup(upload.getvalue(), import_start)
-            for warning in warnings:
-                st.warning(warning)
-            st.dataframe(preview, hide_index=True)
-            confirmed = st.checkbox('Conferi valores, pendências, duplicidades e itens A revisar')
-            if st.button('Importar contas revisadas', disabled=not confirmed):
-                if mutate(lambda conn: import_rows(conn, preview), 'Contas importadas. Reenvios do mesmo backup não duplicam lançamentos.'):
+        st.subheader('Quanto tenho disponível para pagar contas agora')
+        with st.form(f'balance_{balance["version"]}'):
+            available = st.number_input('Disponível (R$)', min_value=0.0, value=balance['cents'] / 100, format='%.2f', label_visibility='collapsed')
+            if st.form_submit_button('Atualizar disponível'):
+                if mutate(lambda conn: storage.set_balance(conn, cents(available), balance['version']), 'Disponível atualizado. Casamento recalculado.'):
                     st.rerun()
-        except (ValueError, KeyError, UnicodeError, __import__('zipfile').BadZipFile):
-            st.error('Backup inválido ou incompatível. Confira o arquivo.')
+        if balance['updated_at']:
+            timestamp = balance['updated_at'].astimezone(ZoneInfo('America/Fortaleza'))
+            st.caption(f'Atualizado em {timestamp:%d/%m/%Y às %H:%M}. Este valor é compartilhado entre os meses; cada mês é uma simulação independente.')
+        else:
+            st.caption('Informe o saldo disponível para começar. Confirmar uma renda não altera este campo automaticamente.')
+        st.caption('Se houver contas de outros meses que você pretende pagar, reserve esse dinheiro antes de informar o disponível deste planejamento.')
+
+    income = [e for e in entries if e['kind'] == 'income']
+    expenses = [e for e in entries if e['kind'] == 'expense']
+    a, b, c, d = st.columns(4)
+    a.metric('Previsto receber', brl(sum(e['expected_cents'] for e in income)))
+    b.metric('Recebido', brl(sum(e['actual_cents'] for e in income if e['settled'])))
+    c.metric('Previsto pagar', brl(sum(e['expected_cents'] for e in expenses)))
+    d.metric('Pago', brl(sum(e['actual_cents'] for e in expenses if e['settled'])))
+    st.caption('Histórico agrupado pelo vencimento previsto. O valor real é preservado junto da previsão original.')
+
+    left, right = st.columns(2)
+    with left:
+        st.subheader('Entradas')
+        new_entry('income')
+        if not income:
+            st.caption('Nenhuma entrada neste mês.')
+        for entry in income:
+            with st.expander(f"{'✓' if entry['settled'] else '○'} {entry['due_date']:%d/%m} · {entry['description']} · {brl(entry['expected_cents'])}"):
+                entry_actions(entry, balance)
+    with right:
+        st.subheader('Contas')
+        new_entry('expense')
+        if not expenses:
+            st.caption('Nenhuma conta neste mês.')
+        for entry in expenses:
+            with st.expander(f"{'✓' if entry['settled'] else '○'} {entry['due_date']:%d/%m} · {entry['description']} · {brl(entry['expected_cents'])}"):
+                entry_actions(entry, balance)
+
+    st.subheader('Casamento das contas pendentes')
+    st.caption('Recalculado ao salvar. Primeiro o disponível de hoje, depois as entradas por data. Recebimentos confirmados ficam fora. Contas anteriores ao dia de hoje já venceram.')
+    plan = schedule(entries, balance['cents'], TODAY)
+    if not plan:
+        st.info('Nenhuma conta pendente neste mês.')
+    for item in plan:
+        bill = item['entry']
+        with st.container(border=True):
+            st.markdown(f"**{bill['due_date']:%d/%m} · {bill['description']} · {brl(bill['expected_cents'])}**")
+            if item['status'] == 'Coberta no prazo':
+                st.success(item['status'])
+            else:
+                st.warning(item['status'])
+            for allocation in item['allocations']:
+                suffix = ' · renda ainda não recebida e atrasada' if allocation['overdue_income'] else ''
+                st.write(f"{allocation['source']} · {allocation['date']:%d/%m/%Y} · {brl(allocation['cents'])}{suffix}")
+            if item['uncovered_cents']:
+                st.write(f"Faltam {brl(item['uncovered_cents'])}")
+
+    with st.expander('Baixar dados deste mês'):
+        stream = io.StringIO()
+        columns = ['id', 'kind', 'category', 'description', 'due_date', 'expected_cents', 'settled', 'actual_cents', 'settled_date']
+        writer = csv.DictWriter(stream, fieldnames=columns, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(entries)
+        st.download_button('Baixar CSV', stream.getvalue().encode('utf-8-sig'),
+                           file_name=f'fluxo_{year}_{month:02d}.csv', mime='text/csv')
+        st.caption('Valores monetários exportados em centavos. O CSV contém somente o mês selecionado.')
+
+
+    with st.expander('Trazer contas do backup antigo'):
+        st.caption('A prévia mantém valores, vencimentos e parcelas do backup. Orçamentos mensais restantes são distribuídos nos dias 1 e 16. O backup pode estar desatualizado: confira antes de importar.')
+        upload = st.file_uploader('Backup ZIP', type=['zip'])
+        import_start = st.date_input('Importar a partir de', value=selected_date)
+        if upload:
+            try:
+                preview, warnings = prepare_backup(upload.getvalue(), import_start)
+                for warning in warnings:
+                    st.warning(warning)
+                st.dataframe(preview, hide_index=True)
+                confirmed = st.checkbox('Conferi valores, pendências, duplicidades e itens A revisar')
+                if st.button('Importar contas revisadas', disabled=not confirmed):
+                    if mutate(lambda conn: import_rows(conn, preview), 'Contas importadas. Reenvios do mesmo backup não duplicam lançamentos.'):
+                        st.rerun()
+            except (ValueError, KeyError, UnicodeError, __import__('zipfile').BadZipFile):
+                st.error('Backup inválido ou incompatível. Confira o arquivo.')
+
+
+with installments_tab:
+    st.subheader('Controle de prestações')
+    with storage.connection(SCHEMA) as conn:
+        plans=progress(storage.list_installments(conn))
+        reminders=storage.list_reminders(conn)
+    st.caption('As barras contam parcelas cadastradas marcadas como pagas. Recorrências mensais sem prazo não são prestações.')
+    if not plans: st.info('Nenhuma prestação cadastrada.')
+    for plan in plans:
+        with st.container(border=True):
+            st.write(plan['description'])
+            st.progress(plan['fraction'], text=f"{plan['paid']} de {plan['total']} parcelas cadastradas pagas")
+            st.caption(f"Pago: {brl(plan['actual_cents'])} · Restante previsto: {brl(plan['remaining_cents'])}")
+            if plan['next_date']: st.caption(f"Próxima pendente: {plan['next_date']:%d/%m/%Y}")
+            with st.expander('Ver parcelas'):
+                for r in plan['entries']:
+                    st.write(f"{r['installment_number']}/{r['installment_total']} · {r['due_date']:%d/%m/%Y} · {brl(r['expected_cents'])} · {'Pago' if r['settled'] else 'Pendente'}")
+    st.subheader('Atrasados sem previsão — lembretes')
+    st.caption('Estes valores não entram em balanços, no disponível nem no casamento. Resolver um lembrete também não registra pagamento.')
+    for reminder in reminders:
+        with st.container(border=True):
+            st.write(f"{reminder['description']} · {brl(reminder['amount_cents'])}")
+            st.caption('Resolvido' if reminder['resolved'] else 'Sem previsão de pagamento')
+            if st.button('Reabrir lembrete' if reminder['resolved'] else 'Marcar lembrete resolvido',key='reminder_'+reminder['source']):
+                if mutate(lambda conn: storage.resolve_reminder(conn, reminder['source'],not reminder['resolved']), 'Lembrete atualizado.'):
+                    st.rerun()
+    with st.expander('Adicionar lembrete'):
+        with st.form('new_reminder'):
+            name=st.text_input('Descrição do lembrete',max_chars=160)
+            amount=st.number_input('Valor do lembrete (R$)',min_value=0.0,format='%.2f')
+            if st.form_submit_button('Salvar lembrete'):
+                token=st.session_state.setdefault('reminder_request',str(uuid4()))
+                if mutate(lambda conn: storage.save_reminder(conn,token,name,cents(amount)),'Lembrete salvo.'):
+                    st.session_state.pop('reminder_request',None)
+                    st.rerun()
+    with st.expander('Carregar seleção revisada'):
+        selection=st.file_uploader('Arquivo da seleção (JSON)',type=['json'])
+        if selection:
+            try:
+                chosen,notes=read_selection(selection.getvalue())
+                st.write(f'{len(chosen)} previsões e {len(notes)} lembretes na seleção.')
+                st.dataframe(chosen,hide_index=True)
+                st.dataframe(notes,hide_index=True)
+                confirm=st.checkbox('Conferi esta seleção e quero adicioná-la')
+                if st.button('Adicionar seleção',disabled=not confirm):
+                    def apply_selection(conn):
+                        import_rows(conn,chosen)
+                        for note in notes:
+                            storage.save_reminder(conn,note['source'],note['description'],note['amount_cents'])
+                    if mutate(apply_selection,'Seleção adicionada. Reenvios não duplicam os mesmos registros.'):
+                        st.rerun()
+            except (ValueError,KeyError,TypeError):
+                st.error('Arquivo de seleção inválido.')

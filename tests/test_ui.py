@@ -90,6 +90,19 @@ def test_complete_monthly_workflow(database, monkeypatch):
     by_label(app,'selectbox','Mês').set_value(1).run(); healthy(app)
     assert any('Nenhuma conta pendente neste mês' in w.value for w in app.info)
 
+    # Prestações e lembretes aparecem em aba própria, sem afetar os totais mensais.
+    with storage.connection(database) as conn:
+        storage.create_entries(conn,str(uuid4()),'expense','Curso parcelado',30000,date(2026,11,20),3,True,'Educação')
+        storage.save_reminder(conn,'ui-reminder','Atrasado sem previsão',900000)
+    app.run(); healthy(app)
+    assert [t.label for t in app.tabs]==['Planejamento mensal','Prestações e lembretes']
+    assert any('0 de 3 parcelas cadastradas pagas' in x.text for x in app.get('progress'))
+    assert any('Atrasado sem previsão' in x.value for x in app.markdown)
+    by_label(app,'button','Marcar lembrete resolvido').click().run(); healthy(app)
+    with storage.connection(database) as conn:
+        assert storage.list_reminders(conn)[0]['resolved']
+        assert storage.get_balance(conn)['cents']==700000
+
 
 def storage_rows(schema):
     with storage.connection(schema) as conn:
