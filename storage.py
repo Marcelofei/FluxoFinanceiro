@@ -32,7 +32,7 @@ def connection(schema):
 
 def initialize(conn):
     with conn.cursor() as cur:
-        cur.execute('''
+        cur.execute(r'''
             CREATE TABLE IF NOT EXISTS simple_entries (
                 id BIGSERIAL PRIMARY KEY,
                 request_id UUID NOT NULL,
@@ -48,6 +48,17 @@ def initialize(conn):
                 UNIQUE(request_id, occurrence),
                 CHECK ((settled AND actual_cents IS NOT NULL AND settled_date IS NOT NULL)
                     OR (NOT settled AND actual_cents IS NULL AND settled_date IS NULL))
+            );
+            ALTER TABLE simple_entries ADD COLUMN IF NOT EXISTS installment_total INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE simple_entries ADD COLUMN IF NOT EXISTS installment_number INTEGER NOT NULL DEFAULT 1;
+            UPDATE simple_entries SET
+                installment_number=(regexp_match(description, '\(([0-9]+)/([0-9]+)\)$'))[1]::integer,
+                installment_total=(regexp_match(description, '\(([0-9]+)/([0-9]+)\)$'))[2]::integer
+                WHERE installment_total=1 AND description ~ '\([0-9]+/[0-9]+\)$';
+            CREATE TABLE IF NOT EXISTS simple_reminders (
+                source TEXT PRIMARY KEY, description TEXT NOT NULL,
+                amount_cents BIGINT NOT NULL CHECK(amount_cents>0),
+                resolved BOOLEAN NOT NULL DEFAULT FALSE
             );
             ALTER TABLE simple_entries ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'A revisar';
             ALTER TABLE simple_entries ADD COLUMN IF NOT EXISTS series_key TEXT;
@@ -99,9 +110,9 @@ def create_entries(conn, request_id, kind, description, value, due, count=1, div
         amount = value // count + (index < value % count) if divide else value
         description_row = f'{description.strip()} ({index+1}/{count})' if divide else description.strip()
         with conn.cursor() as cur:
-            cur.execute('''INSERT INTO simple_entries(request_id,occurrence,kind,description,expected_cents,due_date,category,series_key)
-                           VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(request_id,occurrence) DO NOTHING''',
-                        (str(request_id), index, kind, description_row, amount, add_months(due, index), category, str(request_id)))
+            cur.execute('''INSERT INTO simple_entries(request_id,occurrence,kind,description,expected_cents,due_date,category,series_key,installment_total,installment_number)
+                           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(request_id,occurrence) DO NOTHING''',
+                        (str(request_id), index, kind, description_row, amount, add_months(due, index), category, str(request_id), count if divide else 1, index+1 if divide else 1))
 
 
 def edit_entry(conn, entry, description, value, due, category=None, future=False):
@@ -158,3 +169,27 @@ def delete_entry(conn, entry):
         cur.execute('DELETE FROM simple_entries WHERE id=%s AND version=%s AND NOT settled', (entry['id'], entry['version']))
         if not cur.rowcount:
             raise ValueError('Só é possível excluir uma previsão ainda pendente e atualizada.')
+
+
+def list_installments(conn):
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM simple_entries WHERE kind='expense' AND installment_total>1 ORDER BY due_date,id")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def list_reminders(conn):
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute('SELECT * FROM simple_reminders ORDER BY resolved,description')
+        return [dict(r) for r in cur.fetchall()]
+
+
+def save_reminder(conn, source, description, amount):
+    if not description.strip() or amount<=0: raise ValueError('Confira descrição e valor.')
+    with conn.cursor() as cur:
+        cur.execute('INSERT INTO simple_reminders(source,description,amount_cents) VALUES(%s,%s,%s) ON CONFLICT(source) DO NOTHING',
+                    (source,description.strip(),amount))
+
+
+def resolve_reminder(conn, source, resolved):
+    with conn.cursor() as cur:
+        cur.execute('UPDATE simple_reminders SET resolved=%s WHERE source=%s',(resolved,source))
