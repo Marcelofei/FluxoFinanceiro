@@ -1,6 +1,7 @@
 """Regras do planejamento. Valores monetários são centavos inteiros."""
 import calendar
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
@@ -73,3 +74,7 @@ def schedule(entries, available, today):
         result.append({'entry': bill, 'allocations': allocations,
                        'uncovered_cents': remaining, 'status': status})
     return result
+
+
+def today_local():
+    return datetime.now(ZoneInfo("America/Fortaleza")).date()
