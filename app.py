@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
-from finance import brl, cents, schedule, today_local
+from finance import brl, cents, schedule, today_local, display_cents
 from security import accounts, authenticate
 import storage
 from installments import progress, read_selection
@@ -216,7 +216,7 @@ with monthly_tab:
         if not income:
             st.caption('Nenhuma entrada neste mês.')
         for entry in income:
-            with st.expander(f"{'✓' if entry['settled'] else '○'} {entry['due_date']:%d/%m} · {entry['description']} · {brl(entry['expected_cents'])}"):
+            with st.expander(f"{'✓' if entry['settled'] else '○'} {entry['due_date']:%d/%m} · {entry['description']} · {brl(display_cents(entry))}"):
                 entry_actions(entry, balance)
     with right:
         st.subheader('Contas')
@@ -224,7 +224,7 @@ with monthly_tab:
         if not expenses:
             st.caption('Nenhuma conta neste mês.')
         for entry in expenses:
-            with st.expander(f"{'✓' if entry['settled'] else '○'} {entry['due_date']:%d/%m} · {entry['description']} · {brl(entry['expected_cents'])}"):
+            with st.expander(f"{'✓' if entry['settled'] else '○'} {entry['due_date']:%d/%m} · {entry['description']} · {brl(display_cents(entry))}"):
                 entry_actions(entry, balance)
 
     st.subheader('Casamento das contas pendentes')
@@ -290,7 +290,7 @@ with installments_tab:
             if plan['next_date']: st.caption(f"Próxima pendente: {plan['next_date']:%d/%m/%Y}")
             with st.expander('Ver parcelas'):
                 for r in plan['entries']:
-                    st.write(f"{r['installment_number']}/{r['installment_total']} · {r['due_date']:%d/%m/%Y} · {brl(r['expected_cents'])} · {'Pago' if r['settled'] else 'Pendente'}")
+                    st.write(f"{r['installment_number']}/{r['installment_total']} · {r['due_date']:%d/%m/%Y} · {brl(display_cents(r))} · {'Pago' if r['settled'] else 'Pendente'}")
     st.subheader('Atrasados sem previsão — lembretes')
     st.caption('Estes valores não entram em balanços, no disponível nem no casamento. Resolver um lembrete também não registra pagamento.')
     for reminder in reminders:

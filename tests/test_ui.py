@@ -53,6 +53,9 @@ def test_complete_monthly_workflow(database, monkeypatch):
     actuals = [w for w in app.number_input if w.label == 'Valor real (R$)']
     actuals[0].set_value(9000)
     by_label(app,'button','Confirmar recebido').click().run(); healthy(app)
+    received_label=next(w.label for w in app.expander if 'Hospital manual' in w.label)
+    assert 'R$ 9.000,00' in received_label
+    assert 'R$ 10.000,00' not in received_label
     with storage.connection(database) as conn:
         rows = storage.list_entries(conn,2026,11)
         received = next(r for r in rows if r['kind']=='income')

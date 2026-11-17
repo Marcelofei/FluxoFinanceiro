@@ -61,3 +61,13 @@ def test_priority_and_no_reuse_across_many_entries():
     assert allocated == 999 + sum(i*101 for i in range(1,10))
     for p in plan:
         assert sum(a['cents'] for a in p['allocations']) + p['uncovered_cents'] == p['entry']['expected_cents']
+
+
+def test_display_actual_after_confirmation_including_zero():
+    from finance import display_cents
+    row=dict(expected_cents=10000,actual_cents=None,settled=False)
+    assert display_cents(row)==10000
+    row.update(settled=True,actual_cents=9000)
+    assert display_cents(row)==9000
+    row['actual_cents']=0
+    assert display_cents(row)==0

@@ -78,3 +78,8 @@ def schedule(entries, available, today):
 
 def today_local():
     return datetime.now(ZoneInfo("America/Fortaleza")).date()
+
+
+def display_cents(entry):
+    """Após confirmar, inclusive valor zero, a lista mostra o realizado."""
+    return entry['actual_cents'] if entry['settled'] else entry['expected_cents']
