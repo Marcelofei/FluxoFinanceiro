@@ -39,3 +39,22 @@ def test_selection_refuses_confirmed_or_invalid_values():
     with pytest.raises(ValueError):read_selection(b'{"format":"unknown"}')
     bad=dict(format='fluxo-selection-v1',entries=[],reminders=[dict(source='x',description='x',amount_cents=-1)])
     with pytest.raises(ValueError):read_selection(json.dumps(bad).encode())
+
+
+def test_selection_accepts_income_and_expense_but_not_unknown_kind():
+    row=dict(kind='income',settled=False,source='test-income',description='Fonte teste',category='Renda',expected_cents=12345,due_date='2026-11-01')
+    bundle=dict(format='fluxo-selection-v1',entries=[row],reminders=[])
+    rows,_=read_selection(json.dumps(bundle).encode())
+    assert rows[0]['kind']=='income'
+    row['kind']='unknown'
+    with pytest.raises(ValueError):read_selection(json.dumps(bundle).encode())
+
+
+def test_import_income_does_not_increase_available(database):
+    from legacy_import import import_rows
+    row=dict(kind='income',settled=False,source='test-income-import',description='Fonte teste',category='Renda',expected_cents=12345,due_date='2026-11-01',actual_cents=None,settled_date=None)
+    with storage.connection(database) as conn:
+        assert import_rows(conn,[row])==1
+        assert import_rows(conn,[row])==0
+        assert storage.list_entries(conn,2026,11)[0]['kind']=='income'
+        assert storage.get_balance(conn)['cents']==0
