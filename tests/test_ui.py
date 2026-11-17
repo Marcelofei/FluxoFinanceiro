@@ -20,6 +20,8 @@ def healthy(app):
 
 
 def test_complete_monthly_workflow(database, monkeypatch):
+    import finance
+    monkeypatch.setattr(finance, "today_local", lambda: date(2026,11,1))
     salt = b'ui-test-salt'
     digest = hashlib.pbkdf2_hmac('sha256',b'local-test-only-password',salt,100000)
     encoded = 'pbkdf2_sha256$100000$'+base64.b64encode(salt).decode()+'$'+base64.b64encode(digest).decode()

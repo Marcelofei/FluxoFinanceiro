@@ -29,9 +29,9 @@ def read_selection(data):
     rows=obj.get('entries',[]); reminders=obj.get('reminders',[])
     if not isinstance(rows,list) or not isinstance(reminders,list): raise ValueError('Listas inválidas.')
     for r in rows:
-        if r.get('kind')!='expense' or r.get('settled') is not False: raise ValueError('Seleção exige previsões pendentes.')
+        if r.get('kind') not in ('expense','income') or r.get('settled') is not False: raise ValueError('Seleção exige previsões pendentes.')
         if not str(r.get('source','')).strip() or not 0<len(r.get('description',''))<=160: raise ValueError('Identificação inválida.')
-        if r.get('category') not in CATEGORIES: raise ValueError('Categoria inválida.')
+        if (r.get('kind')=='expense' and r.get('category') not in CATEGORIES) or (r.get('kind')=='income' and r.get('category')!='Renda'): raise ValueError('Categoria inválida.')
         if type(r.get('expected_cents')) is not int or r['expected_cents']<=0: raise ValueError('Valor inválido.')
         date.fromisoformat(r['due_date'])
         total=r.get('installment_total',1); number=r.get('installment_number',1)

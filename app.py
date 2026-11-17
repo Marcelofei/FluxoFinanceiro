@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
-from finance import brl, cents, schedule
+from finance import brl, cents, schedule, today_local
 from security import accounts, authenticate
 import storage
 from installments import progress, read_selection
@@ -20,7 +20,7 @@ from categories import CATEGORIES
 from legacy_import import prepare_backup, import_rows
 
 st.set_page_config(page_title='Fluxo Essencial', page_icon='◷', layout='wide')
-TODAY = datetime.now(ZoneInfo('America/Fortaleza')).date()
+TODAY = today_local()
 MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
           'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
 
