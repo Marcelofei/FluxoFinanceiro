@@ -84,3 +84,10 @@ Validação: suíte de regressão, testes de navegação, concorrência entre ba
 ### Ajustes negativos anteriores ao schema 4
 
 A migração converte valores negativos legados para entradas/saídas equivalentes com valores positivos, antes de atualizar os metadados. O total líquido planejado e o total líquido realizado são preservados separadamente; quando os sinais divergem, uma contrapartida apenas realizada representa a diferença. O registro original fica na auditoria. As restrições que impedem novos valores negativos continuam ativas. A conversão e o restante da migração são atômicos e não se repetem ao executar `python migrate.py` novamente.
+
+
+### Navegação e geração em lote
+
+A geração dos três meses da janela usa uma transação e duas chamadas SQL, independentemente da quantidade de fontes e séries. No cenário de 40 fontes e 10 séries já geradas, o código anterior fazia 306 chamadas. Meses reservados são filtrados antes das travas de linha; novos cadastros e regras alteradas continuam sendo consultados diretamente no banco, sem cache de dados financeiros.
+
+A validação da conexão, o schema do cliente, o ator e o fuso são configurados numa única ida ao banco. Home e Fluxo reutilizam a leitura mensal, e os orçamentos reutilizam as unidades já calculadas do Planejamento. Não há nova migração de schema nesta alteração.
