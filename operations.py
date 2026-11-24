@@ -257,6 +257,8 @@ def quick_edit(cur, original, updated, delete=False, future=False):
 
 def delete_income_source(cur, category, subgroup, cutoff):
     """Delete the source and its shifts from cutoff, retaining earlier shifts."""
+    from agenda import cancel_event
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(current_schema()||':agenda'))")
     from psycopg2.extras import Json
     cur.execute("""SELECT row_to_json(c) FROM categorias_personalizadas c
         WHERE tipo='Entrada' AND categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,'') FOR UPDATE""",(category,subgroup))
@@ -275,6 +277,8 @@ def delete_income_source(cur, category, subgroup, cutoff):
             VALUES ('lancamento','EXCLUIR_PLANTAO_FONTE',%s,%s,current_setting('app.actor',true))""",
             (Json(shift),Json({'excluido':True,'data_corte':cutoff.isoformat()})))
     if shifts:
+        for shift in shifts:
+            if shift.get('compromisso_id'):cancel_event(cur,shift['compromisso_id'])
         cur.execute('DELETE FROM lancamentos WHERE id=ANY(%s)',([r['id'] for r in shifts],))
     key='fonte_excluida:'+request_key('source',[category,subgroup or ''])
     cur.execute("""INSERT INTO preferencias_app(chave,valor) VALUES (%s,%s)

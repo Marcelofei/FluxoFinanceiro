@@ -51,3 +51,32 @@ def test_cancel_pending_keeps_commitment_identity(db):
         c.execute('SELECT count(*) FROM lancamentos');assert c.fetchone()[0]==0
         c.execute('SELECT status FROM agenda_eventos');assert c.fetchone()[0]=='cancelado'
         assert insert_shifts(c,[shift('cancel')])==0
+
+def test_backup_roundtrip_includes_commitment_without_receipt(db):
+    import io,pandas as pd
+    from contextlib import contextmanager
+    from psycopg2 import sql
+    from psycopg2.extras import execute_values
+    from backup import export_snapshot
+    from finance import int_seguro
+    from tests.helpers import app_functions
+    with db,db.cursor() as c:create_event(c,'Pessoal',START,START+dt.timedelta(hours=1),'Pessoal')
+    data=export_snapshot(db);db.rollback()
+    @contextmanager
+    def transaction():
+        with db,db.cursor() as c:yield c
+    ns=app_functions(['validar_csv_lancamentos','_limpar_df_para_banco','_insert_dataframe','importar_backup'],dict(pd=pd,sql=sql,execute_values=execute_values,int_seguro=int_seguro,transaction=transaction))
+    f=io.BytesIO(data);f.name='agenda.zip'
+    ok,msg=ns['importar_backup'](f);assert ok,msg
+    with db,db.cursor() as c:
+        c.execute('SELECT count(*) FROM agenda_eventos');assert c.fetchone()[0]==1
+        c.execute('SELECT count(*) FROM lancamentos');assert c.fetchone()[0]==0
+
+def test_adoption_preserves_same_day_legacy_shifts(db):
+    from agenda import adopt_legacy
+    with db,db.cursor() as c:
+        for title in ('Plantão manhã','Plantão noite'):
+            c.execute("INSERT INTO lancamentos(tipo,categoria,subgrupo,descricao,valor,data_competencia,data_vencimento) VALUES ('Entrada','Rendas','Hospital',%s,100,'2026-11-01','2026-12-10')",(title,))
+        adopt_legacy(c);adopt_legacy(c)
+        c.execute('SELECT count(*) FROM agenda_eventos');assert c.fetchone()[0]==2
+        c.execute('SELECT count(*),sum(valor),count(DISTINCT compromisso_id) FROM lancamentos');assert c.fetchone()==(2,200,2)

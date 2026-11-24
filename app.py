@@ -1,3 +1,4 @@
+from auth_ui import check_password
 from ui_styles import *
 from database import _eh_erro_de_conexao, _fechar_pool_atual, db_connection, execute_query, fetch_dataframe, get_pool, init_db, transaction, ui_transaction
 import streamlit as st
@@ -94,54 +95,8 @@ def processar_recorrencias_periodos(periodos):
 # 4. SISTEMA DE SEGURANÇA E AUXILIARES
 # =================================================================
 
-@st.cache_resource
-def _login_attempts():
-    from threading import Lock
-    return {}, Lock()
 
 
-def check_password():
-    try:
-        accounts = load_accounts(os.environ.get('APP_USERS_JSON'))
-    except ValueError:
-        st.error('Configuração de acesso inválida. Contate o administrador.')
-        return False
-    # Existing private deployments continue to work; named accounts use isolated schemas.
-    now = time.time()
-    if st.session_state.get('password_correct'):
-        account_now = accounts.get(st.session_state.get('actor'), {})
-        expired = bool(accounts) and account_now.get('schema') != st.session_state.get('tenant_schema')
-        expired |= now - st.session_state.get('last_activity', 0) > 1800
-        expired |= now - st.session_state.get('login_time', 0) > 43200
-        if not expired:
-            st.session_state['last_activity'] = now
-            return True
-        st.session_state.clear()
-        st.warning('Sua sessão expirou. Entre novamente.')
-    if not accounts and not os.environ.get('APP_PASSWORD'):
-        st.error('Configure o acesso antes de iniciar o app.')
-        return False
-    st.markdown('### 🔒 Acesso restrito')
-    username = st.text_input('Usuário') if accounts else 'owner'
-    password = st.text_input('Senha', type='password', key='login_password')
-    if st.button('Entrar', type='primary'):
-        attempts, lock = _login_attempts()
-        with lock:
-            recent = [t for t in attempts.get(username, []) if now-t < 300]
-            if len(recent) >= 5:
-                st.error('Muitas tentativas. Aguarde cinco minutos.')
-                return False
-            recent.append(now)
-            attempts[username] = recent
-        account = accounts.get(username, {})
-        valid = verify_password(password, account.get('password_hash')) if accounts else hmac.compare_digest(password, os.environ.get('APP_PASSWORD',''))
-        if valid:
-            with lock: attempts.pop(username, None)
-            st.session_state.clear()
-            st.session_state.update(password_correct=True, actor=username, tenant_schema=account.get('schema','public'), last_activity=now, login_time=now)
-            st.rerun()
-        st.error('Usuário ou senha incorretos.')
-    return False
 
 
 def parse_valor(valor_str):
@@ -1853,7 +1808,7 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
         esperado=float(grp['valor'].sum()) if not grp.empty else 0.0; realizado=float(grp.loc[grp['pago']==1,'valor_pago'].sum()) if not grp.empty else 0.0; pendente=float(grp.loc[grp['pago']==0,'valor'].sum()) if not grp.empty else 0.0
         recebimentos_fonte = caixa_rendas[(caixa_rendas['tipo']=='Entrada') & (caixa_rendas['categoria']==f['categoria']) & (caixa_rendas['subgrupo'].fillna('')==f['subgrupo'])]
         realizado = float(recebimentos_fonte['valor_pago'].sum())
-        f['quantidade_plantoes']=int(grp['descricao'].str.match(r'(?i)^plant[ãa]o\s',na=False).sum()) if not grp.empty else 0
+        f['quantidade_plantoes']=int((grp['origem_evento'].eq('plantao') | (grp['compromisso_id'].isna() & grp['descricao'].str.match(r'(?i)^plant[ãa]o\s',na=False))).sum()) if not grp.empty else 0
         prox=None
         if not grp.empty:
             fut=grp[grp['pago']==0].sort_values('data_vencimento')
@@ -2924,8 +2879,9 @@ elif menu == "💰 Rendas":
 elif menu == "🏥 Escala de Plantões":
     from agenda_page import render_agenda
     from shift_page import render_shift_page
-    render_agenda(ano_selecionado,mes_selecionado,hoje)
-    with st.expander('Plantões e previsões de recebimento'):
+    agenda_tab,shift_tab=st.tabs(['Compromissos','Plantões e recebimentos'])
+    with agenda_tab:render_agenda(ano_selecionado,mes_selecionado,hoje)
+    with shift_tab:
         render_shift_page(ano_selecionado,mes_selecionado,hoje,data_contexto_ativo,meses,render_periodo_topo,flash,parse_valor,aplicar_tema_grafico)
 
 # -----------------------------------------------------------------

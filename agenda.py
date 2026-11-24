@@ -58,7 +58,7 @@ def update_event(cur,key,title,start,end,expected_start=None):
     row=cur.fetchone()
     if not row or (expected_start is not None and row[0]!=expected_start):
         raise ValueError('O compromisso mudou. Atualize antes de salvar.')
-    cur.execute('UPDATE agenda_eventos SET titulo=%s,inicio=%s,fim=%s WHERE id=%s',(title.strip(),start,end,str(key)))
+    cur.execute("UPDATE agenda_eventos SET status='ativo',titulo=%s,inicio=%s,fim=%s WHERE id=%s",(title.strip(),start,end,str(key)))
     cur.execute('''SELECT l.id,c.atraso_meses,c.dia_pagamento FROM lancamentos l
         LEFT JOIN categorias_personalizadas c ON c.id=l.fonte_id
         WHERE l.compromisso_id=%s AND l.pago=0 FOR UPDATE OF l''',(str(key),))

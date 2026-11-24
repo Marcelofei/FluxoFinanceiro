@@ -10,7 +10,8 @@ def render_agenda(year,month,today):
     st.subheader('Agenda pessoal e profissional')
     start=dt.datetime(year,month,1,tzinfo=ZoneInfo('America/Fortaleza'))
     finish=(start.replace(day=28)+dt.timedelta(days=4)).replace(day=1)
-    events=fetch_dataframe('SELECT * FROM agenda_eventos WHERE inicio<%s AND fim>%s AND status=%s ORDER BY inicio,id',(finish,start,'ativo'))
+    cancelled=st.checkbox('Ver compromissos cancelados')
+    events=fetch_dataframe('SELECT * FROM agenda_eventos WHERE inicio<%s AND fim>%s AND status=%s ORDER BY inicio,id',(finish,start,'cancelado' if cancelled else 'ativo'))
     if events.empty:st.info('Nenhum compromisso neste mês.')
     else:
         st.dataframe(events[['titulo','tipo','local','inicio','fim']],hide_index=True,use_container_width=True)

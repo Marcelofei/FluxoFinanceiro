@@ -97,7 +97,7 @@ def render_shift_page(ano_selecionado,mes_selecionado,hoje,data_contexto_ativo,m
                             desc += ' · '+str(r.get('turno',''))+' '+str(r.get('inicio',''))
                             val=parse_valor(r[cv]) if cv and pd.notna(r.get(cv)) else float_seguro(inf.get('valor_padrao'))
                             if val<=0: problemas.append(f'{desc} · sem valor'); continue
-                            am=int(inf['atraso_meses']) if pd.notna(inf['atraso_meses']) else 1; dp=int(inf['dia_pagamento'] or 10); mf=(dt.month+am-1)%12+1; af=dt.year+(dt.month+am-1)//12; venc=datetime.date(af,mf,min(dp,calendar.monthrange(af,mf)[1])); novos.append(('Entrada',inf['categoria'],inf['subgrupo'],desc,val,venc,1,1,0,request_key('csv-event',[str(r.get('id',desc)),str(_)]),'Outros','Baixa 🟢',0.0,dt)); exist.add(desc)
+                            am=int(inf['atraso_meses']) if pd.notna(inf['atraso_meses']) else 1; dp=int(inf['dia_pagamento'] or 10); mf=(dt.month+am-1)%12+1; af=dt.year+(dt.month+am-1)//12; venc=datetime.date(af,mf,min(dp,calendar.monthrange(af,mf)[1])); novos.append(('Entrada',inf['categoria'],inf['subgrupo'],desc,val,venc,1,1,0,(request_key('csv-id',[str(r['id'])]) if pd.notna(r.get('id')) else request_key('csv-event',[desc,str(_)])),'Outros','Baixa 🟢',0.0,dt)); exist.add(desc)
                         st.write(f"Novos: **{len(novos)}** · Problemas: **{len(problemas)}**")
                         if problemas: st.caption('Problemas: '+', '.join(problemas[:10]))
                         if novos and st.button('Confirmar importação',type='primary'): _inserir_plantoes(novos); flash('success','Importação concluída. Plantões já existentes foram preservados.'); st.rerun()
