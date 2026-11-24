@@ -5,7 +5,7 @@ from finance import int_seguro, float_seguro, format_brl, _descricao_exibicao, _
 import logging
 import time
 import hmac
-APP_BUILD = "fluxo-integridade-v25"
+APP_BUILD = "fluxo-integridade-v26"
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
@@ -178,6 +178,19 @@ def transaction():
             raise
 
 
+@contextmanager
+def ui_transaction():
+    try:
+        with transaction() as cur:
+            yield cur
+    except ValueError as exc:
+        st.error(str(exc))
+        st.stop()
+    except psycopg2.IntegrityError:
+        st.error('A alteração conflita com um cadastro existente ou uma regra de integridade. Confira os dados e tente novamente.')
+        st.stop()
+
+
 def execute_query(query, params=None, fetch=False, silent=False):
     '''Executa SQL curto em conexão própria. Erros são propagados por padrão.'''
     try:
@@ -192,15 +205,6 @@ def execute_query(query, params=None, fetch=False, silent=False):
         raise
 
 
-def execute_values_query(query, params_list):
-    if not params_list:
-        return
-    try:
-        with transaction() as cur:
-            execute_values(cur, query, params_list)
-    except Exception as e:
-        st.error(f"Erro de Inserção Múltipla: {e}")
-        raise
 
 
 def fetch_dataframe(query, params=None, silent=False, raise_on_error=True):
@@ -260,7 +264,7 @@ def _migrar_envelopes_legados():
 def init_db():
     try:
         rows = execute_query('SELECT MAX(version) FROM schema_migrations', fetch=True, silent=True)
-        if not rows or rows[0][0] != 3:
+        if not rows or rows[0][0] != 4:
             raise RuntimeError('Migrações pendentes')
     except Exception:
         st.error('Atualização do banco pendente. Execute python migrate.py antes de iniciar o app.')
@@ -272,65 +276,10 @@ def init_db():
 # =================================================================
 
 def processar_recorrencias_lazy(mes, ano):
-    '''
-    A session_state evita trabalho repetido na UI; a tabela recorrencias_geradas
-    fornece a idempotência real e segura contra duas sessões concorrentes.
-    '''
-    guarda = f"rec_processado_{mes}_{ano}"
-    if st.session_state.get(guarda):
-        return
-
-    df_contratos = fetch_dataframe("SELECT * FROM categorias_personalizadas WHERE is_recorrente = 1")
-    if df_contratos.empty:
-        st.session_state[guarda] = True
-        return
-
-    ultimo_dia_mes = calendar.monthrange(ano, mes)[1]
-    competencia = datetime.date(ano, mes, 1)
-
-    try:
-        with transaction() as cur:
-            for _, contrato in df_contratos.iterrows():
-                # Re-read under lock: an edited or deleted source cannot generate stale dates.
-                cur.execute('SELECT row_to_json(c) FROM categorias_personalizadas c WHERE id=%s AND is_recorrente=1 FOR UPDATE',(int(contrato['id']),))
-                current=cur.fetchone()
-                if not current: continue
-                contrato=current[0]
-                dt_inicio = pd.to_datetime(contrato['data_inicio']).date() if pd.notna(contrato['data_inicio']) else competencia
-                dia_alvo = min(int(contrato['dia_pagamento'] or 1), ultimo_dia_mes)
-                dt_limite_alvo = datetime.date(ano, mes, dia_alvo)
-                if contrato['tipo']=='Entrada':
-                    from operations import income_due_date
-                    dt_limite_alvo=income_due_date(competencia,int(contrato['atraso_meses'] or 0),int(contrato['dia_pagamento'] or 1))
-                if dt_limite_alvo < dt_inicio:
-                    continue
-
-                cur.execute(
-                    "INSERT INTO recorrencias_geradas (categoria_id, competencia) VALUES (%s,%s) "
-                    "ON CONFLICT DO NOTHING RETURNING categoria_id",
-                    (int(contrato['id']), competencia),
-                )
-                if cur.fetchone() is None:
-                    continue
-
-                compra_id_contrato = f"rec_{int(contrato['id'])}"
-                val_p = float(contrato['valor_padrao'] or 0.0)
-                desc_c = f"{contrato['categoria']} - {contrato['subgrupo'] or ''} (Recorrente)"
-                cur.execute('''
-                    INSERT INTO lancamentos
-                    (tipo, categoria, subgrupo, descricao, valor, data_vencimento,
-                     parcela_atual, total_parcelas, pago, compra_id, forma_pagamento,
-                     prioridade, valor_pago, data_competencia)
-                    VALUES (%s,%s,%s,%s,%s,%s,1,1,0,%s,'Outros','Média 🟡',0,%s)
-                ''', (
-                    contrato['tipo'], contrato['categoria'], contrato['subgrupo'], desc_c,
-                    val_p, dt_limite_alvo, compra_id_contrato, competencia,
-                ))
-    except Exception as e:
-        st.error(f"Erro ao gerar recorrências: {e}")
-        return
-
-    st.session_state[guarda] = True
+    from recurrences import generate_month
+    # The database markers provide idempotency across sessions, not UI cache.
+    with transaction() as cur:
+        generate_month(cur, mes, ano)
 
 
 # =================================================================
@@ -388,15 +337,11 @@ def check_password():
 
 
 def parse_valor(valor_str):
-    if isinstance(valor_str, (float, int)): return float(valor_str)
-    clean_val = str(valor_str).replace('.', '').replace(',', '.')
-    try: return float(clean_val)
-    except ValueError: return 0.0
-
-
-
-
-
+    try:
+        return float(finance.parse_currency(valor_str))
+    except (ValueError, ArithmeticError) as exc:
+        st.error(str(exc))
+        st.stop()
 
 
 def resolver_valor_real(novo_pago, valor_planejado, valor_real_informado):
@@ -411,13 +356,6 @@ def resolver_valor_real(novo_pago, valor_planejado, valor_real_informado):
     real = float_seguro(valor_real_informado, 0.0)
     return planejado if valor_real_informado is None or pd.isna(valor_real_informado) else real
 
-def ordenar_categorias_com_prioridade(categorias, prioridade="despesas essenciais"):
-    """Ordena uma lista de categorias colocando a categoria prioritária primeiro
-    (comparação sem diferenciar maiúsculas/minúsculas), e o resto em ordem alfabética."""
-    cats = list(categorias)
-    match = next((c for c in cats if str(c).strip().lower() == prioridade), None)
-    resto = sorted([c for c in cats if c != match], key=lambda x: str(x).lower())
-    return ([match] if match else []) + resto
 
 def flash(tipo, mensagem):
     """Guarda uma mensagem pra ser exibida DEPOIS do próximo rerun. st.rerun()
@@ -434,39 +372,8 @@ def exibir_flash():
 # FEATURE 6 -- MESES DE SOBREVIVÊNCIA
 # -----------------------------------------------------------------
 
-def obter_reserva_emergencia():
-    df = fetch_dataframe("SELECT valor, atualizado_em FROM reserva_emergencia WHERE id = 1")
-    if df.empty: return 0.0, None
-    valor = float(df.iloc[0]['valor']) if pd.notna(df.iloc[0]['valor']) else 0.0
-    return valor, df.iloc[0]['atualizado_em']
 
-def atualizar_reserva_emergencia(novo_valor):
-    execute_query("UPDATE reserva_emergencia SET valor = %s, atualizado_em = CURRENT_DATE WHERE id = 1", (novo_valor,))
 
-def calcular_media_despesa_mensal(hoje_ref, n_meses=3):
-    """
-    Média das despesas PAGAS dos últimos N meses FECHADOS (não conta o mês
-    corrente, que ainda está em andamento e sub-representaria o gasto real).
-    'Ajuste' fica de fora -- é lançamento de apoio interno, não gasto real.
-    Retorna (média, quantidade de meses com dados encontrados).
-    """
-    primeiro_mes, primeiro_ano = hoje_ref.month - n_meses, hoje_ref.year
-    while primeiro_mes <= 0:
-        primeiro_mes += 12
-        primeiro_ano -= 1
-    data_inicio_janela = datetime.date(primeiro_ano, primeiro_mes, 1)
-    data_fim_janela = datetime.date(hoje_ref.year, hoje_ref.month, 1) - datetime.timedelta(days=1)
-    if data_fim_janela < data_inicio_janela:
-        return 0.0, 0
-
-    df = fetch_dataframe(
-        "SELECT EXTRACT(MONTH FROM COALESCE(data_pagamento,data_vencimento)) as mes, EXTRACT(YEAR FROM COALESCE(data_pagamento,data_vencimento)) as ano, SUM(valor_pago) as total "
-        "FROM lancamentos WHERE tipo = 'Despesa' AND pago = 1 AND categoria != 'Ajuste' "
-        "AND COALESCE(data_pagamento,data_vencimento) BETWEEN %s AND %s GROUP BY ano, mes",
-        (data_inicio_janela, data_fim_janela)
-    )
-    if df.empty: return 0.0, 0
-    return float(df['total'].astype(float).mean()), len(df)
 
 # -----------------------------------------------------------------
 # FEATURE 5 -- TRADUTOR DE DÍVIDA EM PLANTÃO
@@ -1440,10 +1347,6 @@ def render_empty_state(titulo, texto, icone="✓"):
     )
 
 
-def _altura_tabela(qtd_linhas, max_altura=430):
-    """Evita áreas vazias grandes/brancas no st.dataframe em tabelas pequenas."""
-    qtd = max(int(qtd_linhas or 0), 1)
-    return min(max_altura, 42 + (qtd * 36))
 
 
 def _render_tabela_escura(dataframe, currency_cols=None, numeric_cols=None, status_col=None):
@@ -1507,22 +1410,8 @@ def _render_tabela_escura(dataframe, currency_cols=None, numeric_cols=None, stat
     st.markdown(tabela_html, unsafe_allow_html=True)
 
 
-def _totais_planejado_real(dataframe):
-    """Retorna planejado, realizado e diferença sem misturar os conceitos."""
-    if dataframe is None or dataframe.empty:
-        return 0.0, 0.0, 0.0
-    planejado = float(pd.to_numeric(dataframe['valor'], errors='coerce').fillna(0).sum())
-    pagos = dataframe[dataframe['pago'].fillna(0).astype(int) == 1]
-    realizado = float(pd.to_numeric(pagos['valor_pago'], errors='coerce').fillna(0).sum())
-    return planejado, realizado, realizado - planejado
 
 
-def _rotulo_comparativo(dataframe, tipo):
-    planejado, realizado, diferenca = _totais_planejado_real(dataframe)
-    nome_real = 'Recebido' if tipo == 'Entrada' else 'Pago'
-    sinal = '+' if diferenca > 0 else ''
-    return (f"Planejado R$ {format_brl(planejado)} · {nome_real} R$ {format_brl(realizado)} "
-            f"· Dif. {sinal}R$ {format_brl(diferenca)}")
 
 
 # Mais 2.0 — configurações organizadas em blocos, visual alinhado ao mockup.
@@ -1696,7 +1585,7 @@ def _insert_dataframe(cur, tabela, df, colunas_permitidas, on_conflict=''):
 
 def _restaurar_lancamentos_legacy(df_v):
     cols = [
-        'id','tipo','categoria','subgrupo','descricao','valor','data_vencimento',
+        'fonte_id','competencia_inferida','excecao_recorrencia','versao','id','tipo','categoria','subgrupo','descricao','valor','data_vencimento',
         'parcela_atual','total_parcelas','pago','compra_id','forma_pagamento',
         'prioridade','valor_pago','eh_estimativa','data_competencia','data_pagamento',
         'eh_orcamento','valor_orcamento'
@@ -1704,10 +1593,14 @@ def _restaurar_lancamentos_legacy(df_v):
     with transaction() as cur:
         cur.execute("TRUNCATE TABLE pagamentos, recorrencias_geradas, lancamentos RESTART IDENTITY CASCADE")
         _insert_dataframe(cur, 'lancamentos', df_v, cols)
-        cur.execute("""INSERT INTO recorrencias_geradas (categoria_id, competencia)
-            SELECT CAST(SUBSTRING(l.compra_id FROM 5) AS INTEGER), DATE_TRUNC('month', l.data_vencimento)::date
-            FROM lancamentos l JOIN categorias_personalizadas c ON l.compra_id=('rec_' || c.id::text)
-            WHERE l.compra_id ~ '^rec_[0-9]+$' ON CONFLICT DO NOTHING""")
+        from migrate import repair_recurrence_markers, migrate_envelopes
+        if 'competencia_inferida' not in df_v.columns:
+            cur.execute("UPDATE lancamentos SET competencia_inferida=TRUE WHERE data_competencia IS NULL OR (data_competencia=data_vencimento AND descricao NOT LIKE 'Plantão %%')")
+        repair_recurrence_markers(cur)
+        migrate_envelopes(cur)
+        from recurrences import recover_manual_rules
+        cur.execute('TRUNCATE series_manuais_geradas,series_manuais')
+        recover_manual_rules(cur)
         cur.execute("SELECT setval(pg_get_serial_sequence('lancamentos','id'), COALESCE((SELECT MAX(id) FROM lancamentos),1), (SELECT COUNT(*)>0 FROM lancamentos))")
     return True
 
@@ -1725,7 +1618,6 @@ def importar_backup(arquivo):
             if problemas:
                 raise ValueError('; '.join(problemas[:10]))
             _restaurar_lancamentos_legacy(df_v)
-            _migrar_envelopes_legados()
             return True, "Backup CSV legado restaurado. Categorias/configurações existentes foram preservadas."
 
         from backup import read_snapshot
@@ -1735,8 +1627,8 @@ def importar_backup(arquivo):
         if problemas:
             raise ValueError('; '.join(problemas[:10]))
 
-        cols_cat = ['id','tipo','categoria','subgrupo','valor_padrao','atraso_meses','dia_pagamento','is_recorrente','data_inicio','is_envelope','is_producao_variavel','modalidade_renda']
-        cols_lanc = ['requisicao_id','ajuste_pagamento_ids','fatura_id','id','tipo','categoria','subgrupo','descricao','valor','data_vencimento','parcela_atual','total_parcelas','pago','compra_id','forma_pagamento','prioridade','valor_pago','eh_estimativa','data_competencia','data_pagamento','eh_orcamento','valor_orcamento']
+        cols_cat = ['id','tipo','categoria','subgrupo','valor_padrao','atraso_meses','dia_pagamento','is_recorrente','data_inicio','is_envelope','is_producao_variavel','modalidade_renda','data_fim','descricao_padrao','forma_padrao','prioridade_padrao']
+        cols_lanc = ['fonte_id','competencia_inferida','excecao_recorrencia','versao','requisicao_id','ajuste_pagamento_ids','fatura_id','id','tipo','categoria','subgrupo','descricao','valor','data_vencimento','parcela_atual','total_parcelas','pago','compra_id','forma_pagamento','prioridade','valor_pago','eh_estimativa','data_competencia','data_pagamento','eh_orcamento','valor_orcamento']
         cols_info = ['compra_id','credor','taxa_juros_mensal']
         cols_reserva = ['id','valor','atualizado_em']
         cols_pag = ['lancamento_id','valor','data_pagamento','origem','criado_em']
@@ -1745,7 +1637,7 @@ def importar_backup(arquivo):
         cols_pref = ['chave','valor','atualizado_em']
 
         with transaction() as cur:
-            cur.execute("TRUNCATE TABLE auditoria, pagamentos, recorrencias_geradas, orcamentos_categorias, preferencias_app, info_dividas, reserva_emergencia, lancamentos, faturas, cartoes, categorias_personalizadas RESTART IDENTITY CASCADE")
+            cur.execute("TRUNCATE TABLE series_manuais_geradas, series_manuais, auditoria, pagamentos, recorrencias_geradas, orcamentos_categorias, preferencias_app, info_dividas, reserva_emergencia, lancamentos, faturas, cartoes, categorias_personalizadas RESTART IDENTITY CASCADE")
             _insert_dataframe(cur, 'categorias_personalizadas', dfs['categorias_personalizadas.csv'], cols_cat)
             _insert_dataframe(cur, 'cartoes', dfs.get('cartoes.csv',pd.DataFrame()), ['id','nome','dia_fechamento','dia_vencimento'])
             _insert_dataframe(cur, 'faturas', dfs.get('faturas.csv',pd.DataFrame()), ['id','cartao_id','vencimento'])
@@ -1757,6 +1649,8 @@ def importar_backup(arquivo):
             _insert_dataframe(cur, 'auditoria', aud, ['id','entidade','operacao','anterior','posterior','ator','criado_em'])
             cur.execute("SELECT setval(pg_get_serial_sequence('auditoria','id'), COALESCE((SELECT MAX(id) FROM auditoria),1), (SELECT COUNT(*)>0 FROM auditoria))")
             _insert_dataframe(cur, 'lancamentos', df_lanc, cols_lanc)
+            _insert_dataframe(cur, 'series_manuais', dfs.get('series_manuais.csv'), ['compra_id','tipo','categoria','subgrupo','descricao','valor','inicio','fim','dia','forma_pagamento','prioridade','atraso_meses'])
+            _insert_dataframe(cur, 'series_manuais_geradas', dfs.get('series_manuais_geradas.csv'), ['compra_id','competencia'])
             _insert_dataframe(cur, 'info_dividas', dfs['info_dividas.csv'], cols_info, 'ON CONFLICT (compra_id) DO UPDATE SET credor=EXCLUDED.credor, taxa_juros_mensal=EXCLUDED.taxa_juros_mensal')
             _insert_dataframe(cur, 'reserva_emergencia', dfs['reserva_emergencia.csv'], cols_reserva, 'ON CONFLICT (id) DO UPDATE SET valor=EXCLUDED.valor, atualizado_em=EXCLUDED.atualizado_em')
             _insert_dataframe(cur, 'pagamentos', dfs['pagamentos.csv'], cols_pag, 'ON CONFLICT (lancamento_id, origem) DO UPDATE SET valor=EXCLUDED.valor, data_pagamento=EXCLUDED.data_pagamento')
@@ -1770,8 +1664,14 @@ def importar_backup(arquivo):
             cur.execute("SELECT setval(pg_get_serial_sequence('orcamentos_categorias','id'), COALESCE((SELECT MAX(id) FROM orcamentos_categorias),1), (SELECT COUNT(*)>0 FROM orcamentos_categorias))")
             for table in ['cartoes','faturas']:
                 cur.execute(sql.SQL("SELECT setval(pg_get_serial_sequence(%s,'id'), COALESCE((SELECT MAX(id) FROM {}),1), (SELECT COUNT(*)>0 FROM {}))").format(sql.Identifier(table),sql.Identifier(table)),(table,))
-            from migrate import migrate_envelopes
+            from migrate import migrate_envelopes, repair_recurrence_markers
             migrate_envelopes(cur)
+            if 'competencia_inferida' not in df_lanc.columns:
+                cur.execute("UPDATE lancamentos SET competencia_inferida=TRUE WHERE data_competencia IS NULL OR (data_competencia=data_vencimento AND descricao NOT LIKE 'Plantão %%')")
+            cur.execute("UPDATE lancamentos l SET fonte_id=c.id FROM categorias_personalizadas c WHERE l.compra_id='rec_'||c.id::text AND l.fonte_id IS NULL")
+            repair_recurrence_markers(cur)
+            from recurrences import recover_manual_rules
+            recover_manual_rules(cur)
 
         return True, "Backup completo restaurado de forma atômica."
     except Exception as e:
@@ -2046,8 +1946,6 @@ def renderizar_wizard_configuracao():
 # =================================================================
 
 
-def _valor_previsto_linha(r):
-    return float_seguro(r.get('valor'))
 
 
 def _sub_norm(v):
@@ -2067,14 +1965,6 @@ def _total_despesa_projetada(df):
     return float(d.apply(lambda r: float(r['valor_pago']) if int_seguro(r.get('pago')) == 1 else float(r['valor']), axis=1).sum())
 
 
-def _total_despesa_planejada(df):
-    """Compatibilidade: soma lançamentos; o Planejamento 2.0 usa orçamento por categoria."""
-    if df is None or df.empty:
-        return 0.0
-    d = df[df['tipo'] == 'Despesa'].copy()
-    if d.empty:
-        return 0.0
-    return float(pd.to_numeric(d['valor'], errors='coerce').fillna(0).sum())
 
 
 
@@ -2157,219 +2047,6 @@ def _montar_plano_pagamentos(df_ops, ano, mes):
     return finance._montar_plano_pagamentos(df_ops, ano, mes, hoje=hoje)
 
 
-def _render_plano_pagamentos(df_ops, ano, mes):
-    """Renderiza o casamento renda → contas como informação principal do Fluxo."""
-    _referencia_cobertura()
-    plano = _montar_plano_pagamentos(df_ops, ano, mes)
-    fontes = plano['fontes']
-    contas = plano['contas']
-    pendentes = [c for c in contas if not c['pago']]
-
-    if not fontes and not pendentes:
-        render_empty_state("Nada para planejar", "Cadastre entradas e contas reais neste período para montar a cobertura do mês.", "◎")
-        return
-
-    total_pendente = round(sum(c['valor'] for c in pendentes), 2)
-    risco_total = round(sum(c['risco_valor'] for c in plano['risco_contas']), 2)
-    coberto_prazo = max(round(total_pendente - risco_total, 2), 0.0)
-    pct_coberto = (coberto_prazo / total_pendente * 100.0) if total_pendente > 0 else 100.0
-    n_risco = len(plano['risco_contas'])
-
-    st.markdown("### Cobertura do mês")
-    st.caption("Veja qual recebimento sustenta cada conta. O cálculo usa apenas o que está registrado no app — não é saldo bancário.")
-
-    s1, s2, s3 = st.columns(3)
-    with s1:
-        st.markdown(
-            f"<div class='ux-cover-summary'><div class='ux-cover-label'>Cobertura no prazo</div>"
-            f"<div class='ux-cover-value ux-positive'>R$ {format_brl(coberto_prazo)}</div>"
-            f"<div class='ux-cover-note'>de R$ {format_brl(total_pendente)} · {pct_coberto:.0f}% das contas pendentes</div></div>",
-            unsafe_allow_html=True,
-        )
-    with s2:
-        tom_risco = "ux-negative" if risco_total > 0.004 else "ux-positive"
-        st.markdown(
-            f"<div class='ux-cover-summary'><div class='ux-cover-label'>Em risco de data</div>"
-            f"<div class='ux-cover-value {tom_risco}'>R$ {format_brl(risco_total)}</div>"
-            f"<div class='ux-cover-note'>{n_risco} conta(s) dependem de dinheiro que chega tarde</div></div>",
-            unsafe_allow_html=True,
-        )
-    with s3:
-        st.markdown(
-            f"<div class='ux-cover-summary'><div class='ux-cover-label'>Colchão necessário</div>"
-            f"<div class='ux-cover-value'>R$ {format_brl(plano['reserva_sugerida'])}</div>"
-            f"<div class='ux-cover-note'>reserva de virada com 10% de margem</div></div>",
-            unsafe_allow_html=True,
-        )
-
-    if n_risco:
-        st.markdown(
-            f"<div class='ux-cover-alert'><b>⚠️ {n_risco} conta(s) dependem de uma renda que entra depois do vencimento.</b> "
-            f"Os conflitos aparecem diretamente abaixo da fonte de renda correspondente.</div>",
-            unsafe_allow_html=True,
-        )
-    elif pendentes:
-        st.markdown(
-            "<div class='ux-cover-ok'><b>✓ Todas as contas pendentes têm cobertura registrada até o vencimento.</b></div>",
-            unsafe_allow_html=True,
-        )
-
-    if plano['recebido_nao_alocado'] > 0.004:
-        st.markdown(
-            f"<div class='ux-secondary-note'>Dos recebimentos já confirmados, <b>R$ {format_brl(plano['recebido_nao_alocado'])}</b> "
-            f"ainda não estão comprometidos com contas cadastradas.</div>",
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("### Casamento de rendas")
-    visao = st.radio(
-        "Organizar por",
-        ["Por renda", "Por vencimento"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key=f"cobertura_visao_{ano}_{mes}",
-    )
-
-    def _status_fonte(fonte):
-        futuros = [x for x in fonte['compromissos'] if not x['pago']]
-        conflito = any(x['vencimento'] < fonte['data'] for x in futuros)
-        uso = max(fonte['valor'] - fonte['restante'], 0.0)
-        taxa = (uso / fonte['valor']) if fonte['valor'] > 0 else 0.0
-        if conflito:
-            return "🔴 Conflito de data", "danger", taxa
-        if taxa >= 0.85:
-            return "🟡 Quase toda comprometida", "warn", taxa
-        return "🟢 Cobertura saudável", "ok", taxa
-
-    def _render_fonte(fonte):
-        compromissos_futuros = sorted(
-            [x for x in fonte['compromissos'] if not x['pago']],
-            key=lambda x: (x['vencimento'], x['descricao'])
-        )
-        usados = round(sum(x['valor'] for x in fonte['compromissos'] if x['pago']), 2)
-        comprometido = round(sum(x['valor'] for x in compromissos_futuros), 2)
-        nao_comprometido = max(round(fonte['restante'], 2), 0.0)
-        status_txt, status_tom, taxa = _status_fonte(fonte)
-        bar_cls = {"danger":"ux-cover-fill-danger", "warn":"ux-cover-fill-warn", "ok":"ux-cover-fill-ok"}[status_tom]
-        badge_status = "ux-source-received" if fonte['recebido'] else "ux-source-planned"
-        badge_txt = "RECEBIDO" if fonte['recebido'] else "PREVISTO"
-        status_badge = {"danger":"ux-source-risk", "warn":"ux-source-attn", "ok":"ux-source-ok"}[status_tom]
-        pct_bar = min(max(taxa * 100.0, 0.0), 100.0)
-
-        with st.container(border=True):
-            h1, h2 = st.columns([4, 1.45])
-            with h1:
-                st.markdown(
-                    f"<div class='ux-income-name'>{'✓' if fonte['recebido'] else '◷'} {fonte['descricao']} "
-                    f"<span class='ux-source-badge {badge_status}'>{badge_txt}</span> "
-                    f"<span class='ux-source-badge {status_badge}'>{status_txt}</span></div>",
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f"<div class='ux-income-meta'>{fonte['data'].strftime('%d/%m/%Y')} · "
-                    f"Recebimento de R$ {format_brl(fonte['valor'])}</div>", unsafe_allow_html=True
-                )
-            with h2:
-                st.markdown(
-                    f"<div style='text-align:right'><div class='ux-cover-label'>Não comprometido</div>"
-                    f"<div class='ux-income-amount'>R$ {format_brl(nao_comprometido)}</div></div>", unsafe_allow_html=True
-                )
-
-            st.markdown(
-                f"<div class='ux-income-stats'>"
-                + (f"<span>Já utilizado <b>R$ {format_brl(usados)}</b></span>" if fonte['recebido'] and usados > 0.004 else "")
-                + f"<span>Próximas contas <b>R$ {format_brl(comprometido)}</b></span>"
-                + f"<span>Comprometimento <b>{taxa*100:.0f}%</b></span></div>"
-                f"<div class='ux-cover-bar'><div class='{bar_cls}' style='width:{pct_bar:.1f}%'></div></div>",
-                unsafe_allow_html=True,
-            )
-
-            if compromissos_futuros:
-                for item in compromissos_futuros:
-                    dias_conflito = (fonte['data'] - item['vencimento']).days
-                    conflito = dias_conflito > 0
-                    alerta = f"<div class='ux-match-warning'>⚠ vence {dias_conflito} dia(s) antes desta renda</div>" if conflito else ""
-                    st.markdown(
-                        f"<div class='ux-match-line'><div class='ux-match-date'>{item['vencimento'].strftime('%d/%m')}</div>"
-                        f"<div><div class='ux-match-desc'>{item['descricao']}</div>{alerta}</div>"
-                        f"<div class='ux-match-value'>R$ {format_brl(item['valor'])}</div></div>",
-                        unsafe_allow_html=True,
-                    )
-            else:
-                st.caption("Nenhuma conta futura foi atribuída a este recebimento.")
-
-    if visao == "Por renda":
-        # Fontes já totalmente consumidas por pagamentos passados não ajudam na decisão
-        # das próximas contas e ficam fora da visão principal para reduzir ruído.
-        recebidas = [
-            f for f in fontes if f['recebido'] and (
-                f['restante'] > 0.004 or any(not x['pago'] for x in f['compromissos'])
-            )
-        ]
-        previstas = [f for f in fontes if not f['recebido']]
-
-        if recebidas:
-            st.markdown("#### Dinheiro já recebido")
-            st.caption("Fontes confirmadas que ainda têm valor não comprometido ou sustentam próximas contas.")
-            for fonte in recebidas:
-                _render_fonte(fonte)
-
-        if previstas:
-            st.markdown("#### Próximos recebimentos")
-            st.caption("Receitas ainda previstas. Conflitos de vencimento aparecem dentro do próprio casamento.")
-            for fonte in previstas:
-                _render_fonte(fonte)
-
-        if not fontes:
-            st.info("Nenhuma fonte de renda foi registrada neste período.")
-
-    else:
-        st.markdown("#### Contas por vencimento")
-        st.caption("A mesma cobertura vista pela ordem em que as contas precisam ser pagas.")
-        if not pendentes:
-            render_empty_state("Nenhuma conta pendente", "As contas reais deste período já foram baixadas.", "✓")
-        else:
-            for conta in sorted(pendentes, key=lambda x: (x['vencimento'], prioridades_map.get(x['prioridade'], 2), x['descricao'])):
-                alocs = conta['alocacoes']
-                partes = []
-                tem_tardia = False
-                for a in alocs:
-                    tardia = a['tipo'] == 'apos_vencimento'
-                    tem_tardia = tem_tardia or tardia
-                    partes.append(f"{a['fonte']} · {a['data'].strftime('%d/%m')} · R$ {format_brl(a['valor'])}" + (" ⚠️" if tardia else ""))
-                fonte_txt = " + ".join(partes) if partes else "Sem fonte registrada"
-                with st.container(border=True):
-                    c1, c2 = st.columns([4.2, 1.2])
-                    c1.markdown(f"**{conta['vencimento'].strftime('%d/%m')} · {conta['descricao']}**")
-                    c1.caption(f"Fonte: {fonte_txt}")
-                    if tem_tardia:
-                        c1.caption("⚠️ Parte da cobertura entra depois do vencimento.")
-                    if conta['descoberto'] > 0.004:
-                        c1.caption(f"🔴 Ainda sem cobertura no mês: R$ {format_brl(conta['descoberto'])}")
-                    c2.markdown(f"<div class='ux-income-amount' style='text-align:right'>R$ {format_brl(conta['valor'])}</div>", unsafe_allow_html=True)
-
-    sem_cobertura = [c for c in pendentes if c['descoberto'] > 0.004]
-    if sem_cobertura:
-        st.markdown("### Sem cobertura registrada")
-        st.caption("Estas contas continuam sem uma fonte suficiente mesmo considerando os recebimentos previstos do mês.")
-        for conta in sem_cobertura:
-            st.markdown(
-                f"<div class='ux-cover-alert'><b>{conta['vencimento'].strftime('%d/%m')} · {conta['descricao']}</b> · "
-                f"R$ {format_brl(conta['descoberto'])} ainda sem cobertura.</div>", unsafe_allow_html=True
-            )
-
-    with st.expander("Entender o colchão necessário", expanded=False):
-        st.write(
-            "É o valor necessário para atravessar os dias em que contas vencem antes das entradas correspondentes. "
-            "Ele não é reserva de emergência e não representa saldo bancário."
-        )
-        st.metric("Mínimo calculado", f"R$ {format_brl(plano['reserva_minima'])}")
-        st.metric("Meta com 10% de margem", f"R$ {format_brl(plano['reserva_sugerida'])}")
-        if plano['uso_externo_historico'] > 0.004:
-            st.caption(
-                f"Pagamentos já realizados indicam R$ {format_brl(plano['uso_externo_historico'])} de recursos "
-                "que não vieram das entradas recebidas registradas neste mês."
-            )
 
 
 
@@ -2832,12 +2509,10 @@ def _dados_caixa():
     return fetch_dataframe("SELECT * FROM lancamentos WHERE pago=1 AND data_pagamento >= %s AND data_pagamento < %s AND data_pagamento <= %s", (inicio_periodo, fim_periodo, hoje))
 
 
-def _dados_operacionais(limite):
-    # Outstanding obligations never disappear at the month boundary.
+def _dados_operacionais():
     return fetch_dataframe("""SELECT * FROM lancamentos
-        WHERE (pago=0 AND data_vencimento < %s)
-           OR (pago=1 AND data_pagamento >= %s AND data_pagamento < %s AND data_pagamento <= %s)
-        ORDER BY data_vencimento,id""", (limite,inicio_periodo,limite,hoje))
+        WHERE data_vencimento >= %s AND data_vencimento < %s
+        ORDER BY data_vencimento,id""", (inicio_periodo,fim_periodo))
 
 
 def _dados_mes():
@@ -2997,8 +2672,11 @@ def _planejamento_orcamentos(df, ano=None, mes=None):
 def _planejamento_dividas():
     """Resumo das compras parceladas para a aba Planejamento > Dívidas."""
     dd = fetch_dataframe("""
-        SELECT compra_id, categoria, subgrupo, MIN(descricao) descricao,
+        SELECT compra_id, MIN(categoria) categoria, MIN(subgrupo) subgrupo, MIN(descricao) descricao,
                SUM(valor) valor_total,
+               SUM(CASE WHEN pago=0 THEN valor ELSE 0 END) saldo_aberto,
+               COUNT(*) parcelas_cadastradas,
+               SUM(CASE WHEN pago=0 THEN 1 ELSE 0 END) parcelas_abertas,
                SUM(CASE WHEN pago=1 THEN valor_pago ELSE 0 END) valor_pago_total,
                MAX(total_parcelas) total_parcelas,
                SUM(CASE WHEN pago=1 THEN 1 ELSE 0 END) parcelas_pagas,
@@ -3007,7 +2685,7 @@ def _planejamento_dividas():
                MIN(CASE WHEN pago=0 THEN valor END) parcela_referencia
         FROM lancamentos
         WHERE tipo='Despesa' AND total_parcelas>1 AND total_parcelas!=999 AND compra_id IS NOT NULL
-        GROUP BY compra_id,categoria,subgrupo
+        GROUP BY compra_id
         ORDER BY data_fim
     """)
     if dd.empty:
@@ -3022,9 +2700,9 @@ def _planejamento_dividas():
         dd[col] = pd.to_numeric(dd[col], errors='coerce').fillna(0.0)
     for col in ['total_parcelas','parcelas_pagas']:
         dd[col] = pd.to_numeric(dd[col], errors='coerce').fillna(0).astype(int)
-    dd['saldo'] = (dd['valor_total'] - dd['valor_pago_total']).clip(lower=0.0)
-    dd['parcelas_restantes'] = (dd['total_parcelas'] - dd['parcelas_pagas']).clip(lower=0)
-    dd['progresso'] = dd.apply(lambda r: min(max(r['parcelas_pagas'] / r['total_parcelas'], 0.0), 1.0) if r['total_parcelas'] else 0.0, axis=1)
+    dd['saldo'] = pd.to_numeric(dd['saldo_aberto'], errors='coerce').fillna(0).clip(lower=0.0)
+    dd['parcelas_restantes'] = dd['parcelas_abertas'].astype(int)
+    dd['progresso'] = dd.apply(lambda r: min(max(r['parcelas_pagas'] / r['parcelas_cadastradas'], 0.0), 1.0) if r['total_parcelas'] else 0.0, axis=1)
     dd['nome'] = dd.apply(lambda r: str(r['credor']).strip() if pd.notna(r.get('credor')) and str(r.get('credor')).strip() else str(r.get('descricao') or r.get('subgrupo') or 'Dívida'), axis=1)
     return dd
 
@@ -3178,9 +2856,6 @@ def _rendas_fontes_periodo(df_mes, ano, mes):
         esperado=float(grp['valor'].sum()) if not grp.empty else 0.0; realizado=float(grp.loc[grp['pago']==1,'valor_pago'].sum()) if not grp.empty else 0.0; pendente=float(grp.loc[grp['pago']==0,'valor'].sum()) if not grp.empty else 0.0
         recebimentos_fonte = caixa_rendas[(caixa_rendas['tipo']=='Entrada') & (caixa_rendas['categoria']==f['categoria']) & (caixa_rendas['subgrupo'].fillna('')==f['subgrupo'])]
         realizado = float(recebimentos_fonte['valor_pago'].sum())
-        if esperado<=0.004 and f['is_recorrente']==1 and not f['especializada'] and f['valor_padrao']>0:
-            di=pd.to_datetime(f.get('data_inicio'),errors='coerce')
-            if pd.isna(di) or di.date() <= datetime.date(int(ano),int(mes),calendar.monthrange(int(ano),int(mes))[1]): esperado=f['valor_padrao']; pendente=max(esperado-realizado,0.0)
         f['quantidade_plantoes']=int(grp['descricao'].str.match(r'(?i)^plant[ãa]o\s',na=False).sum()) if not grp.empty else 0
         prox=None
         if not grp.empty:
@@ -3226,8 +2901,7 @@ if st.session_state.get('wizard_ativo'):
 elif menu == "🏠 Início":
     _referencia_cobertura()
     df_mes = _dados_mes()
-    limite_home = max(fim_periodo, data_contexto_ativo + datetime.timedelta(days=45))
-    df_home = _dados_operacionais(limite_home)
+    df_home = _dados_operacionais()
 
     # Cabeçalho orientado a contexto, não a análise.
     st.markdown(
@@ -3266,12 +2940,8 @@ elif menu == "🏠 Início":
         a_pagar = float(desp[pd.to_numeric(desp['pago'], errors='coerce').fillna(0).astype(int)==0]['valor'].sum())
         resultado_atual = recebido - pago
 
-        # A Home olha além da borda do mês: no fim de setembro, por exemplo,
-        # a próxima renda de 05/10 precisa aparecer. O resumo mensal continua
-        # restrito ao mês selecionado; apenas orientação, alertas e timeline
-        # usam uma janela curta para frente.
+        # Orientação e alertas usam o mesmo mês selecionado dos lançamentos.
         data_ref = data_contexto_ativo
-        limite_home = max(fim_periodo, data_ref + datetime.timedelta(days=45))
         df_janela = df_home
 
         ops_home = _consolidar_operacional(df_janela, consolidar_cartao=True) if not df_janela.empty else pd.DataFrame()
@@ -3495,7 +3165,7 @@ elif menu == "📝 Lançamentos":
             st.error('Uma data futura deve ser agendada, não marcada como realizada.')
         else:
             comp_id = requisicao
-            quantidade = 60 if rec_label=='Repete todo mês' else int(parcelas)
+            quantidade = 1 if rec_label=='Repete todo mês' else int(parcelas)
             valores = split_total(val,quantidade) if base_valor=='Total da compra' else [money(val)]*quantidade
             try:
                 with transaction() as cur:
@@ -3503,6 +3173,11 @@ elif menu == "📝 Lançamentos":
                     if forma_pgto=='Crédito' and cartao_id is None:
                         cur.execute('INSERT INTO cartoes(nome,dia_fechamento,dia_vencimento) VALUES (%s,%s,%s) ON CONFLICT(nome) DO UPDATE SET nome=EXCLUDED.nome RETURNING id',(nome_cartao.strip(),fechamento,vencimento))
                         cartao_id = cur.fetchone()[0]
+                    if rec_label=='Repete todo mês':
+                        cur.execute('''INSERT INTO series_manuais(compra_id,tipo,categoria,subgrupo,descricao,valor,inicio,dia,forma_pagamento,prioridade)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',
+                            (comp_id,tipo,categoria,subgrupo or None,descricao.strip(),money(val),dt_vencimento,dt_vencimento.day,forma_pgto,prioridade))
+                        cur.execute('INSERT INTO series_manuais_geradas(compra_id,competencia) VALUES (%s,%s) ON CONFLICT DO NOTHING',(comp_id,dt_vencimento.replace(day=1)))
                     for i,v in enumerate(valores):
                         data_v = (pd.Timestamp(dt_vencimento)+pd.DateOffset(months=i)).date()
                         competencia = data_ref if forma_pgto=='Crédito' else (pd.Timestamp(data_ref)+pd.DateOffset(months=i)).date()
@@ -3529,11 +3204,8 @@ elif menu == "📊 Fluxo e Prioridades":
     df_todos_fluxo = fetch_dataframe("SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC", (inicio_periodo, fim_periodo))
     df = df_todos_fluxo.copy()
 
-    # A linha do tempo continua 15 dias no período seguinte. Isso mantém visível a
-    # próxima janela financeira (ex.: fim de setembro → renda do início de outubro)
-    # sem misturar esses lançamentos nas ferramentas avançadas do mês selecionado.
-    fim_contexto_fluxo = fim_periodo + datetime.timedelta(days=15)
-    df_contexto_fluxo = _dados_operacionais(fim_contexto_fluxo)
+    # A linha do tempo respeita o mês selecionado, inclusive após reorganizar.
+    df_contexto_fluxo = _dados_operacionais()
     tab_fluxo = st.container()
 
     with tab_fluxo:
@@ -3589,53 +3261,22 @@ elif menu == "📊 Fluxo e Prioridades":
             st.caption("Edição estrutural, séries, exclusões e ferramentas técnicas ficam fora do uso diário.")
 
             with st.expander("••• Ferramentas avançadas", expanded=False):
-                # -----------------------------------------------------------
-                # CONSOLIDAÇÃO (feita sobre TODO o mês, ANTES de qualquer filtro).
-                #
-                # CORREÇÃO: antes, a consolidação de Cartão de Crédito/Plantões
-                # rodava sobre o resultado JÁ FILTRADO por Tipo/Categoria. Se você
-                # deixasse (mesmo sem querer) um filtro de categoria ativo, marcar
-                # a linha "Fatura Consolidada" como paga só dava baixa nas compras
-                # daquela categoria filtrada -- as demais compras de crédito
-                # continuavam pago=0 no banco, e reapareciam como pendentes no
-                # Demonstrativo (que não tem filtro nenhum), mesmo você tendo
-                # "marcado tudo como pago" aqui. Agora a consolidação usa SEMPRE
-                # o mês inteiro (df_base), então marcar Pago sempre baixa 100%
-                # das compras reais, e o filtro só decide o que aparece na TELA.
-                # -----------------------------------------------------------
-                df_base = df.copy()
-                df_base['ids_alvo'] = df_base['id'].astype(str)
-
-                df_individuais = df_base.copy()
-                df_consolidado = df_base.copy()
-                st.caption('Editor de registros individuais. Faturas são pagas na linha do tempo; encargos e descontos ficam em ajustes separados.')
-
-                # -----------------------------------------------------------
-                # FILTROS (aplicados por cima do dataframe já consolidado).
-                # As linhas consolidadas (Fatura/Plantões) ficam ISENTAS do filtro
-                # de categoria -- elas representam várias categorias ao mesmo tempo,
-                # então filtrar por categoria não deveria fazê-las sumir da tela
-                # (o que também contribuía pra confusão de "sumiu, então já paguei
-                # tudo"). Elas continuam respeitando o filtro de Tipo normalmente.
-                # -----------------------------------------------------------
+                st.caption('Registros individuais. Faturas são pagas na linha do tempo; encargos e descontos pertencem à baixa.')
                 st.subheader("🔍 Filtros")
                 c_filt1, c_filt2 = st.columns(2)
-                tipos_disp = df_individuais['tipo'].unique().tolist()
+                tipos_disp = df['tipo'].unique().tolist()
                 with c_filt1: sel_tipo = st.multiselect("Filtrar por Tipo", tipos_disp, placeholder="Todos os Tipos")
                 tipos_filtro = sel_tipo if sel_tipo else tipos_disp
-                cat_disp = df_individuais[df_individuais['tipo'].isin(tipos_filtro)]['categoria'].unique().tolist()
+                cat_disp = df[df['tipo'].isin(tipos_filtro)]['categoria'].unique().tolist()
                 with c_filt2: sel_cat = st.multiselect("Filtrar por Categoria", cat_disp, placeholder="Todas as Categorias")
                 cat_filtro = sel_cat if sel_cat else cat_disp
-
-                eh_dummy = df_consolidado['id'].astype(str).isin(['-1']) | df_consolidado['id'].astype(str).str.startswith('plantao_')
-                mask_individuais_filtro = (~eh_dummy) & df_consolidado['tipo'].isin(tipos_filtro) & df_consolidado['categoria'].isin(cat_filtro)
-                mask_dummy_filtro = eh_dummy & df_consolidado['tipo'].isin(tipos_filtro)
-                df_view = df_consolidado[mask_individuais_filtro | mask_dummy_filtro].copy()
+                df_view = df[df['tipo'].isin(tipos_filtro) & df['categoria'].isin(cat_filtro)].copy()
 
                 df_view['id'] = df_view['id'].astype(str)
                 df_view['ordem_pri'] = df_view['prioridade'].map(prioridades_map).fillna(2)
                 df_view = df_view.sort_values(['data_vencimento', 'ordem_pri']).reset_index(drop=True)
                 df_view['Pago'] = df_view['pago'].astype(bool)
+                df_view.loc[df_view['pago'] == 0, 'valor_pago'] = float('nan')
                 df_view['Data'] = pd.to_datetime(df_view['data_vencimento']).dt.date
                 df_view['Data Pagamento'] = pd.to_datetime(df_view['data_pagamento'], errors='coerce').dt.date
 
@@ -3656,7 +3297,7 @@ elif menu == "📊 Fluxo e Prioridades":
 
                 st.markdown(
                     "*Edite **Planejado** e **Pago/Recebido** separadamente. "
-                    "Ao marcar **Pago**, se o valor real estiver 0/vazio, o app usa automaticamente o Planejado. "
+                    "Ao marcar **Pago**, o campo real vazio usa o Planejado; zero digitado é preservado. "
                     "Se o real for diferente, informe o valor recebido/pago e o Planejado será preservado.*"
                 )
                 edit_df = st.data_editor(
@@ -3664,10 +3305,10 @@ elif menu == "📊 Fluxo e Prioridades":
                     use_container_width=True, hide_index=True,
                     column_config={
                         "🗑️ Excluir": st.column_config.SelectboxColumn("Excluir", options=["", "Este", "Este e Futuros"], width="small"),
-                        "Data": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+                        "Data": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY", required=True),
                         "Data Pagamento": st.column_config.DateColumn("Pago em", format="DD/MM/YYYY"),
                         "Alerta": st.column_config.TextColumn("Status", disabled=True),
-                        "valor": st.column_config.NumberColumn("Planejado", format="%.2f"),
+                        "valor": st.column_config.NumberColumn("Planejado", format="%.2f", min_value=0.0, required=True),
                         "valor_pago": st.column_config.NumberColumn("Pago/Recebido", format="%.2f"),
                         "prioridade": st.column_config.SelectboxColumn("Prioridade", options=["Alta 🔴", "Média 🟡", "Baixa 🟢"]),
                         "Desc. Exibição": st.column_config.TextColumn("Descrição", disabled=False)
@@ -3682,9 +3323,10 @@ elif menu == "📊 Fluxo e Prioridades":
                         with transaction() as cur:
                             for i, row in edit_df.iterrows():
                                 orig_row = df_view.loc[i]
-                                id_s = str(orig_row['id'])
                                 novo_pago = 1 if bool(row['Pago']) else 0
-                                novo_valor = float_seguro(row.get('valor'))
+                                if pd.isna(row.get('valor')):
+                                    raise ValueError('Informe o valor planejado; use zero somente se for intencional.')
+                                novo_valor = float(finance.money(row['valor']))
                                 novo_valor_pago = resolver_valor_real(
                                     novo_pago,
                                     novo_valor,
@@ -3703,8 +3345,7 @@ elif menu == "📊 Fluxo e Prioridades":
                                     nova_data_pgto = None
 
                                 desc_editada = str(row['Desc. Exibição']) != str(orig_row['Desc. Exibição'])
-                                nova_desc = str(row['Desc. Exibição']).strip() if desc_editada else orig_row['descricao']
-                                tupla_ids_reais = tuple(map(int, orig_row['ids_alvo'].split(',')))
+                                nova_desc = ('' if pd.isna(row['Desc. Exibição']) else str(row['Desc. Exibição']).strip()) if desc_editada else orig_row['descricao']
                                 excluir_futuros = row['🗑️ Excluir'] == "Este e Futuros"
                                 excluir_algo = row['🗑️ Excluir'] in ("Este", "Este e Futuros")
                                 data_pgto_mudou = nova_data_pgto != orig_data_pgto
@@ -3720,55 +3361,13 @@ elif menu == "📊 Fluxo e Prioridades":
                                 )
                                 if not mudou:
                                     continue
-                                if orig_row.get('forma_pagamento') == 'Crédito' and (novo_pago != int_seguro(orig_row.get('pago')) or novo_valor_pago != orig_valor_pago):
-                                    raise ValueError('Pague ou estorne compras no crédito pela linha do tempo da fatura.')
-
-                                if excluir_algo:
-                                    if id_s == '-1':
-                                        st.warning("Cartões consolidados não podem ser apagados aqui.")
-                                    elif id_s.startswith('plantao_'):
-                                        cur.execute("DELETE FROM lancamentos WHERE id IN %s", (tupla_ids_reais,))
-                                    elif excluir_futuros:
-                                        cur.execute("DELETE FROM lancamentos WHERE compra_id = %s AND data_vencimento >= %s", (orig_row['compra_id'], orig_row['data_vencimento']))
-                                    else:
-                                        cur.execute("DELETE FROM lancamentos WHERE id = %s", (tupla_ids_reais[0],))
-                                    continue
-
-                                if id_s == '-1' or id_s.startswith('plantao_'):
-                                    # Pagamento consolidado é aplicado às linhas reais; o trigger
-                                    # sincroniza data_pagamento e a tabela pagamentos para cada uma.
-                                    cur.execute(
-                                        "UPDATE lancamentos SET pago=%s, data_pagamento=%s WHERE id IN %s",
-                                        (novo_pago, nova_data_pgto, tupla_ids_reais)
-                                    )
-                                    if novo_pago == 1:
-                                        # Se o usuário deixou o real em 0/vazio, resolver_valor_real() já
-                                        # trouxe o total planejado. Se digitou outro valor, distribuímos
-                                        # esse realizado entre as linhas reais sem tocar no planejamento.
-                                        cur.execute("SELECT id, COALESCE(valor,0) FROM lancamentos WHERE id IN %s ORDER BY id", (tupla_ids_reais,))
-                                        linhas_grupo = cur.fetchall()
-                                        pesos = [max(float_seguro(v), 0.0) for _, v in linhas_grupo]
-                                        soma_pesos = sum(pesos)
-                                        if soma_pesos <= 0 and linhas_grupo:
-                                            pesos = [1.0] * len(linhas_grupo)
-                                            soma_pesos = float(len(linhas_grupo))
-                                        acumulado_real = 0.0
-                                        for pos_g, ((id_g, _), peso_g) in enumerate(zip(linhas_grupo, pesos)):
-                                            if pos_g == len(linhas_grupo) - 1:
-                                                valor_real_g = round(novo_valor_pago - acumulado_real, 2)
-                                            else:
-                                                valor_real_g = round(novo_valor_pago * peso_g / soma_pesos, 2)
-                                                acumulado_real = round(acumulado_real + valor_real_g, 2)
-                                            cur.execute("UPDATE lancamentos SET valor_pago=%s, data_pagamento=%s WHERE id=%s", (valor_real_g, nova_data_pgto, int(id_g)))
-                                    if abs(novo_valor - orig_valor) > 0.004:
-                                        id_alvo_planejado = int(tupla_ids_reais[-1])
-                                        cur.execute("UPDATE lancamentos SET valor = valor + %s WHERE id = %s", (novo_valor - orig_valor, id_alvo_planejado))
-                                    continue
-
-                                cur.execute(
-                                    "UPDATE lancamentos SET pago=%s, prioridade=%s, descricao=%s, valor=%s, valor_pago=%s, data_vencimento=%s, data_pagamento=%s WHERE id=%s",
-                                    (novo_pago, row['prioridade'], nova_desc, novo_valor, novo_valor_pago, row['Data'], nova_data_pgto, tupla_ids_reais[0])
-                                )
+                                from operations import quick_edit
+                                quick_edit(cur, orig_row, {
+                                    'pago': novo_pago, 'valor': novo_valor,
+                                    'valor_pago': novo_valor_pago, 'data_pagamento': nova_data_pgto,
+                                    'data_vencimento': row['Data'], 'descricao': nova_desc,
+                                    'prioridade': row['prioridade'],
+                                }, delete=excluir_algo, future=excluir_futuros)
                     except Exception as e:
                         st.error(f"Alterações canceladas; nenhuma edição parcial foi aplicada: {e}")
                     else:
@@ -3797,7 +3396,7 @@ elif menu == "📊 Fluxo e Prioridades":
 
                 st.divider()
                 st.subheader("✏️ Alterar lançamento e série")
-                mask_individuais = (~df['forma_pagamento'].isin(['Crédito'])) & (~(df['tipo'] == 'Entrada') & ~df['descricao'].str.contains('Plantão', na=False))
+                mask_individuais = (~df['forma_pagamento'].isin(['Crédito'])) & (~df['descricao'].str.match(r'(?i)^plant[ãa]o\s', na=False)) & (df['pago'] == 0)
                 df_edit = df[mask_individuais].copy() if not df.empty else df
                 opcoes = {r['id']: f"{pd.to_datetime(r['data_vencimento']).strftime('%d/%m/%Y')} | {r['descricao']} (R$ {format_brl(r['valor'])})" for _, r in df_edit.iterrows()}
                 sel_id = st.selectbox("Lançamento:", options=[None] + list(opcoes.keys()), format_func=lambda x: "Selecione..." if x is None else opcoes[x])
@@ -3829,9 +3428,15 @@ elif menu == "📊 Fluxo e Prioridades":
                             else:
                                 try:
                                     with transaction() as cur:
-                                        cur.execute("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, data_vencimento=%s, forma_pagamento=%s, data_competencia=COALESCE(data_competencia,%s) WHERE id=%s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_data, e_forma, e_data, int(sel_id)))
-                                        if e_escopo != "Apenas neste lançamento":
-                                            cur.execute("UPDATE lancamentos SET tipo=%s, categoria=%s, subgrupo=%s, descricao=%s, valor=%s, forma_pagamento=%s WHERE compra_id=%s AND data_vencimento > %s AND id != %s", (e_tipo, e_cat, e_sub, e_desc, v_final, e_forma, r_sel['compra_id'], r_sel['data_vencimento'], int(sel_id)))
+                                        from operations import lock_entry, change_series
+                                        current = lock_entry(cur, int(sel_id), int(r_sel['versao']))
+                                        if e_forma != r_sel['forma_pagamento'] and (e_forma == 'Crédito' or r_sel['forma_pagamento'] == 'Crédito'):
+                                            raise ValueError('Cadastre compras no cartão em Novo lançamento, vinculando o cartão e a fatura.')
+                                        change_series(cur, current, {
+                                            'tipo':e_tipo, 'categoria':e_cat, 'subgrupo':e_sub,
+                                            'descricao':e_desc, 'valor':v_final, 'data_vencimento':e_data,
+                                            'forma_pagamento':e_forma,
+                                        }, future=e_escopo != 'Apenas neste lançamento')
                                 except Exception as e:
                                     st.error(f"Mudança estrutural cancelada; nenhuma alteração parcial foi aplicada: {e}")
                                 else:
@@ -4009,7 +3614,7 @@ elif menu == "📑 Demonstrativo":
                         mm = atual_df[(atual_df['categoria']==escolha[0]) & (atual_df['_sub']==escolha[1])]
                         if not mm.empty:
                             atual = float(mm.iloc[0]['valor_planejado'])
-                    valor_orc = st.number_input("Orçamento do mês", min_value=0.0, step=50.0, value=float(atual), key=f"plan2_orc_val_{escolha[0]}_{escolha[1]}")
+                    valor_orc = st.number_input("Orçamento do mês", min_value=0.0, step=50.0, value=float(atual), key=f"plan2_orc_val_{ano_selecionado}_{mes_selecionado}_{escolha[0]}_{escolha[1]}")
                     st.caption("Use R$ 0 para remover o orçamento. O realizado continuará sendo acompanhado normalmente.")
                     if st.button("Salvar orçamento", type="primary", key="plan2_orc_salvar"):
                         _salvar_orcamento_categoria(ano_selecionado, mes_selecionado, escolha[0], escolha[1], valor_orc)
@@ -4054,8 +3659,8 @@ elif menu == "📑 Demonstrativo":
                 sel = st.selectbox('Dívida', [None] + list(op), format_func=lambda z: 'Selecione...' if z is None else op[z], key='plan2_div_sel')
                 if sel:
                     lr = dividas_plan[dividas_plan['compra_id'] == sel].iloc[0]
-                    cred = st.text_input('Credor', value=lr['credor'] if pd.notna(lr.get('credor')) else '', key='plan2_div_credor')
-                    taxa = st.number_input('Taxa mensal (%)', min_value=0.0, step=.1, value=float(lr['taxa_juros_mensal']) if pd.notna(lr.get('taxa_juros_mensal')) else 0.0, key='plan2_div_taxa')
+                    cred = st.text_input('Credor', value=lr['credor'] if pd.notna(lr.get('credor')) else '', key=f"plan2_div_credor_{sel}")
+                    taxa = st.number_input('Taxa mensal (%)', min_value=0.0, step=.1, value=float(lr['taxa_juros_mensal']) if pd.notna(lr.get('taxa_juros_mensal')) else 0.0, key=f"plan2_div_taxa_{sel}")
                     if st.button('Salvar informações', type='primary', key='plan2_div_save'):
                         execute_query("INSERT INTO info_dividas (compra_id,credor,taxa_juros_mensal) VALUES (%s,%s,%s) ON CONFLICT (compra_id) DO UPDATE SET credor=EXCLUDED.credor,taxa_juros_mensal=EXCLUDED.taxa_juros_mensal", (sel, cred.strip() or None, taxa if taxa > 0 else None))
                         flash('success', 'Informações salvas.')
@@ -4078,7 +3683,7 @@ elif menu == "📈 Balanço Anual":
         lista=anos['ano'].astype(int).tolist(); ano_balanco=st.selectbox('Ano',lista,index=0)
         for m in range(1,13): processar_recorrencias_lazy(m,ano_balanco)
         ia,fa=limites_ano(ano_balanco)
-        dfy=fetch_dataframe("SELECT * FROM lancamentos WHERE (pago=1 AND data_pagamento >= %s AND data_pagamento < %s) OR (pago=0 AND data_vencimento >= %s AND data_vencimento < %s)",(ia,fa,ia,fa))
+        dfy=fetch_dataframe("SELECT * FROM lancamentos WHERE (pago=1 AND data_pagamento <= CURRENT_DATE AND data_pagamento >= %s AND data_pagamento < %s) OR (pago=0 AND data_vencimento >= %s AND data_vencimento < %s)",(ia,fa,ia,fa))
         if dfy.empty: render_empty_state('Nenhuma movimentação neste ano', 'Escolha outro ano ou registre novos lançamentos.', '○')
         else:
             dfy['valor']=pd.to_numeric(dfy['valor'],errors='coerce').fillna(0); dfy['valor_pago']=pd.to_numeric(dfy['valor_pago'],errors='coerce').fillna(0)
@@ -4093,7 +3698,7 @@ elif menu == "📈 Balanço Anual":
             mens['Resultado']=mens['Entrada']-mens['Despesa']; mens['Mês']=mens['mes_num'].apply(lambda m:meses[m-1][:3])
             te=float(mens['Entrada'].sum()); td=float(mens['Despesa'].sum()); res=te-td; margem=res/te*100 if te else 0
             # comparação ano anterior
-            ip,fp=limites_ano(ano_balanco-1); prev=fetch_dataframe("SELECT tipo,valor,valor_pago,pago FROM lancamentos WHERE (pago=1 AND data_pagamento >= %s AND data_pagamento < %s) OR (pago=0 AND data_vencimento >= %s AND data_vencimento < %s)",(ip,fp,ip,fp))
+            ip,fp=limites_ano(ano_balanco-1); prev=fetch_dataframe("SELECT tipo,valor,valor_pago,pago FROM lancamentos WHERE (pago=1 AND data_pagamento <= CURRENT_DATE AND data_pagamento >= %s AND data_pagamento < %s) OR (pago=0 AND data_vencimento >= %s AND data_vencimento < %s)",(ip,fp,ip,fp))
             pe=pdv=pr=0.0
             if not prev.empty:
                 prev['valor']=pd.to_numeric(prev['valor'],errors='coerce').fillna(0); prev['valor_pago']=pd.to_numeric(prev['valor_pago'],errors='coerce').fillna(0)
@@ -4102,41 +3707,40 @@ elif menu == "📈 Balanço Anual":
                 pdv=_total_despesa_projetada(prev); pr=pe-pdv
             def delta(cur,ant): return f"{((cur/ant)-1)*100:+.1f}% vs {ano_balanco-1}" if ant else None
             q1,q2,q3,q4=st.columns(4); q1.metric('Receita',f"R$ {format_brl(te)}",delta(te,pe)); q2.metric('Despesa',f"R$ {format_brl(td)}",delta(td,pdv),delta_color='inverse'); q3.metric('Resultado',f"R$ {format_brl(res)}",delta(res,pr)); q4.metric('Margem',f"{margem:.1f}%")
-            st.subheader('Resultado mês a mês'); fig=px.bar(mens,x='Mês',y='Resultado',labels={'Resultado':'R$'}); st.plotly_chart(aplicar_tema_grafico(fig),use_container_width=True)
-            st.subheader('Receitas x despesas'); fig2=px.bar(mens,x='Mês',y=['Entrada','Despesa'],barmode='group'); st.plotly_chart(aplicar_tema_grafico(fig2),use_container_width=True)
+            st.subheader('Resultado mês a mês'); fig=px.bar(mens,x='Mês',y='Resultado',labels={'Resultado':'R$'}); st.plotly_chart(aplicar_tema_grafico(fig),use_container_width=True,key="finance_chart_1")
+            st.subheader('Receitas x despesas'); fig2=px.bar(mens,x='Mês',y=['Entrada','Despesa'],barmode='group'); st.plotly_chart(aplicar_tema_grafico(fig2),use_container_width=True,key="finance_chart_2")
             mens['Acumulado'] = mens['Resultado'].cumsum()
             with st.expander('📈 Análises anuais adicionais'):
                 st.subheader('Fluxo acumulado')
                 fig_acum=px.area(mens,x='Mês',y='Acumulado',markers=True,labels={'Acumulado':'R$'})
-                st.plotly_chart(aplicar_tema_grafico(fig_acum),use_container_width=True)
+                st.plotly_chart(aplicar_tema_grafico(fig_acum),use_container_width=True,key="finance_chart_3")
                 ca1,ca2=st.columns(2)
                 gasto_cat=dfy[dfy['tipo']=='Despesa'].groupby('categoria')['h'].sum().sort_values().reset_index()
                 with ca1:
                     st.subheader('Distribuição por categoria')
                     if not gasto_cat.empty:
                         fig_cat=px.bar(gasto_cat,x='h',y='categoria',orientation='h',labels={'h':'R$','categoria':''})
-                        st.plotly_chart(aplicar_tema_grafico(fig_cat),use_container_width=True)
+                        st.plotly_chart(aplicar_tema_grafico(fig_cat),use_container_width=True,key="finance_chart_4")
                 with ca2:
                     st.subheader('Maiores centros de custo (subgrupos)')
                     gasto_sub=dfy[dfy['tipo']=='Despesa'].groupby('subgrupo',dropna=False)['h'].sum().sort_values().tail(12).reset_index()
                     gasto_sub['subgrupo']=gasto_sub['subgrupo'].fillna('Geral')
                     if not gasto_sub.empty:
                         fig_sub=px.bar(gasto_sub,x='h',y='subgrupo',orientation='h',labels={'h':'R$','subgrupo':''})
-                        st.plotly_chart(aplicar_tema_grafico(fig_sub),use_container_width=True)
+                        st.plotly_chart(aplicar_tema_grafico(fig_sub),use_container_width=True,key="finance_chart_5")
             gasto=dfy[dfy['tipo']=='Despesa'].groupby('categoria')['h'].sum().sort_values().tail(12).reset_index();
             if not gasto.empty:
-                st.subheader('Maiores centros de custo'); fig3=px.bar(gasto,x='h',y='categoria',orientation='h',labels={'h':'R$','categoria':''}); st.plotly_chart(aplicar_tema_grafico(fig3),use_container_width=True)
+                st.subheader('Maiores centros de custo'); fig3=px.bar(gasto,x='h',y='categoria',orientation='h',labels={'h':'R$','categoria':''}); st.plotly_chart(aplicar_tema_grafico(fig3),use_container_width=True,key="finance_chart_6")
 
 # -----------------------------------------------------------------
 # DÍVIDAS
 # -----------------------------------------------------------------
 elif menu == "💳 Dívidas":
     cabecalho_pagina("💳 Dívidas", "Quanto falta, quanto pesa neste mês e quantos plantões isso representa.", "dividas")
-    dd=fetch_dataframe("""SELECT compra_id,categoria,subgrupo,MIN(descricao) descricao,SUM(valor) valor_total,SUM(CASE WHEN pago=1 THEN valor_pago ELSE 0 END) valor_pago_total,MAX(total_parcelas) total_parcelas,SUM(CASE WHEN pago=1 THEN 1 ELSE 0 END) parcelas_pagas,MIN(data_vencimento) data_inicio,MAX(data_vencimento) data_fim,MIN(CASE WHEN pago=0 THEN data_vencimento END) proxima_parcela FROM lancamentos WHERE tipo='Despesa' AND total_parcelas>1 AND total_parcelas!=999 AND compra_id IS NOT NULL GROUP BY compra_id,categoria,subgrupo ORDER BY data_fim""")
+    dd=_planejamento_dividas()
     if dd.empty: st.info('Nenhuma dívida parcelada encontrada.')
     else:
-        info=fetch_dataframe('SELECT * FROM info_dividas'); dd=dd.merge(info,on='compra_id',how='left'); dd['valor_total']=dd['valor_total'].astype(float); dd['valor_pago_total']=dd['valor_pago_total'].astype(float); dd['saldo']=dd['valor_total']-dd['valor_pago_total']
-        total=float(dd['saldo'].clip(lower=0).sum()); ativos=int((dd['saldo']>.01).sum()); rest=int((dd['total_parcelas']-dd['parcelas_pagas']).clip(lower=0).sum()); vm,np=calcular_valor_medio_plantao(hoje)
+        total=float(dd['saldo'].clip(lower=0).sum()); ativos=int((dd['saldo']>.01).sum()); rest=int(dd['parcelas_restantes'].sum()); vm,np=calcular_valor_medio_plantao(hoje)
         mesdf=_dados_mes(); renda=float(mesdf[mesdf['tipo']=='Entrada'].apply(lambda r:float(r['valor_pago']) if int_seguro(r.get('pago'))==1 else float(r['valor']),axis=1).sum()) if not mesdf.empty else 0
         parcela_mes=float(mesdf[(mesdf['tipo']=='Despesa')&(mesdf['total_parcelas']>1)&(mesdf['total_parcelas']!=999)].apply(lambda r:float(r['valor_pago']) if int_seguro(r.get('pago'))==1 else float(r['valor']),axis=1).sum()) if not mesdf.empty else 0
         compromet=parcela_mes/renda*100 if renda else 0
@@ -4238,11 +3842,11 @@ elif menu == "💰 Rendas":
                     if c3.button('Excluir fonte',key=delete_key):
                         st.session_state['income2_delete_key']=f['key']
                     if st.session_state.get('income2_delete_key')==f['key']:
-                        st.warning(f'Excluir esta fonte também apaga da agenda os plantões de {hoje:%d/%m/%Y} em diante. Plantões anteriores e lançamentos que não são plantões serão preservados. A exclusão ficará no histórico.')
+                        st.warning(f'Excluir esta fonte também apaga da agenda os plantões de {hoje:%d/%m/%Y} em diante. Plantões anteriores e lançamentos que não são plantões serão preservados. Recebimentos confirmados serão preservados. A exclusão ficará no histórico.')
                         yes,no=st.columns(2)
                         if yes.button('Confirmar exclusão da fonte',key=delete_key+'_confirm'):
                             from operations import delete_income_source
-                            with transaction() as cur:
+                            with ui_transaction() as cur:
                                 deleted=delete_income_source(cur,f['categoria'],f['subgrupo'],hoje)
                             invalidar_caches_estruturais()
                             st.session_state.pop('income2_delete_key',None)
@@ -4257,7 +3861,7 @@ elif menu == "💰 Rendas":
                         tipo_atual=f['modalidade'] if f['modalidade'] in tipos else 'Variável'
                         ee=st.checkbox('Gestão de plantões',value=bool(f['especializada']),key=f"income2_edit_shifts_{f['id']}",help='O valor da renda vem exclusivamente da agenda.')
                         with st.form(f"income2_edit_form_{f['id']}"):
-                            st.caption('Alterar o dia ou os meses até receber reorganiza as pendências com vencimento no mês atual e seguintes. Recebimentos concluídos e pendências de meses anteriores são preservados.')
+                            st.caption('Alterar o dia, o prazo ou o valor padrão atualiza as previsões do mês atual e seguintes. Recebidos, meses anteriores e exceções individuais são preservados.')
                             e1,e2=st.columns([1.2,1])
                             em=e1.selectbox('Tipo da renda',tipos,index=tipos.index(tipo_atual))
                             e3,e4,e5=st.columns(3)
@@ -4271,7 +3875,7 @@ elif menu == "💰 Rendas":
                             if salvar:
                                 rec=1 if em in ('Mensal','Variável') and ev>0 and not ee else 0
                                 from operations import edit_income_source
-                                with transaction() as cur:
+                                with ui_transaction() as cur:
                                     reagendados=edit_income_source(cur,int(f['id']),ev if ev>0 else None,int(ed),int(ea),rec,1 if ee else 0,em,hoje)
                                 invalidar_caches_estruturais()
                                 st.session_state.pop(f"rec_processado_{mes_selecionado}_{ano_selecionado}",None)
@@ -4380,7 +3984,7 @@ elif menu == "🏥 Escala de Plantões":
         if dm.empty: st.info('Sem plantões no período ativo.')
         else:
             dm['valor']=pd.to_numeric(dm['valor'],errors='coerce').fillna(0); x1,x2,x3=st.columns(3); x1.metric('Plantões',len(dm)); x2.metric('Produção prevista',f"R$ {format_brl(dm['valor'].sum())}"); x3.metric('Média por plantão',f"R$ {format_brl(dm['valor'].mean())}")
-            by=dm.groupby('subgrupo')['valor'].agg(['count','sum']).sort_values('sum').reset_index(); fig=px.bar(by,x='sum',y='subgrupo',orientation='h',labels={'sum':'R$','subgrupo':''}); st.plotly_chart(aplicar_tema_grafico(fig),use_container_width=True)
+            by=dm.groupby('subgrupo')['valor'].agg(['count','sum']).sort_values('sum').reset_index(); fig=px.bar(by,x='sum',y='subgrupo',orientation='h',labels={'sum':'R$','subgrupo':''}); st.plotly_chart(aplicar_tema_grafico(fig),use_container_width=True,key="finance_chart_7")
     with tab_ger:
         with st.expander('📥 Importar CSV'):
             st.caption("Colunas: data (DD/MM/AAAA), local e valor opcional. Importar novamente não duplica a mesma descrição de plantão.")
@@ -4417,7 +4021,7 @@ elif menu == "🏥 Escala de Plantões":
                 st.caption('Alterações de valor atualizam automaticamente a previsão de renda. Plantões já recebidos preservam seus valores.')
                 if st.button('Salvar valores dos plantões',key='plant_save_values'):
                     from operations import update_shift_values
-                    with transaction() as cur:
+                    with ui_transaction() as cur:
                         changed=update_shift_values(cur,[(int(r['id']),r['valor']) for _,r in ed.iterrows()])
                     flash('success',f'{changed} plantão(ões) atualizado(s). A previsão de renda acompanha os novos valores.')
                     st.rerun()
@@ -4426,13 +4030,17 @@ elif menu == "🏥 Escala de Plantões":
                 if pb1.button('Excluir selecionados',disabled=not conf,use_container_width=True):
                     ids=[int(r['id']) for _,r in ed.iterrows() if r['Apagar']]
                     if ids:
-                        with transaction() as cur: cur.execute('DELETE FROM lancamentos WHERE id = ANY(%s)',(ids,))
+                        with ui_transaction() as cur:
+                            from operations import delete_entries
+                            delete_entries(cur,ids)
                         flash('success',f'{len(ids)} plantão(ões) excluído(s).'); st.rerun()
                 conf_todos=pb2.checkbox('Confirmar apagar tudo listado',key='plant_del_all_conf')
                 if pb2.button('🚨 Apagar TUDO listado',disabled=not conf_todos,use_container_width=True):
                     ids_todos=dm['id'].astype(int).tolist()
                     if ids_todos:
-                        with transaction() as cur: cur.execute('DELETE FROM lancamentos WHERE id = ANY(%s)',(ids_todos,))
+                        with ui_transaction() as cur:
+                            from operations import delete_entries
+                            delete_entries(cur,ids_todos)
                         flash('success',f'{len(ids_todos)} plantão(ões) listado(s) apagado(s).'); st.rerun()
 
 # -----------------------------------------------------------------
@@ -4515,8 +4123,9 @@ elif menu == "🔄 Recorrências":
     cabecalho_pagina("🔄 Recorrências", "Contas e receitas que o app gera automaticamente a cada mês.")
     if st.button("← Voltar para Mais", key="rec_back"): st.session_state.menu_atual='⚙️ Mais'; st.rerun()
     rec = fetch_dataframe("""SELECT id,tipo,categoria,subgrupo,valor_padrao,dia_pagamento,atraso_meses,data_inicio
-                              FROM categorias_personalizadas WHERE COALESCE(is_recorrente,0)=1
-                              ORDER BY tipo,categoria,subgrupo""")
+                              FROM categorias_personalizadas WHERE COALESCE(is_recorrente,0)=1 AND (data_fim IS NULL OR data_fim>=CURRENT_DATE)
+                              UNION ALL SELECT NULL,tipo,categoria,COALESCE(subgrupo,descricao),valor,dia,0,inicio FROM series_manuais
+                              WHERE fim IS NULL OR fim>=CURRENT_DATE ORDER BY tipo,categoria,subgrupo""")
     if rec.empty:
         render_empty_state("Nenhuma recorrência ativa", "Quando uma conta ou renda se repetir todo mês, ela aparecerá aqui.", "↻")
     else:
@@ -4561,7 +4170,7 @@ elif menu == "👤 Perfil e Preferências":
                 if st.button('Salvar preferência',type='primary',key='save_pref'):
                     preferencia_set('pagina_inicial',escolha); flash('success','Preferência salva. Ela vale para a próxima sessão.'); st.rerun()
             else:
-                protegido=bool(os.environ.get('APP_PASSWORD'))
+                protegido=bool(os.environ.get('APP_PASSWORD') or os.environ.get('APP_USERS_JSON'))
                 st.markdown(f"**Acesso por senha:** {'Ativo' if protegido else 'Não configurado'}")
                 st.caption('A senha continua sendo definida no ambiente de deploy; esta versão não altera o modelo de autenticação.')
                 if st.button('Encerrar sessão',key='logout_app'):
@@ -4652,16 +4261,24 @@ elif menu == "⚙️ Gerenciar Categorias":
         else:
             op={int(r['id']):f"{r['tipo']} · {r['categoria']} · {r['subgrupo'] if pd.notna(r['subgrupo']) and str(r['subgrupo']).strip() else 'Geral'}" for _,r in cfg.iterrows()}; sel=st.selectbox('Escolha o item',[None]+list(op),format_func=lambda x:'Selecione...' if x is None else op[x],key='cat_edit_sel')
             if sel:
-                r=cfg[cfg['id']==sel].iloc[0]; e1,e2=st.columns(2); cat=e1.text_input('Categoria',value=r['categoria'],key='cat_edit_cat'); sub=e2.text_input('Subgrupo',value=r['subgrupo'] if pd.notna(r['subgrupo']) else '',key='cat_edit_sub'); rec=st.checkbox('🔄 Repete todo mês',value=bool(r['is_recorrente']==1),key='cat_edit_rec'); efet=rec
+                r=cfg[cfg['id']==sel].iloc[0]; e1,e2=st.columns(2); cat=e1.text_input('Categoria',value=r['categoria'],key=f"cat_edit_cat_{sel}"); sub=e2.text_input('Subgrupo',value=r['subgrupo'] if pd.notna(r['subgrupo']) else '',key=f"cat_edit_sub_{sel}"); rec=st.checkbox('🔄 Repete todo mês',value=bool(r['is_recorrente']==1),key=f"cat_edit_rec_{sel}"); efet=rec
                 val=float(r['valor_padrao']) if pd.notna(r['valor_padrao']) else 0.0; atraso=int(r['atraso_meses']) if pd.notna(r['atraso_meses']) else 0; dia=int(r['dia_pagamento']) if pd.notna(r['dia_pagamento']) else 10
                 if r['tipo']=='Entrada' or efet:
-                    z1,z2,z3=st.columns(3); val=z1.number_input('Valor padrão',value=val,key='cat_edit_val'); atraso=z2.number_input('Atraso em meses',0,6,atraso,key='cat_edit_atraso'); dia=z3.number_input('Dia pagamento/vencimento',1,31,dia,key='cat_edit_dia')
+                    z1,z2,z3=st.columns(3); val=z1.number_input('Valor padrão',value=val,key=f"cat_edit_val_{sel}"); atraso=z2.number_input('Atraso em meses',0,6,atraso,key=f"cat_edit_atraso_{sel}"); dia=z3.number_input('Dia pagamento/vencimento',1,31,dia,key=f"cat_edit_dia_{sel}")
                 st.caption('Mudanças valem para novos lançamentos e recorrências; o histórico anterior é preservado.')
                 b1,b2=st.columns(2)
                 if b1.button('Salvar alterações',type='primary',use_container_width=True):
-                    execute_query("UPDATE categorias_personalizadas SET categoria=%s,subgrupo=%s,valor_padrao=%s,atraso_meses=%s,dia_pagamento=%s,is_recorrente=%s WHERE id=%s",(cat.strip(),sub.strip() or None,val if val>0 else None,atraso,dia,1 if efet else 0,int(sel))); invalidar_caches_estruturais(); flash('success','Categoria atualizada.'); st.rerun()
+                    from operations import edit_category
+                    with ui_transaction() as cur:
+                        edit_category(cur, int(sel), cat.strip(), sub.strip() or None, val if val>0 else None, atraso, dia, int(efet), hoje)
+                    invalidar_caches_estruturais(); flash('success','Categoria e previsões pendentes atualizadas.'); st.rerun()
                 confirmar=b2.checkbox('Confirmar exclusão',key='cat_del_confirm')
-                if b2.button('Excluir',disabled=not confirmar,use_container_width=True): execute_query('DELETE FROM categorias_personalizadas WHERE id=%s',(int(sel),)); invalidar_caches_estruturais(); flash('success','Categoria excluída.'); st.rerun()
+                if b2.button('Excluir',disabled=not confirmar,use_container_width=True):
+                    from operations import delete_income_source
+                    with ui_transaction() as cur:
+                        if r['tipo']=='Entrada': delete_income_source(cur,r['categoria'],r['subgrupo'],hoje)
+                        else: cur.execute('DELETE FROM categorias_personalizadas WHERE id=%s',(int(sel),))
+                    invalidar_caches_estruturais(); flash('success','Categoria excluída.'); st.rerun()
 
 # -----------------------------------------------------------------
 # BACKUP
@@ -4726,7 +4343,7 @@ elif menu == "🧰 Manutenção e Diagnóstico":
             st.dataframe(prov,hide_index=True,use_container_width=True); c=st.checkbox('Confirmo a exclusão permanente destes itens',key='maint_prov_conf')
             if st.button('Apagar itens listados',disabled=not c,key='maint_prov_del'):
                 ids=prov['id'].astype(int).tolist();
-                with transaction() as cur: cur.execute('DELETE FROM lancamentos WHERE id = ANY(%s)',(ids,))
+                with ui_transaction() as cur: cur.execute('DELETE FROM lancamentos WHERE id = ANY(%s)',(ids,))
                 flash('success',f'{len(ids)} item(ns) apagado(s).'); st.rerun()
     with st.expander('🧹 Corrigir descrições antigas duplicadas'):
         dup=fetch_dataframe(r"SELECT id,descricao FROM lancamentos WHERE descricao ~ '\(\d+/\d+\) \(\d+/\d+\)$' ORDER BY id")
@@ -4734,7 +4351,7 @@ elif menu == "🧰 Manutenção e Diagnóstico":
         else:
             prev=dup.copy(); prev['corrigida']=prev['descricao'].apply(lambda d:re.sub(r'(\s*\(\d+/\d+\))+$','',d).strip()); st.dataframe(prev,hide_index=True,use_container_width=True)
             if st.button('Corrigir todas',type='primary'):
-                with transaction() as cur:
+                with ui_transaction() as cur:
                     for _,r in dup.iterrows(): cur.execute('UPDATE lancamentos SET descricao=%s WHERE id=%s',(re.sub(r'(\s*\(\d+/\d+\))+$','',r['descricao']).strip(),int(r['id'])))
                 flash('success','Descrições corrigidas.'); st.rerun()
     with st.expander('🚨 Apagar histórico global de plantões'):

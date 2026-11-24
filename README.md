@@ -32,7 +32,7 @@ Em **Fluxo → Reorganizar contas pendentes**, um clique desconsidera automatica
 
 Em Rendas, Excluir fonte remove o cadastro e os plantões com data de trabalho a partir do dia da exclusão, após confirmação. O corte usa a data do plantão, não a data de recebimento. Plantões anteriores e lançamentos que não são plantões são preservados. Os registros removidos ficam documentados em auditoria. A fonte excluída não reaparece como importada por causa dos lançamentos antigos.
 
-Alterar Dia de recebimento ou Meses até receber atualiza, na mesma transação, os lançamentos não recebidos dessa fonte cujo vencimento esteja no mês atual ou posterior. O mês atual é o mês de hoje, mesmo se outro mês estiver selecionado. A nova data usa a competência original acrescida do prazo; dias 29–31 são limitados ao último dia do mês. Valores, baixas confirmadas e pendências anteriores ao mês atual são preservados. A cobertura é recalculada com as novas datas. Novas recorrências também respeitam o prazo configurado. Alterações ficam registradas em auditoria.
+Alterar Dia de recebimento ou Meses até receber atualiza, na mesma transação, os lançamentos não recebidos dessa fonte cujo vencimento esteja no mês atual ou posterior. O mês atual é o mês de hoje, mesmo se outro mês estiver selecionado. A nova data usa a competência original acrescida do prazo; dias 29–31 são limitados ao último dia do mês. Baixas confirmadas, valores personalizados e pendências anteriores ao mês atual são preservados. Previsões que ainda usam o padrão antigo acompanham o novo valor. A cobertura é recalculada com as novas datas. Novas recorrências também respeitam o prazo configurado. Alterações ficam registradas em auditoria.
 
 ## Agenda de plantões e fontes de renda
 
@@ -64,3 +64,18 @@ restaure um ZIP antigo sobre o banco atual para apenas trocar a interface: o
 restaurador de backups do app completo substitui os dados das tabelas que gerencia.
 Os testes de compatibilidade verificam a preservação das tabelas simplificadas
 em uma base já migrada e em uma base que recebe as migrações antigas pela primeira vez.
+
+
+## Correções de integridade v26
+
+Esta versão exige `python migrate.py` antes de iniciar o app (schema 4). No Railway, configure esse comando como **Pre-deploy Command**; mantenha o comando de início existente. A migração cria metadados de versão, vínculo de fonte, exceções mensais e regras das séries, preservando os valores e as baixas existentes. Backups novos usam formato 5 e incluem essas regras; formatos anteriores continuam aceitos.
+
+- A lista operacional fica restrita ao mês selecionado, independentemente do botão Reorganizar.
+- O gerador materializa pelo mês de recebimento consultado, inclusive fontes com atraso. Datas legadas inferidas deixam de aplicar o atraso duas vezes.
+- Alterar o padrão da fonte atualiza os pendentes que ainda usam o padrão anterior; recebidos e exceções individuais são preservados.
+- Editor rápido verifica a versão atual e usa o mesmo serviço de baixa/estorno da linha do tempo. Campo real vazio usa o planejado; zero explícito continua válido. Número inválido e baixa futura são rejeitados.
+- “Este e futuros” atualiza a regra e os pendentes; excluir futuros encerra a regra. Séries criadas em Novo lançamento não têm mais horizonte fixo de 60 meses e aparecem em Recorrências.
+- Dívidas mostram a soma das obrigações abertas, sem saldo artificial por desconto de parcela integralmente liquidada.
+- Ajustes de fatura não podem ser baixados, estornados ou excluídos separadamente da baixa original.
+
+Validação: suíte de regressão, testes de navegação, concorrência entre baixas e 1.500 cenários determinísticos de rateio/parcelamento. A suíte completa usa a instância PostgreSQL 16 descartável do GitHub Actions. Não use TEST_DATABASE_URL apontando para produção.

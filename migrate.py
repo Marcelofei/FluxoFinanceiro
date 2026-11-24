@@ -398,6 +398,88 @@ def replay_protection(cur):
     """)
 
 
+def financial_rules(cur):
+    """Metadata only: preserve all existing amounts, due dates and settlements."""
+    cur.execute('''
+        ALTER TABLE categorias_personalizadas ADD COLUMN data_fim DATE;
+        ALTER TABLE categorias_personalizadas ADD COLUMN descricao_padrao TEXT;
+        ALTER TABLE categorias_personalizadas ADD COLUMN forma_padrao TEXT NOT NULL DEFAULT 'Outros';
+        ALTER TABLE categorias_personalizadas ADD COLUMN prioridade_padrao TEXT NOT NULL DEFAULT 'Média 🟡';
+        ALTER TABLE lancamentos ADD COLUMN fonte_id INTEGER REFERENCES categorias_personalizadas(id) ON DELETE SET NULL;
+        ALTER TABLE lancamentos ADD COLUMN competencia_inferida BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE lancamentos ADD COLUMN excecao_recorrencia BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE lancamentos ADD COLUMN versao BIGINT NOT NULL DEFAULT 0;
+        UPDATE lancamentos SET competencia_inferida=TRUE
+        WHERE (data_competencia IS NULL OR data_competencia=data_vencimento)
+          AND NOT (descricao LIKE 'Plantão %' AND descricao ~ '\\([0-9]{2}/[0-9]{2}/[0-9]{4}\\)');
+        UPDATE lancamentos l SET fonte_id=c.id
+        FROM categorias_personalizadas c
+        WHERE l.compra_id='rec_'||c.id::text;
+        UPDATE lancamentos l SET fonte_id=c.id
+        FROM categorias_personalizadas c
+        WHERE l.fonte_id IS NULL AND l.tipo=c.tipo AND l.categoria=c.categoria
+          AND COALESCE(l.subgrupo,'')=COALESCE(c.subgrupo,'')
+          AND (SELECT count(*) FROM categorias_personalizadas x WHERE x.tipo=c.tipo
+               AND x.categoria=c.categoria AND COALESCE(x.subgrupo,'')=COALESCE(c.subgrupo,''))=1;
+        CREATE INDEX idx_lanc_fonte ON lancamentos(fonte_id);
+        CREATE TABLE series_manuais (
+            compra_id TEXT PRIMARY KEY, tipo TEXT NOT NULL, categoria TEXT NOT NULL,
+            subgrupo TEXT, descricao TEXT NOT NULL, valor NUMERIC NOT NULL CHECK(valor>=0),
+            inicio DATE NOT NULL, fim DATE, dia INTEGER NOT NULL CHECK(dia BETWEEN 1 AND 31),
+            forma_pagamento TEXT NOT NULL, prioridade TEXT NOT NULL
+        );
+        ALTER TABLE series_manuais ADD COLUMN atraso_meses INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE series_manuais_geradas (
+            compra_id TEXT REFERENCES series_manuais(compra_id) ON DELETE CASCADE,
+            competencia DATE NOT NULL, PRIMARY KEY(compra_id,competencia)
+        );
+        INSERT INTO series_manuais(compra_id,tipo,categoria,subgrupo,descricao,valor,inicio,fim,dia,forma_pagamento,prioridade)
+        SELECT DISTINCT ON (compra_id) compra_id,tipo,COALESCE(categoria,'Sem categoria'),subgrupo,
+               COALESCE(descricao,''),valor,data_vencimento,NULL,
+               EXTRACT(DAY FROM data_vencimento)::int,COALESCE(forma_pagamento,'Outros'),COALESCE(prioridade,'Média 🟡')
+        FROM lancamentos WHERE total_parcelas=999 AND compra_id IS NOT NULL
+        ORDER BY compra_id,data_vencimento,id;
+        INSERT INTO series_manuais_geradas
+        SELECT DISTINCT compra_id,date_trunc('month',data_vencimento)::date FROM lancamentos
+        WHERE total_parcelas=999 AND compra_id IN (SELECT compra_id FROM series_manuais);
+        CREATE FUNCTION incrementar_versao_lancamento() RETURNS trigger AS $$
+        BEGIN NEW.versao := OLD.versao+1; RETURN NEW; END; $$ LANGUAGE plpgsql;
+        CREATE TRIGGER trg_versao_lancamento BEFORE UPDATE ON lancamentos
+        FOR EACH ROW EXECUTE FUNCTION incrementar_versao_lancamento();
+        CREATE OR REPLACE VIEW vw_lancamentos_financeiros AS
+        SELECT l.id,l.tipo,l.categoria,l.subgrupo,l.descricao,l.valor,l.data_vencimento,
+               l.parcela_atual,l.total_parcelas,l.pago,l.compra_id,l.forma_pagamento,l.prioridade,
+               l.valor_pago,l.eh_estimativa,l.data_competencia,l.data_pagamento,l.eh_orcamento,
+               l.valor_orcamento,l.fatura_id,c.nome AS cartao_nome,l.ajuste_pagamento_ids,
+               l.fonte_id,l.competencia_inferida,l.excecao_recorrencia,l.versao
+        FROM lancamentos l LEFT JOIN faturas f ON f.id=l.fatura_id LEFT JOIN cartoes c ON c.id=f.cartao_id;
+    ''')
+    # Only repair marker months that can be traced to an existing imported record.
+    repair_recurrence_markers(cur)
+
+
+def repair_recurrence_markers(cur):
+    cur.execute('''
+        DELETE FROM recorrencias_geradas rg USING categorias_personalizadas c
+        WHERE rg.categoria_id=c.id AND COALESCE(c.atraso_meses,0)>0 AND c.tipo='Entrada'
+          AND EXISTS (SELECT 1 FROM lancamentos l WHERE l.compra_id='rec_'||c.id::text
+                      AND l.competencia_inferida AND date_trunc('month',l.data_vencimento)::date=rg.competencia)
+          AND NOT EXISTS (SELECT 1 FROM lancamentos l WHERE l.compra_id='rec_'||c.id::text
+                      AND date_trunc('month',CASE WHEN l.competencia_inferida
+                          THEN l.data_vencimento-make_interval(months=>COALESCE(c.atraso_meses,0))
+                          ELSE l.data_competencia END)::date=rg.competencia);
+        INSERT INTO recorrencias_geradas(categoria_id,competencia)
+        SELECT c.id,date_trunc('month',CASE WHEN l.competencia_inferida AND c.tipo='Entrada'
+                   THEN l.data_vencimento-make_interval(months=>COALESCE(c.atraso_meses,0))
+                   ELSE COALESCE(l.data_competencia,l.data_vencimento) END)::date
+        FROM lancamentos l JOIN categorias_personalizadas c ON l.compra_id='rec_'||c.id::text
+        WHERE l.data_vencimento IS NOT NULL ON CONFLICT DO NOTHING;
+    ''')
+
+
+SCHEMA_VERSION = 4
+
+
 def migrate(conn, schema='public'):
     validate_schema(schema)
     with conn:
@@ -408,7 +490,7 @@ def migrate(conn, schema='public'):
             cur.execute('CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())')
             cur.execute('SELECT version FROM schema_migrations')
             applied={r[0] for r in cur.fetchall()}
-            for version, migration in [(1,baseline),(2,integrity),(3,replay_protection)]:
+            for version, migration in [(1,baseline),(2,integrity),(3,replay_protection),(4,financial_rules)]:
                 if version not in applied:
                     migration(cur)
                     cur.execute('INSERT INTO schema_migrations(version) VALUES (%s)',(version,))

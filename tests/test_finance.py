@@ -137,7 +137,7 @@ def test_monthly_reorganization_never_uses_other_months():
     assert len(p['contas'])==1
     assert p['contas'][0]['alocacoes'][0]['fonte_id']=='2'
     unchanged=f.coverage_month_scope(df,2026,10,{'ids':[]})
-    assert unchanged.id.tolist()==df.id.tolist()
+    assert unchanged.id.tolist()==[5]
     assert not unchanged.desconsiderar_cobertura.any()
 
 
@@ -147,6 +147,13 @@ def test_shift_hospitals_stay_separate_in_coverage():
     ops=f._consolidar_operacional(pd.DataFrame([a,b]),True,hoje=TODAY)
     assert len(ops)==2
     assert set(ops.descricao)=={'🏥 Hospital A','🏥 Hospital B'}
+
+
+def test_late_coverage_text_uses_full_funding_date():
+    rows=[row(1,'Entrada',100,'2026-10-05'),row(2,'Entrada',100,'2026-10-20'),row(3,'Despesa',200,'2026-09-30')]
+    _,p=plan(rows)
+    tone,text=f._fluxo2_texto_cobertura(p['contas'][0])
+    assert tone=='warn' and '20/10' in text
 
 
 def test_legacy_shift_links_only_to_unambiguous_source():
