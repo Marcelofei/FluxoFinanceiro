@@ -17,6 +17,7 @@ def generate_month(cur, month, year):
         end=dt.date.fromisoformat(c['data_fim']) if c.get('data_fim') else None
         if competence < start.replace(day=1) or (end and competence>end):continue
         due=income_due_date(competence,delay,int(c.get('dia_pagamento') or 1))
+        if due<start:continue
         cur.execute('''INSERT INTO recorrencias_geradas(categoria_id,competencia)
             VALUES (%s,%s) ON CONFLICT DO NOTHING RETURNING categoria_id''',(source_id,competence))
         if not cur.fetchone():continue

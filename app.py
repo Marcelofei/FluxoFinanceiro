@@ -3612,7 +3612,7 @@ elif menu == "📑 Demonstrativo":
                         mm = atual_df[(atual_df['categoria']==escolha[0]) & (atual_df['_sub']==escolha[1])]
                         if not mm.empty:
                             atual = float(mm.iloc[0]['valor_planejado'])
-                    valor_orc = st.number_input("Orçamento do mês", min_value=0.0, step=50.0, value=float(atual), key=f"plan2_orc_val_{escolha[0]}_{escolha[1]}")
+                    valor_orc = st.number_input("Orçamento do mês", min_value=0.0, step=50.0, value=float(atual), key=f"plan2_orc_val_{ano_selecionado}_{mes_selecionado}_{escolha[0]}_{escolha[1]}")
                     st.caption("Use R$ 0 para remover o orçamento. O realizado continuará sendo acompanhado normalmente.")
                     if st.button("Salvar orçamento", type="primary", key="plan2_orc_salvar"):
                         _salvar_orcamento_categoria(ano_selecionado, mes_selecionado, escolha[0], escolha[1], valor_orc)
@@ -3657,8 +3657,8 @@ elif menu == "📑 Demonstrativo":
                 sel = st.selectbox('Dívida', [None] + list(op), format_func=lambda z: 'Selecione...' if z is None else op[z], key='plan2_div_sel')
                 if sel:
                     lr = dividas_plan[dividas_plan['compra_id'] == sel].iloc[0]
-                    cred = st.text_input('Credor', value=lr['credor'] if pd.notna(lr.get('credor')) else '', key='plan2_div_credor')
-                    taxa = st.number_input('Taxa mensal (%)', min_value=0.0, step=.1, value=float(lr['taxa_juros_mensal']) if pd.notna(lr.get('taxa_juros_mensal')) else 0.0, key='plan2_div_taxa')
+                    cred = st.text_input('Credor', value=lr['credor'] if pd.notna(lr.get('credor')) else '', key=f"plan2_div_credor_{sel}")
+                    taxa = st.number_input('Taxa mensal (%)', min_value=0.0, step=.1, value=float(lr['taxa_juros_mensal']) if pd.notna(lr.get('taxa_juros_mensal')) else 0.0, key=f"plan2_div_taxa_{sel}")
                     if st.button('Salvar informações', type='primary', key='plan2_div_save'):
                         execute_query("INSERT INTO info_dividas (compra_id,credor,taxa_juros_mensal) VALUES (%s,%s,%s) ON CONFLICT (compra_id) DO UPDATE SET credor=EXCLUDED.credor,taxa_juros_mensal=EXCLUDED.taxa_juros_mensal", (sel, cred.strip() or None, taxa if taxa > 0 else None))
                         flash('success', 'Informações salvas.')
@@ -4168,7 +4168,7 @@ elif menu == "👤 Perfil e Preferências":
                 if st.button('Salvar preferência',type='primary',key='save_pref'):
                     preferencia_set('pagina_inicial',escolha); flash('success','Preferência salva. Ela vale para a próxima sessão.'); st.rerun()
             else:
-                protegido=bool(os.environ.get('APP_PASSWORD'))
+                protegido=bool(os.environ.get('APP_PASSWORD') or os.environ.get('APP_USERS_JSON'))
                 st.markdown(f"**Acesso por senha:** {'Ativo' if protegido else 'Não configurado'}")
                 st.caption('A senha continua sendo definida no ambiente de deploy; esta versão não altera o modelo de autenticação.')
                 if st.button('Encerrar sessão',key='logout_app'):
@@ -4259,10 +4259,10 @@ elif menu == "⚙️ Gerenciar Categorias":
         else:
             op={int(r['id']):f"{r['tipo']} · {r['categoria']} · {r['subgrupo'] if pd.notna(r['subgrupo']) and str(r['subgrupo']).strip() else 'Geral'}" for _,r in cfg.iterrows()}; sel=st.selectbox('Escolha o item',[None]+list(op),format_func=lambda x:'Selecione...' if x is None else op[x],key='cat_edit_sel')
             if sel:
-                r=cfg[cfg['id']==sel].iloc[0]; e1,e2=st.columns(2); cat=e1.text_input('Categoria',value=r['categoria'],key='cat_edit_cat'); sub=e2.text_input('Subgrupo',value=r['subgrupo'] if pd.notna(r['subgrupo']) else '',key='cat_edit_sub'); rec=st.checkbox('🔄 Repete todo mês',value=bool(r['is_recorrente']==1),key='cat_edit_rec'); efet=rec
+                r=cfg[cfg['id']==sel].iloc[0]; e1,e2=st.columns(2); cat=e1.text_input('Categoria',value=r['categoria'],key=f"cat_edit_cat_{sel}"); sub=e2.text_input('Subgrupo',value=r['subgrupo'] if pd.notna(r['subgrupo']) else '',key=f"cat_edit_sub_{sel}"); rec=st.checkbox('🔄 Repete todo mês',value=bool(r['is_recorrente']==1),key=f"cat_edit_rec_{sel}"); efet=rec
                 val=float(r['valor_padrao']) if pd.notna(r['valor_padrao']) else 0.0; atraso=int(r['atraso_meses']) if pd.notna(r['atraso_meses']) else 0; dia=int(r['dia_pagamento']) if pd.notna(r['dia_pagamento']) else 10
                 if r['tipo']=='Entrada' or efet:
-                    z1,z2,z3=st.columns(3); val=z1.number_input('Valor padrão',value=val,key='cat_edit_val'); atraso=z2.number_input('Atraso em meses',0,6,atraso,key='cat_edit_atraso'); dia=z3.number_input('Dia pagamento/vencimento',1,31,dia,key='cat_edit_dia')
+                    z1,z2,z3=st.columns(3); val=z1.number_input('Valor padrão',value=val,key=f"cat_edit_val_{sel}"); atraso=z2.number_input('Atraso em meses',0,6,atraso,key=f"cat_edit_atraso_{sel}"); dia=z3.number_input('Dia pagamento/vencimento',1,31,dia,key=f"cat_edit_dia_{sel}")
                 st.caption('Mudanças valem para novos lançamentos e recorrências; o histórico anterior é preservado.')
                 b1,b2=st.columns(2)
                 if b1.button('Salvar alterações',type='primary',use_container_width=True):

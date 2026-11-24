@@ -149,6 +149,13 @@ def test_shift_hospitals_stay_separate_in_coverage():
     assert set(ops.descricao)=={'🏥 Hospital A','🏥 Hospital B'}
 
 
+def test_late_coverage_text_uses_full_funding_date():
+    rows=[row(1,'Entrada',100,'2026-10-05'),row(2,'Entrada',100,'2026-10-20'),row(3,'Despesa',200,'2026-09-30')]
+    _,p=plan(rows)
+    tone,text=f._fluxo2_texto_cobertura(p['contas'][0])
+    assert tone=='warn' and '20/10' in text
+
+
 def test_legacy_shift_links_only_to_unambiguous_source():
     df=pd.DataFrame([dict(tipo='Entrada',descricao='Plantão Hospital A',categoria='Plantões',subgrupo='Hospital A',valor=100)])
     definitions=pd.DataFrame([dict(categoria='Rendas',subgrupo='Hospital A')])

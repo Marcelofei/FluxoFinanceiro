@@ -21,7 +21,7 @@ def test_currency_accepts_valid_inputs(text,expected):
     assert parse_currency(text)==Decimal(expected)
 
 
-@pytest.mark.parametrize('text',['abc','','1,2,3','NaN','Infinity','10.5555','--1','1.000,001'])
+@pytest.mark.parametrize('text',['abc','','1,2,3','NaN','Infinity','10.5555','--1','1.000,001','0.001'])
 def test_currency_rejects_invalid_without_zero_fallback(text):
     with pytest.raises((ValueError,ArithmeticError)):parse_currency(text)
 
@@ -109,6 +109,14 @@ def test_start_date_and_rule_changes_do_not_create_prestart_income(db):
         c.execute('SELECT count(*) FROM lancamentos');assert c.fetchone()[0]==0
         generate_month(c,2,2027)
         c.execute('SELECT data_competencia FROM lancamentos');assert c.fetchone()[0]==dt.date(2026,11,1)
+
+
+def test_contract_start_day_does_not_generate_an_earlier_due_date(db):
+    with db,db.cursor() as c:
+        sid=source(c,0,10,start='2026-11-23')
+        generate_month(c,11,2026);generate_month(c,12,2026)
+        c.execute('SELECT data_vencimento FROM lancamentos WHERE fonte_id=%s',(sid,))
+        assert c.fetchall()==[(dt.date(2026,12,10),)]
 
 
 def test_quick_editor_blank_uses_plan_explicit_zero_remains_zero(db):

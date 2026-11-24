@@ -13,7 +13,7 @@ def parse_currency(value):
     text = str(value).strip()
     if text.startswith('R$'):
         text = text[2:].strip()
-    if re.fullmatch(r'[+-]?\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?', text):
+    if re.fullmatch(r'[+-]?[1-9]\d{0,2}(?:\.\d{3})+(?:,\d{1,2})?', text):
         text = text.replace('.', '').replace(',', '.')
     elif re.fullmatch(r'[+-]?\d+(?:[,.]\d{1,2})?', text):
         text = text.replace(',', '.')
