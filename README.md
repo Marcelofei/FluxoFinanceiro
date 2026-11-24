@@ -91,3 +91,12 @@ A migração converte valores negativos legados para entradas/saídas equivalent
 A geração dos três meses da janela usa uma transação e duas chamadas SQL, independentemente da quantidade de fontes e séries. No cenário de 40 fontes e 10 séries já geradas, o código anterior fazia 306 chamadas. Meses reservados são filtrados antes das travas de linha; novos cadastros e regras alteradas continuam sendo consultados diretamente no banco, sem cache de dados financeiros.
 
 A validação da conexão, o schema do cliente, o ator e o fuso são configurados numa única ida ao banco. Home e Fluxo reutilizam a leitura mensal, e os orçamentos reutilizam as unidades já calculadas do Planejamento. Não há nova migração de schema nesta alteração.
+
+
+## Agenda independente (schema 5)
+
+Compromissos pessoais, profissionais e plantões possuem UUID próprio, início/fim com fuso e identidade de importação por origem/ID externo. Compromissos podem existir sem receita. A tela da agenda e a tela de plantões estão em módulos separados; conexão/consultas e estilos também foram extraídos de app.py.
+
+A migração adota os plantões antigos sem duplicar lançamentos. Plantões novos usam a identidade da ocorrência, permitindo turnos e atendimentos no mesmo local/dia. Alterações de compromisso recalculam apenas previsões pendentes; recebimentos confirmados permanecem no histórico. Cancelamento retira previsões pendentes e conserva o evento cancelado como proteção contra reimportação.
+
+Execute `python migrate.py` no pré-deploy. Backup novo formato 6 inclui agenda e vínculos; formatos anteriores continuam aceitos. A conexão com Google Calendar ainda depende de uma integração autenticada específica; os IDs externos estão preparados para essa integração.

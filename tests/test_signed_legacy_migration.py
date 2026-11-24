@@ -61,7 +61,7 @@ def test_upgrade_v3_with_signed_adjustment_under_not_valid_checks(kind,planned,a
                 SUM(CASE WHEN pago=1 THEN CASE WHEN tipo='Entrada' THEN valor_pago ELSE -valor_pago END ELSE 0 END)
                 FROM lancamentos''')
             assert c.fetchone()==expected
-            c.execute('SELECT max(version) FROM schema_migrations');assert c.fetchone()[0]==4
+            c.execute('SELECT max(version) FROM schema_migrations');assert c.fetchone()[0]==5
             c.execute('SELECT count(*) FROM lancamentos WHERE valor<0 OR valor_pago<0');assert c.fetchone()[0]==0
             c.execute("SELECT anterior FROM auditoria WHERE entidade='lancamentos' AND operacao='UPDATE' AND anterior->>'id'=%s ORDER BY id LIMIT 1",(str(item),))
             original=c.fetchone()[0]

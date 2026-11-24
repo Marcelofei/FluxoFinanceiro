@@ -42,6 +42,8 @@ def settle(cur, ids, total, date):
 def reverse(cur, ids):
     ids=sorted(set(int(i) for i in ids))
     if not ids: raise ValueError('Selecione um lançamento')
+    cur.execute("SELECT 1 FROM lancamentos l JOIN agenda_eventos e ON e.id=l.compromisso_id WHERE l.id=ANY(%s) AND e.status='cancelado' LIMIT 1",(ids,))
+    if cur.fetchone():raise ValueError('O compromisso está cancelado. Reative-o antes de reabrir sua previsão.')
     cur.execute('SELECT id,ajuste_pagamento_ids FROM lancamentos WHERE id=ANY(%s) ORDER BY id FOR UPDATE',(ids,))
     rows = cur.fetchall()
     if len(rows) != len(ids):
@@ -49,6 +51,8 @@ def reverse(cur, ids):
     if any(row[1] for row in rows):
         raise ValueError('Este ajuste pertence à fatura. Desfaça o pagamento pela fatura completa.')
     # A fee/discount belongs to the settlement: reverse the complete settlement, never a fraction.
+    cur.execute("SELECT 1 FROM lancamentos l JOIN agenda_eventos e ON e.id=l.compromisso_id WHERE l.id=ANY(%s) AND e.status='cancelado' LIMIT 1",(ids,))
+    if cur.fetchone():raise ValueError('O compromisso está cancelado. Reative-o antes de reabrir sua previsão.')
     cur.execute('SELECT id,ajuste_pagamento_ids FROM lancamentos WHERE ajuste_pagamento_ids && %s FOR UPDATE',(ids,))
     adjustments=cur.fetchall()
     for _,linked in adjustments:

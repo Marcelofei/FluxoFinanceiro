@@ -9,27 +9,8 @@ def request_key(nonce, payload):
 
 
 def insert_shifts(cur, records):
-    """One shift per registered source/day, including old/imported records.
-
-    Lock the tenant import lane before checking: concurrent imports and manual
-    weekly schedules cannot both pass the existence check. Never rewrite a paid
-    shift when a file with different values is uploaded.
-    """
-    cur.execute("SELECT pg_advisory_xact_lock(hashtext(current_schema() || ':shift-import'))")
-    inserted = 0
-    for row in records:
-        cur.execute("""SELECT 1 FROM lancamentos WHERE tipo='Entrada'
-            AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(%s))
-            AND data_competencia=%s AND descricao LIKE 'Plantão %%' LIMIT 1""",
-            (row[2], row[13]))
-        if cur.fetchone():
-            continue
-        cur.execute("""INSERT INTO lancamentos
-            (tipo,categoria,subgrupo,descricao,valor,data_vencimento,parcela_atual,
-             total_parcelas,pago,compra_id,forma_pagamento,prioridade,valor_pago,data_competencia)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", row)
-        inserted += 1
-    return inserted
+    from agenda import insert_shifts as insert_events
+    return insert_events(cur,records)
 
 
 def reorganize_coverage(cur, year, month, undo=False):
@@ -98,7 +79,7 @@ def edit_income_source(cur, source_id, value, day, delay, recurring, shifts, mod
     cur.execute("""SELECT id,data_competencia,data_vencimento,competencia_inferida,valor,excecao_recorrencia FROM lancamentos
         WHERE tipo='Entrada' AND pago=0 AND data_vencimento >= %s
         AND (fonte_id=%s OR (fonte_id IS NULL AND categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,''))
-            OR (%s AND descricao LIKE 'Plantão %%'
+            OR (%s AND (origem_evento='plantao' OR (compromisso_id IS NULL AND descricao LIKE 'Plantão %%'))
                 AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,''))))) FOR UPDATE""",
         (today.replace(day=1),source_id,old['categoria'],old['subgrupo'],unique_location,old['subgrupo']))
     from finance import money
@@ -148,7 +129,7 @@ def guard_financial_edit(cur, entry, fields):
         raise ValueError('Este lançamento pertence a uma fatura com ajuste. Estorne a fatura antes de editá-lo.')
     if entry['pago'] and fields:
         raise ValueError('Desfaça a baixa antes de alterar os dados financeiros de um lançamento concluído.')
-    if str(entry.get('descricao') or '').startswith(('Plantão ', 'Plantao ')) and fields:
+    if (entry.get('origem_evento')=='plantao' or (not entry.get('compromisso_id') and str(entry.get('descricao') or '').startswith(('Plantão ', 'Plantao ')))) and fields:
         raise ValueError('Altere os valores dos plantões pela agenda; a renda acompanha automaticamente.')
 
 
@@ -284,7 +265,7 @@ def delete_income_source(cur, category, subgroup, cutoff):
         AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,'')))""",(subgroup,))
     unique_location=bool(subgroup) and cur.fetchone()[0]<=1
     cur.execute("""SELECT row_to_json(l) FROM lancamentos l WHERE tipo='Entrada'
-        AND pago=0 AND descricao LIKE 'Plantão %%' AND COALESCE(data_competencia,data_vencimento)>=%s
+        AND pago=0 AND (origem_evento='plantao' OR (compromisso_id IS NULL AND descricao LIKE 'Plantão %%')) AND COALESCE(data_competencia,data_vencimento)>=%s
         AND ((categoria=%s AND COALESCE(subgrupo,'')=COALESCE(%s,''))
             OR (%s AND lower(trim(COALESCE(subgrupo,'')))=lower(trim(COALESCE(%s,''))))) FOR UPDATE""",
         (cutoff,category,subgroup,unique_location,subgroup))
@@ -315,7 +296,7 @@ def update_shift_values(cur, changes):
     for item,value in changes:
         value=money(value)
         if value<0: raise ValueError('O valor do plantão não pode ser negativo.')
-        cur.execute("SELECT valor,pago FROM lancamentos WHERE id=%s AND tipo='Entrada' AND descricao LIKE 'Plantão %%' FOR UPDATE",(item,))
+        cur.execute("SELECT valor,pago FROM lancamentos WHERE id=%s AND tipo='Entrada' AND (origem_evento='plantao' OR (compromisso_id IS NULL AND descricao LIKE 'Plantão %%')) FOR UPDATE",(item,))
         row=cur.fetchone()
         if not row or row[1] or money(row[0])==value: continue
         cur.execute('UPDATE lancamentos SET valor=%s WHERE id=%s',(value,item))
