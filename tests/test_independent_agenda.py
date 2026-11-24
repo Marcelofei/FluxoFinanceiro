@@ -69,7 +69,7 @@ def test_backup_roundtrip_includes_commitment_without_receipt(db):
     f=io.BytesIO(data);f.name='agenda.zip'
     ok,msg=ns['importar_backup'](f);assert ok,msg
     with db,db.cursor() as c:
-        c.execute('SELECT count(*) FROM agenda_eventos');assert c.fetchone()[0]==1
+        c.execute('SELECT local FROM agenda_eventos');assert c.fetchone()==('',)
         c.execute('SELECT count(*) FROM lancamentos');assert c.fetchone()[0]==0
 
 def test_adoption_preserves_same_day_legacy_shifts(db):

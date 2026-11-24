@@ -55,6 +55,9 @@ def read_snapshot(arquivo):
             if version>=4 and hashlib.sha256(data).hexdigest()!=metadata.get('sha256',{}).get(name):
                 raise ValueError('Checksum inválido: '+name)
             frames[name]=pd.read_csv(io.BytesIO(data))
+            if table == 'agenda_eventos' and 'local' in frames[name]:
+                # CSV represents an empty optional location as NaN; SQL expects text.
+                frames[name]['local'] = frames[name]['local'].fillna('')
             for col in ('ajuste_pagamento_ids','anterior','posterior'):
                 if col in frames[name]:
                     frames[name][col]=frames[name][col].map(lambda v: json.loads(v) if isinstance(v,str) and v.strip() else None)
