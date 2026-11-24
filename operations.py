@@ -164,12 +164,27 @@ def delete_entries(cur, ids):
     cur.execute('DELETE FROM lancamentos WHERE id=ANY(%s)',(ids,))
 
 
+def validate_entry_changes(updates):
+    import datetime as dt
+    from finance import money
+    if 'data_vencimento' in updates and not isinstance(updates['data_vencimento'],dt.date):
+        raise ValueError('Informe uma data de vencimento válida.')
+    if 'descricao' in updates and not str(updates['descricao'] or '').strip():
+        raise ValueError('Informe a descrição do lançamento.')
+    if 'valor' in updates:
+        try:
+            if money(updates['valor'])<0:raise ValueError('O valor planejado não pode ser negativo.')
+        except (ArithmeticError,TypeError):
+            raise ValueError('Informe um valor planejado válido.') from None
+
+
 def change_series(cur, entry, updates=None, delete=False, future=False):
     """Update the rule and materialized pending entries; keep monthly exceptions."""
     import datetime as dt
     from psycopg2 import sql
     from finance import money
     updates=updates or {}
+    if not delete:validate_entry_changes(updates)
     old_due=dt.date.fromisoformat(entry['data_vencimento'])
     target=updates.get('data_vencimento',old_due)
     month_delta=(target.year-old_due.year)*12+target.month-old_due.month
@@ -232,6 +247,7 @@ def quick_edit(cur, original, updated, delete=False, future=False):
     import datetime as dt
     from finance import money
     from payments import settle, reverse, validate_payment_date
+    if not delete:validate_entry_changes(updated)
     current=lock_entry(cur,original['id'],original['versao'])
     structural={k:v for k,v in updated.items() if k in ('valor','data_vencimento','descricao','prioridade')
                 and str(v)!=str(current.get(k))}

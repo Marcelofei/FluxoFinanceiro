@@ -32,6 +32,11 @@ def test_future_payment_rejected_before_any_query(monkeypatch):
         settle(None,[1],100,TODAY+dt.timedelta(days=1))
 
 
+@pytest.mark.parametrize('updates',[{'data_vencimento':None},{'valor':None},{'valor':-1},{'descricao':''}])
+def test_quick_editor_rejects_missing_or_invalid_fields_before_query(updates):
+    with pytest.raises(ValueError):quick_edit(None,{},updates)
+
+
 def test_random_cent_allocations_conserve_money_under_stress():
     import random
     rng=random.Random(46017)

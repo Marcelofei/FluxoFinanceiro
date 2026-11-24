@@ -3305,10 +3305,10 @@ elif menu == "📊 Fluxo e Prioridades":
                     use_container_width=True, hide_index=True,
                     column_config={
                         "🗑️ Excluir": st.column_config.SelectboxColumn("Excluir", options=["", "Este", "Este e Futuros"], width="small"),
-                        "Data": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+                        "Data": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY", required=True),
                         "Data Pagamento": st.column_config.DateColumn("Pago em", format="DD/MM/YYYY"),
                         "Alerta": st.column_config.TextColumn("Status", disabled=True),
-                        "valor": st.column_config.NumberColumn("Planejado", format="%.2f"),
+                        "valor": st.column_config.NumberColumn("Planejado", format="%.2f", min_value=0.0, required=True),
                         "valor_pago": st.column_config.NumberColumn("Pago/Recebido", format="%.2f"),
                         "prioridade": st.column_config.SelectboxColumn("Prioridade", options=["Alta 🔴", "Média 🟡", "Baixa 🟢"]),
                         "Desc. Exibição": st.column_config.TextColumn("Descrição", disabled=False)
@@ -3324,7 +3324,9 @@ elif menu == "📊 Fluxo e Prioridades":
                             for i, row in edit_df.iterrows():
                                 orig_row = df_view.loc[i]
                                 novo_pago = 1 if bool(row['Pago']) else 0
-                                novo_valor = float_seguro(row.get('valor'))
+                                if pd.isna(row.get('valor')):
+                                    raise ValueError('Informe o valor planejado; use zero somente se for intencional.')
+                                novo_valor = float(finance.money(row['valor']))
                                 novo_valor_pago = resolver_valor_real(
                                     novo_pago,
                                     novo_valor,
@@ -3343,7 +3345,7 @@ elif menu == "📊 Fluxo e Prioridades":
                                     nova_data_pgto = None
 
                                 desc_editada = str(row['Desc. Exibição']) != str(orig_row['Desc. Exibição'])
-                                nova_desc = str(row['Desc. Exibição']).strip() if desc_editada else orig_row['descricao']
+                                nova_desc = ('' if pd.isna(row['Desc. Exibição']) else str(row['Desc. Exibição']).strip()) if desc_editada else orig_row['descricao']
                                 excluir_futuros = row['🗑️ Excluir'] == "Este e Futuros"
                                 excluir_algo = row['🗑️ Excluir'] in ("Este", "Este e Futuros")
                                 data_pgto_mudou = nova_data_pgto != orig_data_pgto
