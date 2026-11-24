@@ -5,7 +5,7 @@ import json
 import psycopg2
 from psycopg2 import sql
 from security import validate_schema
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 def migrate_envelopes(cur):
     """Converte envelopes antigos em orçamento mensal por categoria.
@@ -399,7 +399,12 @@ def replay_protection(cur):
 
 
 def financial_rules(cur):
-    """Metadata only: preserve all existing amounts, due dates and settlements."""
+    """Upgrade metadata after preserving the economic sign of legacy amounts."""
+    from legacy_amounts import normalize_legacy_amounts
+    # Historical signed adjustments predate NOT VALID checks. Any metadata
+    # UPDATE would recheck them, so first preserve their signed financial effect
+    # using valid positive entry/expense amounts and the existing audit trigger.
+    normalize_legacy_amounts(cur)
     cur.execute('''
         ALTER TABLE categorias_personalizadas ADD COLUMN data_fim DATE;
         ALTER TABLE categorias_personalizadas ADD COLUMN descricao_padrao TEXT;
@@ -475,9 +480,6 @@ def repair_recurrence_markers(cur):
         FROM lancamentos l JOIN categorias_personalizadas c ON l.compra_id='rec_'||c.id::text
         WHERE l.data_vencimento IS NOT NULL ON CONFLICT DO NOTHING;
     ''')
-
-
-SCHEMA_VERSION = 4
 
 
 def migrate(conn, schema='public'):

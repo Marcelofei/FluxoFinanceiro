@@ -79,3 +79,8 @@ Esta versão exige `python migrate.py` antes de iniciar o app (schema 4). No Rai
 - Ajustes de fatura não podem ser baixados, estornados ou excluídos separadamente da baixa original.
 
 Validação: suíte de regressão, testes de navegação, concorrência entre baixas e 1.500 cenários determinísticos de rateio/parcelamento. A suíte completa usa a instância PostgreSQL 16 descartável do GitHub Actions. Não use TEST_DATABASE_URL apontando para produção.
+
+
+### Ajustes negativos anteriores ao schema 4
+
+A migração converte valores negativos legados para entradas/saídas equivalentes com valores positivos, antes de atualizar os metadados. O total líquido planejado e o total líquido realizado são preservados separadamente; quando os sinais divergem, uma contrapartida apenas realizada representa a diferença. O registro original fica na auditoria. As restrições que impedem novos valores negativos continuam ativas. A conversão e o restante da migração são atômicos e não se repetem ao executar `python migrate.py` novamente.
