@@ -121,13 +121,11 @@ def db_connection(autocommit=True):
                 pass
             candidata.autocommit = True
             with candidata.cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.fetchone()
-            with candidata.cursor() as cur:
                 schema = validate_schema(st.session_state.get('tenant_schema', 'public'))
-                cur.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
-                cur.execute("SELECT set_config('app.actor', %s, false)", (st.session_state.get('actor', 'owner'),))
-                cur.execute("SET TIME ZONE 'America/Sao_Paulo'")
+                cur.execute(sql.SQL("SET search_path TO {}; SELECT set_config('app.actor', %s, false); "
+                                    "SET TIME ZONE 'America/Sao_Paulo'; SELECT 1").format(sql.Identifier(schema)),
+                            (st.session_state.get('actor', 'owner'),))
+                cur.fetchone()
             candidata.autocommit = autocommit
             conn = candidata
             break
@@ -280,6 +278,12 @@ def processar_recorrencias_lazy(mes, ano):
     # The database markers provide idempotency across sessions, not UI cache.
     with transaction() as cur:
         generate_month(cur, mes, ano)
+
+
+def processar_recorrencias_periodos(periodos):
+    from recurrences import generate_months
+    with transaction() as cur:
+        generate_months(cur, periodos)
 
 
 # =================================================================
@@ -1680,9 +1684,8 @@ def importar_backup(arquivo):
 
 # A interface de backup foi movida para a página dedicada em Configurações.
 
-for deslocamento in range(3):
-    alvo = pd.Timestamp(ano_selecionado, mes_selecionado, 1) + pd.DateOffset(months=deslocamento)
-    processar_recorrencias_lazy(alvo.month, alvo.year)
+periodos_recorrencia = [pd.Timestamp(ano_selecionado, mes_selecionado, 1) + pd.DateOffset(months=i) for i in range(3)]
+processar_recorrencias_periodos([(p.month, p.year) for p in periodos_recorrencia])
 dia_maximo_alvo = calendar.monthrange(ano_selecionado, mes_selecionado)[1]
 data_contexto_ativo = datetime.date(ano_selecionado, mes_selecionado, min(hoje.day, dia_maximo_alvo))
 inicio_periodo, fim_periodo = limites_mes(mes_selecionado, ano_selecionado)
@@ -2509,7 +2512,9 @@ def _dados_caixa():
     return fetch_dataframe("SELECT * FROM lancamentos WHERE pago=1 AND data_pagamento >= %s AND data_pagamento < %s AND data_pagamento <= %s", (inicio_periodo, fim_periodo, hoje))
 
 
-def _dados_operacionais():
+def _dados_operacionais(dados_mes=None):
+    if dados_mes is not None:
+        return dados_mes.copy()
     return fetch_dataframe("""SELECT * FROM lancamentos
         WHERE data_vencimento >= %s AND data_vencimento < %s
         ORDER BY data_vencimento,id""", (inicio_periodo,fim_periodo))
@@ -2657,8 +2662,8 @@ def _planejamento_resumo(df, ano=None, mes=None, unidades=None):
     return {'receita_planejada':rec_plan,'receita_realizada':rec_real,'despesa_planejada':desp_plan,'despesa_realizada':desp_real,'resultado_planejado':rec_plan-desp_plan,'resultado_realizado':rec_real-desp_real}
 
 
-def _planejamento_orcamentos(df, ano=None, mes=None):
-    unidades = _planejamento_unidades(df, ano, mes)
+def _planejamento_orcamentos(df, ano=None, mes=None, unidades=None):
+    unidades = unidades if unidades is not None else _planejamento_unidades(df, ano, mes)
     if unidades.empty:
         return pd.DataFrame(columns=['categoria','subgrupo','nome','orcamento','realizado','disponivel','percentual'])
     o = unidades[unidades['tem_orcamento']].copy()
@@ -2901,7 +2906,7 @@ if st.session_state.get('wizard_ativo'):
 elif menu == "🏠 Início":
     _referencia_cobertura()
     df_mes = _dados_mes()
-    df_home = _dados_operacionais()
+    df_home = _dados_operacionais(df_mes)
 
     # Cabeçalho orientado a contexto, não a análise.
     st.markdown(
@@ -3205,7 +3210,7 @@ elif menu == "📊 Fluxo e Prioridades":
     df = df_todos_fluxo.copy()
 
     # A linha do tempo respeita o mês selecionado, inclusive após reorganizar.
-    df_contexto_fluxo = _dados_operacionais()
+    df_contexto_fluxo = _dados_operacionais(df)
     tab_fluxo = st.container()
 
     with tab_fluxo:
@@ -3483,7 +3488,7 @@ elif menu == "📑 Demonstrativo":
     df = _dados_mes()
     unidades = _planejamento_unidades(df, ano_selecionado, mes_selecionado)
     resumo = _planejamento_resumo(df, ano_selecionado, mes_selecionado, unidades=unidades)
-    orcamentos_plan = _planejamento_orcamentos(df, ano_selecionado, mes_selecionado)
+    orcamentos_plan = _planejamento_orcamentos(df, ano_selecionado, mes_selecionado, unidades=unidades)
     dividas_plan = _planejamento_dividas()
 
     tab_visao, tab_cat, tab_div = st.tabs(["Visão geral", "Categorias", "Dívidas"])
@@ -3681,7 +3686,7 @@ elif menu == "📈 Balanço Anual":
     if anos.empty: render_empty_state('Ainda não há histórico anual', 'Registre movimentações em mais períodos para comparar o ano.', '○')
     else:
         lista=anos['ano'].astype(int).tolist(); ano_balanco=st.selectbox('Ano',lista,index=0)
-        for m in range(1,13): processar_recorrencias_lazy(m,ano_balanco)
+        processar_recorrencias_periodos([(m,ano_balanco) for m in range(1,13)])
         ia,fa=limites_ano(ano_balanco)
         dfy=fetch_dataframe("SELECT * FROM lancamentos WHERE (pago=1 AND data_pagamento <= CURRENT_DATE AND data_pagamento >= %s AND data_pagamento < %s) OR (pago=0 AND data_vencimento >= %s AND data_vencimento < %s)",(ia,fa,ia,fa))
         if dfy.empty: render_empty_state('Nenhuma movimentação neste ano', 'Escolha outro ano ou registre novos lançamentos.', '○')
