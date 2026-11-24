@@ -178,6 +178,19 @@ def transaction():
             raise
 
 
+@contextmanager
+def ui_transaction():
+    try:
+        with transaction() as cur:
+            yield cur
+    except ValueError as exc:
+        st.error(str(exc))
+        st.stop()
+    except psycopg2.IntegrityError:
+        st.error('A alteração conflita com um cadastro existente ou uma regra de integridade. Confira os dados e tente novamente.')
+        st.stop()
+
+
 def execute_query(query, params=None, fetch=False, silent=False):
     '''Executa SQL curto em conexão própria. Erros são propagados por padrão.'''
     try:
@@ -2496,7 +2509,7 @@ def _dados_caixa():
     return fetch_dataframe("SELECT * FROM lancamentos WHERE pago=1 AND data_pagamento >= %s AND data_pagamento < %s AND data_pagamento <= %s", (inicio_periodo, fim_periodo, hoje))
 
 
-def _dados_operacionais(limite):
+def _dados_operacionais():
     return fetch_dataframe("""SELECT * FROM lancamentos
         WHERE data_vencimento >= %s AND data_vencimento < %s
         ORDER BY data_vencimento,id""", (inicio_periodo,fim_periodo))
@@ -2659,7 +2672,7 @@ def _planejamento_orcamentos(df, ano=None, mes=None):
 def _planejamento_dividas():
     """Resumo das compras parceladas para a aba Planejamento > Dívidas."""
     dd = fetch_dataframe("""
-        SELECT compra_id, categoria, subgrupo, MIN(descricao) descricao,
+        SELECT compra_id, MIN(categoria) categoria, MIN(subgrupo) subgrupo, MIN(descricao) descricao,
                SUM(valor) valor_total,
                SUM(CASE WHEN pago=0 THEN valor ELSE 0 END) saldo_aberto,
                COUNT(*) parcelas_cadastradas,
@@ -2672,7 +2685,7 @@ def _planejamento_dividas():
                MIN(CASE WHEN pago=0 THEN valor END) parcela_referencia
         FROM lancamentos
         WHERE tipo='Despesa' AND total_parcelas>1 AND total_parcelas!=999 AND compra_id IS NOT NULL
-        GROUP BY compra_id,categoria,subgrupo
+        GROUP BY compra_id
         ORDER BY data_fim
     """)
     if dd.empty:
@@ -2888,8 +2901,7 @@ if st.session_state.get('wizard_ativo'):
 elif menu == "🏠 Início":
     _referencia_cobertura()
     df_mes = _dados_mes()
-    limite_home = max(fim_periodo, data_contexto_ativo + datetime.timedelta(days=45))
-    df_home = _dados_operacionais(limite_home)
+    df_home = _dados_operacionais()
 
     # Cabeçalho orientado a contexto, não a análise.
     st.markdown(
@@ -2928,12 +2940,8 @@ elif menu == "🏠 Início":
         a_pagar = float(desp[pd.to_numeric(desp['pago'], errors='coerce').fillna(0).astype(int)==0]['valor'].sum())
         resultado_atual = recebido - pago
 
-        # A Home olha além da borda do mês: no fim de setembro, por exemplo,
-        # a próxima renda de 05/10 precisa aparecer. O resumo mensal continua
-        # restrito ao mês selecionado; apenas orientação, alertas e timeline
-        # usam uma janela curta para frente.
+        # Orientação e alertas usam o mesmo mês selecionado dos lançamentos.
         data_ref = data_contexto_ativo
-        limite_home = max(fim_periodo, data_ref + datetime.timedelta(days=45))
         df_janela = df_home
 
         ops_home = _consolidar_operacional(df_janela, consolidar_cartao=True) if not df_janela.empty else pd.DataFrame()
@@ -3196,11 +3204,8 @@ elif menu == "📊 Fluxo e Prioridades":
     df_todos_fluxo = fetch_dataframe("SELECT * FROM lancamentos WHERE data_vencimento >= %s AND data_vencimento < %s ORDER BY data_vencimento ASC", (inicio_periodo, fim_periodo))
     df = df_todos_fluxo.copy()
 
-    # A linha do tempo continua 15 dias no período seguinte. Isso mantém visível a
-    # próxima janela financeira (ex.: fim de setembro → renda do início de outubro)
-    # sem misturar esses lançamentos nas ferramentas avançadas do mês selecionado.
-    fim_contexto_fluxo = fim_periodo + datetime.timedelta(days=15)
-    df_contexto_fluxo = _dados_operacionais(fim_contexto_fluxo)
+    # A linha do tempo respeita o mês selecionado, inclusive após reorganizar.
+    df_contexto_fluxo = _dados_operacionais()
     tab_fluxo = st.container()
 
     with tab_fluxo:
@@ -3256,48 +3261,16 @@ elif menu == "📊 Fluxo e Prioridades":
             st.caption("Edição estrutural, séries, exclusões e ferramentas técnicas ficam fora do uso diário.")
 
             with st.expander("••• Ferramentas avançadas", expanded=False):
-                # -----------------------------------------------------------
-                # CONSOLIDAÇÃO (feita sobre TODO o mês, ANTES de qualquer filtro).
-                #
-                # CORREÇÃO: antes, a consolidação de Cartão de Crédito/Plantões
-                # rodava sobre o resultado JÁ FILTRADO por Tipo/Categoria. Se você
-                # deixasse (mesmo sem querer) um filtro de categoria ativo, marcar
-                # a linha "Fatura Consolidada" como paga só dava baixa nas compras
-                # daquela categoria filtrada -- as demais compras de crédito
-                # continuavam pago=0 no banco, e reapareciam como pendentes no
-                # Demonstrativo (que não tem filtro nenhum), mesmo você tendo
-                # "marcado tudo como pago" aqui. Agora a consolidação usa SEMPRE
-                # o mês inteiro (df_base), então marcar Pago sempre baixa 100%
-                # das compras reais, e o filtro só decide o que aparece na TELA.
-                # -----------------------------------------------------------
-                df_base = df.copy()
-                df_base['ids_alvo'] = df_base['id'].astype(str)
-
-                df_individuais = df_base.copy()
-                df_consolidado = df_base.copy()
-                st.caption('Editor de registros individuais. Faturas são pagas na linha do tempo; encargos e descontos ficam em ajustes separados.')
-
-                # -----------------------------------------------------------
-                # FILTROS (aplicados por cima do dataframe já consolidado).
-                # As linhas consolidadas (Fatura/Plantões) ficam ISENTAS do filtro
-                # de categoria -- elas representam várias categorias ao mesmo tempo,
-                # então filtrar por categoria não deveria fazê-las sumir da tela
-                # (o que também contribuía pra confusão de "sumiu, então já paguei
-                # tudo"). Elas continuam respeitando o filtro de Tipo normalmente.
-                # -----------------------------------------------------------
+                st.caption('Registros individuais. Faturas são pagas na linha do tempo; encargos e descontos pertencem à baixa.')
                 st.subheader("🔍 Filtros")
                 c_filt1, c_filt2 = st.columns(2)
-                tipos_disp = df_individuais['tipo'].unique().tolist()
+                tipos_disp = df['tipo'].unique().tolist()
                 with c_filt1: sel_tipo = st.multiselect("Filtrar por Tipo", tipos_disp, placeholder="Todos os Tipos")
                 tipos_filtro = sel_tipo if sel_tipo else tipos_disp
-                cat_disp = df_individuais[df_individuais['tipo'].isin(tipos_filtro)]['categoria'].unique().tolist()
+                cat_disp = df[df['tipo'].isin(tipos_filtro)]['categoria'].unique().tolist()
                 with c_filt2: sel_cat = st.multiselect("Filtrar por Categoria", cat_disp, placeholder="Todas as Categorias")
                 cat_filtro = sel_cat if sel_cat else cat_disp
-
-                eh_dummy = df_consolidado['id'].astype(str).isin(['-1']) | df_consolidado['id'].astype(str).str.startswith('plantao_')
-                mask_individuais_filtro = (~eh_dummy) & df_consolidado['tipo'].isin(tipos_filtro) & df_consolidado['categoria'].isin(cat_filtro)
-                mask_dummy_filtro = eh_dummy & df_consolidado['tipo'].isin(tipos_filtro)
-                df_view = df_consolidado[mask_individuais_filtro | mask_dummy_filtro].copy()
+                df_view = df[df['tipo'].isin(tipos_filtro) & df['categoria'].isin(cat_filtro)].copy()
 
                 df_view['id'] = df_view['id'].astype(str)
                 df_view['ordem_pri'] = df_view['prioridade'].map(prioridades_map).fillna(2)
@@ -3350,7 +3323,6 @@ elif menu == "📊 Fluxo e Prioridades":
                         with transaction() as cur:
                             for i, row in edit_df.iterrows():
                                 orig_row = df_view.loc[i]
-                                id_s = str(orig_row['id'])
                                 novo_pago = 1 if bool(row['Pago']) else 0
                                 novo_valor = float_seguro(row.get('valor'))
                                 novo_valor_pago = resolver_valor_real(
@@ -3372,7 +3344,6 @@ elif menu == "📊 Fluxo e Prioridades":
 
                                 desc_editada = str(row['Desc. Exibição']) != str(orig_row['Desc. Exibição'])
                                 nova_desc = str(row['Desc. Exibição']).strip() if desc_editada else orig_row['descricao']
-                                tupla_ids_reais = tuple(map(int, orig_row['ids_alvo'].split(',')))
                                 excluir_futuros = row['🗑️ Excluir'] == "Este e Futuros"
                                 excluir_algo = row['🗑️ Excluir'] in ("Este", "Este e Futuros")
                                 data_pgto_mudou = nova_data_pgto != orig_data_pgto
@@ -3734,30 +3705,30 @@ elif menu == "📈 Balanço Anual":
                 pdv=_total_despesa_projetada(prev); pr=pe-pdv
             def delta(cur,ant): return f"{((cur/ant)-1)*100:+.1f}% vs {ano_balanco-1}" if ant else None
             q1,q2,q3,q4=st.columns(4); q1.metric('Receita',f"R$ {format_brl(te)}",delta(te,pe)); q2.metric('Despesa',f"R$ {format_brl(td)}",delta(td,pdv),delta_color='inverse'); q3.metric('Resultado',f"R$ {format_brl(res)}",delta(res,pr)); q4.metric('Margem',f"{margem:.1f}%")
-            st.subheader('Resultado mês a mês'); fig=px.bar(mens,x='Mês',y='Resultado',labels={'Resultado':'R$'}); st.plotly_chart(aplicar_tema_grafico(fig),use_container_width=True)
-            st.subheader('Receitas x despesas'); fig2=px.bar(mens,x='Mês',y=['Entrada','Despesa'],barmode='group'); st.plotly_chart(aplicar_tema_grafico(fig2),use_container_width=True)
+            st.subheader('Resultado mês a mês'); fig=px.bar(mens,x='Mês',y='Resultado',labels={'Resultado':'R$'}); st.plotly_chart(aplicar_tema_grafico(fig),use_container_width=True,key="finance_chart_1")
+            st.subheader('Receitas x despesas'); fig2=px.bar(mens,x='Mês',y=['Entrada','Despesa'],barmode='group'); st.plotly_chart(aplicar_tema_grafico(fig2),use_container_width=True,key="finance_chart_2")
             mens['Acumulado'] = mens['Resultado'].cumsum()
             with st.expander('📈 Análises anuais adicionais'):
                 st.subheader('Fluxo acumulado')
                 fig_acum=px.area(mens,x='Mês',y='Acumulado',markers=True,labels={'Acumulado':'R$'})
-                st.plotly_chart(aplicar_tema_grafico(fig_acum),use_container_width=True)
+                st.plotly_chart(aplicar_tema_grafico(fig_acum),use_container_width=True,key="finance_chart_3")
                 ca1,ca2=st.columns(2)
                 gasto_cat=dfy[dfy['tipo']=='Despesa'].groupby('categoria')['h'].sum().sort_values().reset_index()
                 with ca1:
                     st.subheader('Distribuição por categoria')
                     if not gasto_cat.empty:
                         fig_cat=px.bar(gasto_cat,x='h',y='categoria',orientation='h',labels={'h':'R$','categoria':''})
-                        st.plotly_chart(aplicar_tema_grafico(fig_cat),use_container_width=True)
+                        st.plotly_chart(aplicar_tema_grafico(fig_cat),use_container_width=True,key="finance_chart_4")
                 with ca2:
                     st.subheader('Maiores centros de custo (subgrupos)')
                     gasto_sub=dfy[dfy['tipo']=='Despesa'].groupby('subgrupo',dropna=False)['h'].sum().sort_values().tail(12).reset_index()
                     gasto_sub['subgrupo']=gasto_sub['subgrupo'].fillna('Geral')
                     if not gasto_sub.empty:
                         fig_sub=px.bar(gasto_sub,x='h',y='subgrupo',orientation='h',labels={'h':'R$','subgrupo':''})
-                        st.plotly_chart(aplicar_tema_grafico(fig_sub),use_container_width=True)
+                        st.plotly_chart(aplicar_tema_grafico(fig_sub),use_container_width=True,key="finance_chart_5")
             gasto=dfy[dfy['tipo']=='Despesa'].groupby('categoria')['h'].sum().sort_values().tail(12).reset_index();
             if not gasto.empty:
-                st.subheader('Maiores centros de custo'); fig3=px.bar(gasto,x='h',y='categoria',orientation='h',labels={'h':'R$','categoria':''}); st.plotly_chart(aplicar_tema_grafico(fig3),use_container_width=True)
+                st.subheader('Maiores centros de custo'); fig3=px.bar(gasto,x='h',y='categoria',orientation='h',labels={'h':'R$','categoria':''}); st.plotly_chart(aplicar_tema_grafico(fig3),use_container_width=True,key="finance_chart_6")
 
 # -----------------------------------------------------------------
 # DÍVIDAS
@@ -3869,11 +3840,11 @@ elif menu == "💰 Rendas":
                     if c3.button('Excluir fonte',key=delete_key):
                         st.session_state['income2_delete_key']=f['key']
                     if st.session_state.get('income2_delete_key')==f['key']:
-                        st.warning(f'Excluir esta fonte também apaga da agenda os plantões de {hoje:%d/%m/%Y} em diante. Plantões anteriores e lançamentos que não são plantões serão preservados. A exclusão ficará no histórico.')
+                        st.warning(f'Excluir esta fonte também apaga da agenda os plantões de {hoje:%d/%m/%Y} em diante. Plantões anteriores e lançamentos que não são plantões serão preservados. Recebimentos confirmados serão preservados. A exclusão ficará no histórico.')
                         yes,no=st.columns(2)
                         if yes.button('Confirmar exclusão da fonte',key=delete_key+'_confirm'):
                             from operations import delete_income_source
-                            with transaction() as cur:
+                            with ui_transaction() as cur:
                                 deleted=delete_income_source(cur,f['categoria'],f['subgrupo'],hoje)
                             invalidar_caches_estruturais()
                             st.session_state.pop('income2_delete_key',None)
@@ -3902,7 +3873,7 @@ elif menu == "💰 Rendas":
                             if salvar:
                                 rec=1 if em in ('Mensal','Variável') and ev>0 and not ee else 0
                                 from operations import edit_income_source
-                                with transaction() as cur:
+                                with ui_transaction() as cur:
                                     reagendados=edit_income_source(cur,int(f['id']),ev if ev>0 else None,int(ed),int(ea),rec,1 if ee else 0,em,hoje)
                                 invalidar_caches_estruturais()
                                 st.session_state.pop(f"rec_processado_{mes_selecionado}_{ano_selecionado}",None)
@@ -4011,7 +3982,7 @@ elif menu == "🏥 Escala de Plantões":
         if dm.empty: st.info('Sem plantões no período ativo.')
         else:
             dm['valor']=pd.to_numeric(dm['valor'],errors='coerce').fillna(0); x1,x2,x3=st.columns(3); x1.metric('Plantões',len(dm)); x2.metric('Produção prevista',f"R$ {format_brl(dm['valor'].sum())}"); x3.metric('Média por plantão',f"R$ {format_brl(dm['valor'].mean())}")
-            by=dm.groupby('subgrupo')['valor'].agg(['count','sum']).sort_values('sum').reset_index(); fig=px.bar(by,x='sum',y='subgrupo',orientation='h',labels={'sum':'R$','subgrupo':''}); st.plotly_chart(aplicar_tema_grafico(fig),use_container_width=True)
+            by=dm.groupby('subgrupo')['valor'].agg(['count','sum']).sort_values('sum').reset_index(); fig=px.bar(by,x='sum',y='subgrupo',orientation='h',labels={'sum':'R$','subgrupo':''}); st.plotly_chart(aplicar_tema_grafico(fig),use_container_width=True,key="finance_chart_7")
     with tab_ger:
         with st.expander('📥 Importar CSV'):
             st.caption("Colunas: data (DD/MM/AAAA), local e valor opcional. Importar novamente não duplica a mesma descrição de plantão.")
@@ -4048,7 +4019,7 @@ elif menu == "🏥 Escala de Plantões":
                 st.caption('Alterações de valor atualizam automaticamente a previsão de renda. Plantões já recebidos preservam seus valores.')
                 if st.button('Salvar valores dos plantões',key='plant_save_values'):
                     from operations import update_shift_values
-                    with transaction() as cur:
+                    with ui_transaction() as cur:
                         changed=update_shift_values(cur,[(int(r['id']),r['valor']) for _,r in ed.iterrows()])
                     flash('success',f'{changed} plantão(ões) atualizado(s). A previsão de renda acompanha os novos valores.')
                     st.rerun()
@@ -4057,7 +4028,7 @@ elif menu == "🏥 Escala de Plantões":
                 if pb1.button('Excluir selecionados',disabled=not conf,use_container_width=True):
                     ids=[int(r['id']) for _,r in ed.iterrows() if r['Apagar']]
                     if ids:
-                        with transaction() as cur:
+                        with ui_transaction() as cur:
                             from operations import delete_entries
                             delete_entries(cur,ids)
                         flash('success',f'{len(ids)} plantão(ões) excluído(s).'); st.rerun()
@@ -4065,7 +4036,7 @@ elif menu == "🏥 Escala de Plantões":
                 if pb2.button('🚨 Apagar TUDO listado',disabled=not conf_todos,use_container_width=True):
                     ids_todos=dm['id'].astype(int).tolist()
                     if ids_todos:
-                        with transaction() as cur:
+                        with ui_transaction() as cur:
                             from operations import delete_entries
                             delete_entries(cur,ids_todos)
                         flash('success',f'{len(ids_todos)} plantão(ões) listado(s) apagado(s).'); st.rerun()
@@ -4296,13 +4267,13 @@ elif menu == "⚙️ Gerenciar Categorias":
                 b1,b2=st.columns(2)
                 if b1.button('Salvar alterações',type='primary',use_container_width=True):
                     from operations import edit_category
-                    with transaction() as cur:
+                    with ui_transaction() as cur:
                         edit_category(cur, int(sel), cat.strip(), sub.strip() or None, val if val>0 else None, atraso, dia, int(efet), hoje)
                     invalidar_caches_estruturais(); flash('success','Categoria e previsões pendentes atualizadas.'); st.rerun()
                 confirmar=b2.checkbox('Confirmar exclusão',key='cat_del_confirm')
                 if b2.button('Excluir',disabled=not confirmar,use_container_width=True):
                     from operations import delete_income_source
-                    with transaction() as cur:
+                    with ui_transaction() as cur:
                         if r['tipo']=='Entrada': delete_income_source(cur,r['categoria'],r['subgrupo'],hoje)
                         else: cur.execute('DELETE FROM categorias_personalizadas WHERE id=%s',(int(sel),))
                     invalidar_caches_estruturais(); flash('success','Categoria excluída.'); st.rerun()
@@ -4370,7 +4341,7 @@ elif menu == "🧰 Manutenção e Diagnóstico":
             st.dataframe(prov,hide_index=True,use_container_width=True); c=st.checkbox('Confirmo a exclusão permanente destes itens',key='maint_prov_conf')
             if st.button('Apagar itens listados',disabled=not c,key='maint_prov_del'):
                 ids=prov['id'].astype(int).tolist();
-                with transaction() as cur: cur.execute('DELETE FROM lancamentos WHERE id = ANY(%s)',(ids,))
+                with ui_transaction() as cur: cur.execute('DELETE FROM lancamentos WHERE id = ANY(%s)',(ids,))
                 flash('success',f'{len(ids)} item(ns) apagado(s).'); st.rerun()
     with st.expander('🧹 Corrigir descrições antigas duplicadas'):
         dup=fetch_dataframe(r"SELECT id,descricao FROM lancamentos WHERE descricao ~ '\(\d+/\d+\) \(\d+/\d+\)$' ORDER BY id")
@@ -4378,7 +4349,7 @@ elif menu == "🧰 Manutenção e Diagnóstico":
         else:
             prev=dup.copy(); prev['corrigida']=prev['descricao'].apply(lambda d:re.sub(r'(\s*\(\d+/\d+\))+$','',d).strip()); st.dataframe(prev,hide_index=True,use_container_width=True)
             if st.button('Corrigir todas',type='primary'):
-                with transaction() as cur:
+                with ui_transaction() as cur:
                     for _,r in dup.iterrows(): cur.execute('UPDATE lancamentos SET descricao=%s WHERE id=%s',(re.sub(r'(\s*\(\d+/\d+\))+$','',r['descricao']).strip(),int(r['id'])))
                 flash('success','Descrições corrigidas.'); st.rerun()
     with st.expander('🚨 Apagar histórico global de plantões'):

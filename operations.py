@@ -68,9 +68,18 @@ def income_due_date(competence, delay, day):
     return dt.date(year,month,min(int(day),calendar.monthrange(year,month)[1]))
 
 
+def validate_source_rule(value, day, delay):
+    from finance import money
+    if not 1<=int(day)<=31 or not 0<=int(delay)<=6:
+        raise ValueError('Informe dia entre 1 e 31 e prazo de recebimento entre 0 e 6 meses.')
+    if value is not None and money(value)<0:
+        raise ValueError('O valor padrão não pode ser negativo.')
+
+
 def edit_income_source(cur, source_id, value, day, delay, recurring, shifts, modality, today):
     """Update the definition and pending current/future dates in one transaction."""
     from psycopg2.extras import Json
+    validate_source_rule(value,day,delay)
     cur.execute("SELECT row_to_json(c) FROM categorias_personalizadas c WHERE id=%s AND tipo='Entrada' FOR UPDATE",(source_id,))
     result=cur.fetchone()
     if not result: raise ValueError('Esta fonte foi excluída. Atualize a tela.')
@@ -168,7 +177,10 @@ def change_series(cur, entry, updates=None, delete=False, future=False):
     contract_id=int(group[4:]) if group and group.startswith('rec_') and group[4:].isdigit() else None
     # Serialize with lazy generation before locking any series rows.
     if contract_id:
-        cur.execute('SELECT id FROM categorias_personalizadas WHERE id=%s FOR UPDATE',(contract_id,))
+        cur.execute('SELECT atraso_meses FROM categorias_personalizadas WHERE id=%s FOR UPDATE',(contract_id,))
+        rule=cur.fetchone()
+        if future and not delete and rule:
+            validate_source_rule(updates.get('valor'),target.day,int(rule[0] or 0)+month_delta)
     elif group:
         cur.execute('SELECT compra_id FROM series_manuais WHERE compra_id=%s FOR UPDATE',(group,))
     if future and group:
@@ -301,6 +313,7 @@ def update_shift_values(cur, changes):
 def edit_category(cur, source_id, category, subgroup, value, delay, day, recurring, today):
     """Both category and income screens use the same reconciliation rules."""
     from finance import money
+    validate_source_rule(value,day,delay)
     cur.execute('SELECT row_to_json(c) FROM categorias_personalizadas c WHERE id=%s FOR UPDATE',(source_id,))
     result=cur.fetchone()
     if not result:raise ValueError('Categoria removida. Atualize a tela.')

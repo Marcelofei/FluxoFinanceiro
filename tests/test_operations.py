@@ -49,7 +49,11 @@ def test_income_dates_and_delete_preserve_history(db):
         assert dates=={'atual':dt.date(2026,11,30),'futuro':dt.date(2026,12,31),'recebido':dt.date(2026,10,10),'antigo':dt.date(2026,9,10),'outro':dt.date(2026,10,10)}
         cur.execute('SELECT row_to_json(l) FROM lancamentos l ORDER BY id');before=cur.fetchall()
         delete_income_source(cur,'Rendas','Hospital datas',dt.date(2026,10,1))
-        cur.execute('SELECT row_to_json(l) FROM lancamentos l ORDER BY id');assert cur.fetchall()==before
+        cur.execute('SELECT row_to_json(l) FROM lancamentos l ORDER BY id');after=cur.fetchall()
+        # Source deletion unlinks the FK and increments the edit version; financial data is unchanged.
+        financial=lambda rows:[{k:v for k,v in row[0].items() if k not in ('fonte_id','versao')} for row in rows]
+        assert financial(after)==financial(before)
+        assert all(row[0]['fonte_id'] is None for row in after)
         cur.execute('SELECT count(*) FROM categorias_personalizadas WHERE id=%s',(source,));assert cur.fetchone()[0]==0
 
 

@@ -248,3 +248,68 @@ def test_concurrent_double_settlement_has_one_winner(db):
     with db,db.cursor() as c:
         c.execute('SELECT count(*) FROM pagamentos WHERE lancamento_id=%s',(item,))
         assert c.fetchone()[0]==1
+
+
+def test_stress_generation_revisited_in_reverse_order(db):
+    from operations import income_due_date
+    with db,db.cursor() as c:
+        for i in range(10):
+            c.execute('''INSERT INTO categorias_personalizadas(tipo,categoria,subgrupo,valor_padrao,
+                atraso_meses,dia_pagamento,is_recorrente,data_inicio) VALUES ('Entrada','Rendas',%s,100,%s,31,1,'2026-01-01')''',
+                (f'Fonte {i}',i%7))
+        months=[income_due_date(dt.date(2026,7,1),offset,1) for offset in range(72)]
+        for target in months+months[::-1]:generate_month(c,target.month,target.year)
+        c.execute('SELECT count(*),sum(valor) FROM lancamentos')
+        assert c.fetchone()==(720,72000)
+        c.execute('''SELECT fonte_id,data_competencia,count(*) FROM lancamentos
+            GROUP BY fonte_id,data_competencia HAVING count(*)>1''')
+        assert c.fetchall()==[]
+
+
+def test_future_series_cross_year_shift_does_not_duplicate_next_month(db):
+    with db,db.cursor() as c:
+        sid=source(c)
+        generate_month(c,11,2026);generate_month(c,12,2026)
+        c.execute('SELECT id FROM lancamentos ORDER BY data_vencimento LIMIT 1');first=c.fetchone()[0]
+        change_series(c,read(c,first),{'data_vencimento':dt.date(2026,12,20)},future=True)
+        generate_month(c,12,2026);generate_month(c,1,2027)
+        c.execute('SELECT data_vencimento FROM lancamentos ORDER BY data_vencimento')
+        assert c.fetchall()==[(dt.date(2026,12,20),),(dt.date(2027,1,20),)]
+
+
+def test_manual_series_shift_and_termination_remain_idempotent(db):
+    with db,db.cursor() as c:
+        c.execute("INSERT INTO series_manuais VALUES ('repeat','Despesa','Casa',NULL,'Mensalidade',100,'2026-11-10',NULL,10,'Outros','Média 🟡',0)")
+        generate_month(c,11,2026);generate_month(c,12,2026)
+        c.execute('SELECT id FROM lancamentos ORDER BY data_vencimento');first,second=[r[0] for r in c.fetchall()]
+        change_series(c,read(c,first),{'data_vencimento':dt.date(2026,12,20),'valor':120},future=True)
+        for month,year in [(12,2026),(1,2027)]:generate_month(c,month,year)
+        c.execute('SELECT data_vencimento,valor FROM lancamentos ORDER BY data_vencimento')
+        assert c.fetchall()==[(dt.date(2026,12,20),120),(dt.date(2027,1,20),120)]
+        change_series(c,read(c,second),delete=True,future=True)
+        generate_month(c,1,2027);generate_month(c,2,2027)
+        c.execute('SELECT count(*) FROM lancamentos');assert c.fetchone()[0]==1
+
+
+def test_restore_roundtrip_preserves_deleted_occurrences_and_exceptions(db):
+    from backup import export_snapshot
+    from psycopg2 import sql
+    from psycopg2.extras import execute_values
+    with db,db.cursor() as c:
+        sid=source(c);generate_month(c,11,2026);generate_month(c,12,2026)
+        c.execute('SELECT id FROM lancamentos ORDER BY data_vencimento');first,second=[r[0] for r in c.fetchall()]
+        change_series(c,read(c,first),{'valor':75},future=False)
+        change_series(c,read(c,second),delete=True)
+        before=read(c,first)
+    snapshot=export_snapshot(db);db.rollback()
+    @contextmanager
+    def transaction():
+        with db,db.cursor() as c:yield c
+    ns=app_functions(['validar_csv_lancamentos','_limpar_df_para_banco','_insert_dataframe','importar_backup'],
+        dict(pd=pd,sql=sql,execute_values=execute_values,int_seguro=finance.int_seguro,transaction=transaction))
+    file=io.BytesIO(snapshot);file.name='snapshot.zip'
+    ok,message=ns['importar_backup'](file);assert ok,message
+    with db,db.cursor() as c:
+        generate_month(c,12,2026)
+        c.execute('SELECT count(*) FROM lancamentos');assert c.fetchone()[0]==1
+        assert read(c,first)==before
