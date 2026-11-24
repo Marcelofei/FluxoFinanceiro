@@ -5,7 +5,7 @@ import json
 import psycopg2
 from psycopg2 import sql
 from security import validate_schema
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 def migrate_envelopes(cur):
     """Converte envelopes antigos em orçamento mensal por categoria.
@@ -482,6 +482,33 @@ def repair_recurrence_markers(cur):
     ''')
 
 
+def independent_agenda(cur):
+    from legacy_amounts import normalize_legacy_amounts
+    normalize_legacy_amounts(cur)
+    cur.execute("""
+        CREATE TABLE agenda_eventos(id UUID PRIMARY KEY,titulo TEXT NOT NULL,inicio TIMESTAMPTZ NOT NULL,
+            fim TIMESTAMPTZ NOT NULL,tipo TEXT NOT NULL CHECK(tipo IN ('Pessoal','Profissional','Plantão')),
+            local TEXT NOT NULL DEFAULT '',origem TEXT NOT NULL DEFAULT 'manual',chave_externa TEXT,
+            status TEXT NOT NULL DEFAULT 'ativo' CHECK(status IN ('ativo','cancelado')),
+            CHECK(fim>inicio),UNIQUE(origem,chave_externa));
+        CREATE INDEX idx_agenda_inicio ON agenda_eventos(inicio);
+        ALTER TABLE lancamentos ADD COLUMN compromisso_id UUID REFERENCES agenda_eventos(id) ON DELETE SET NULL;
+        ALTER TABLE lancamentos ADD COLUMN origem_evento TEXT NOT NULL DEFAULT 'manual';
+        CREATE UNIQUE INDEX uq_evento_previsao ON lancamentos(compromisso_id) WHERE compromisso_id IS NOT NULL;
+        CREATE TRIGGER trg_auditar_agenda AFTER INSERT OR UPDATE OR DELETE ON agenda_eventos
+            FOR EACH ROW EXECUTE FUNCTION auditar_lancamento();
+        CREATE OR REPLACE VIEW vw_lancamentos_financeiros AS
+        SELECT l.id,l.tipo,l.categoria,l.subgrupo,l.descricao,l.valor,l.data_vencimento,l.parcela_atual,
+            l.total_parcelas,l.pago,l.compra_id,l.forma_pagamento,l.prioridade,l.valor_pago,l.eh_estimativa,
+            l.data_competencia,l.data_pagamento,l.eh_orcamento,l.valor_orcamento,l.fatura_id,c.nome AS cartao_nome,
+            l.ajuste_pagamento_ids,l.fonte_id,l.competencia_inferida,l.excecao_recorrencia,l.versao,
+            l.compromisso_id,l.origem_evento FROM lancamentos l LEFT JOIN faturas f ON f.id=l.fatura_id
+            LEFT JOIN cartoes c ON c.id=f.cartao_id;
+    """)
+    from agenda import adopt_legacy
+    adopt_legacy(cur)
+
+
 def migrate(conn, schema='public'):
     validate_schema(schema)
     with conn:
@@ -492,7 +519,7 @@ def migrate(conn, schema='public'):
             cur.execute('CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())')
             cur.execute('SELECT version FROM schema_migrations')
             applied={r[0] for r in cur.fetchall()}
-            for version, migration in [(1,baseline),(2,integrity),(3,replay_protection),(4,financial_rules)]:
+            for version, migration in [(1,baseline),(2,integrity),(3,replay_protection),(4,financial_rules),(5,independent_agenda)]:
                 if version not in applied:
                     migration(cur)
                     cur.execute('INSERT INTO schema_migrations(version) VALUES (%s)',(version,))

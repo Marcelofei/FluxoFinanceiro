@@ -48,5 +48,5 @@ def test_upgrade_deployed_schema_preserves_financial_records(monkeypatch):
             cur.execute('SELECT '+cols+' FROM lancamentos ORDER BY id');assert cur.fetchall()==before
             cur.execute('SELECT lancamento_id,valor,data_pagamento FROM pagamentos ORDER BY lancamento_id');assert cur.fetchall()==payments
             cur.execute('SELECT categoria_id,competencia FROM recorrencias_geradas');assert cur.fetchall()==[(cat_id,dt.date(2026,9,1))]
-            cur.execute('SELECT max(version) FROM schema_migrations');assert cur.fetchone()==(4,)
+            cur.execute('SELECT max(version) FROM schema_migrations');assert cur.fetchone()==(5,)
             cur.execute("SELECT to_regclass('auditoria'),to_regclass('faturas')");assert all(cur.fetchone())

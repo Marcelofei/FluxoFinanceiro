@@ -35,7 +35,7 @@ def test_full_migrations_preserve_simple_data(db, legacy_exists):
             cur.execute('SELECT * FROM simple_reminders')
             assert cur.fetchall()==[('test-reminder',98765)]
             cur.execute('SELECT MAX(version) FROM schema_migrations')
-            assert cur.fetchone()[0]==4
+            assert cur.fetchone()[0]==5
             if legacy_exists:
                 cur.execute('SELECT count(*) FROM lancamentos')
                 assert cur.fetchone()[0]==legacy_count

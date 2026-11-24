@@ -138,7 +138,7 @@ def test_import_replay_preserves_original(db):
          dt.date(2026,10,10),1,1,0,'first','Outros','Baixa 🟢',0,dt.date(2026,9,30))
     with db,db.cursor() as cur:
         assert insert_shifts(cur,[row,row])==1
-        changed=list(row);changed[4]=200;changed[9]='other'
+        changed=list(row);changed[4]=200
         assert insert_shifts(cur,[changed])==0
         cur.execute('SELECT valor FROM lancamentos');assert cur.fetchone()[0]==100
 

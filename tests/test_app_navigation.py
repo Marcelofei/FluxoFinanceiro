@@ -305,3 +305,12 @@ def test_income_legacy_date_edit_via_form_preserves_receipt_month(ui):
     with db,db.cursor() as c:
         c.execute('SELECT data_vencimento FROM lancamentos WHERE id=%s',(item,))
         assert c.fetchone()[0]==dt.date(2026,9,1)
+
+def test_personal_commitment_without_income_via_ui(ui):
+    app,db=ui
+    app.session_state['menu_atual']='🏥 Escala de Plantões';app.run();healthy(app)
+    widget(app,'text_input','Título do compromisso').set_value('Reunião pessoal')
+    widget(app,'button','Salvar compromisso').click().run();healthy(app)
+    with db,db.cursor() as c:
+        c.execute("SELECT count(*) FROM agenda_eventos WHERE titulo='Reunião pessoal'");assert c.fetchone()[0]==1
+        c.execute("SELECT count(*) FROM lancamentos WHERE descricao='Reunião pessoal'");assert c.fetchone()[0]==0

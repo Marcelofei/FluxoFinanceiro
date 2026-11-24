@@ -121,7 +121,7 @@ def _consolidar_operacional(df, consolidar_cartao=False, hoje=None):
                 'ids':grp['id'].astype(int).tolist(), 'consolidado':True,
             })
     restante = base[~mask_cred].copy()
-    mask_plant = (restante['tipo'] == 'Entrada') & restante['descricao'].str.match(r'(?i)^plant[ãa]o\s', na=False)
+    mask_plant = (restante['tipo'] == 'Entrada') & (restante['origem_evento'].eq('plantao') if 'origem_evento' in restante else restante['descricao'].str.match(r'(?i)^plant[ãa]o\s', na=False))
     plant = restante[mask_plant].copy()
     if not plant.empty:
         def _grupo_hospital(r):

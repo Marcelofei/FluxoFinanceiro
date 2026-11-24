@@ -8,7 +8,7 @@ import pandas as pd
 
 TABLES = ('categorias_personalizadas','cartoes','faturas','lancamentos','info_dividas',
           'reserva_emergencia','pagamentos','recorrencias_geradas','orcamentos_categorias',
-          'preferencias_app','auditoria','series_manuais','series_manuais_geradas')
+          'preferencias_app','auditoria','series_manuais','series_manuais_geradas','agenda_eventos')
 
 
 def export_snapshot(conn):
@@ -24,7 +24,7 @@ def export_snapshot(conn):
                 if col in frame:
                     frame[col] = frame[col].map(lambda v: json.dumps(v,ensure_ascii=False,default=str) if isinstance(v,(dict,list)) else v)
             files[table+'.csv'] = frame.to_csv(index=False).encode('utf-8')
-    metadata={'schema_version':5,'format':'gestao_financeira_full_backup','created_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    metadata={'schema_version':6,'format':'gestao_financeira_full_backup','created_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),
               'tables':list(files),'sha256':{name:hashlib.sha256(data).hexdigest() for name,data in files.items()}}
     buffer=io.BytesIO()
     with zipfile.ZipFile(buffer,'w',compression=zipfile.ZIP_DEFLATED) as zf:
@@ -42,8 +42,8 @@ def read_snapshot(arquivo):
             raise ValueError('Backup contém arquivos duplicados')
         metadata=json.loads(zf.read('metadata.json')) if 'metadata.json' in zf.namelist() else {}
         version=metadata.get('schema_version',1)
-        if version not in (1,2,3,4,5): raise ValueError('Versão de backup não suportada')
-        required = set(TABLES) if version==5 else set(TABLES)-{'series_manuais','series_manuais_geradas'} if version==4 else {'lancamentos','categorias_personalizadas','info_dividas','reserva_emergencia'}
+        if version not in (1,2,3,4,5,6): raise ValueError('Versão de backup não suportada')
+        required = set(TABLES) if version==6 else set(TABLES)-{'agenda_eventos'} if version==5 else set(TABLES)-{'agenda_eventos','series_manuais','series_manuais_geradas'} if version==4 else {'lancamentos','categorias_personalizadas','info_dividas','reserva_emergencia'}
         if version==3: required |= {'pagamentos','recorrencias_geradas','orcamentos_categorias','preferencias_app'}
         if any(t+'.csv' not in zf.namelist() for t in required):
             raise ValueError('Backup incompleto; nenhum dado foi alterado')
@@ -55,6 +55,9 @@ def read_snapshot(arquivo):
             if version>=4 and hashlib.sha256(data).hexdigest()!=metadata.get('sha256',{}).get(name):
                 raise ValueError('Checksum inválido: '+name)
             frames[name]=pd.read_csv(io.BytesIO(data))
+            if table == 'agenda_eventos' and 'local' in frames[name]:
+                # CSV represents an empty optional location as NaN; SQL expects text.
+                frames[name]['local'] = frames[name]['local'].fillna('')
             for col in ('ajuste_pagamento_ids','anterior','posterior'):
                 if col in frames[name]:
                     frames[name][col]=frames[name][col].map(lambda v: json.loads(v) if isinstance(v,str) and v.strip() else None)
