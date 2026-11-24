@@ -4,7 +4,7 @@ import os
 from contextlib import closing
 import pytest
 import psycopg2
-from migrate import baseline,integrity,replay_protection,migrate
+from migrate import baseline,integrity,replay_protection,financial_rules,migrate
 from legacy_amounts import signed_amounts
 
 
@@ -25,10 +25,11 @@ def test_conversion_preserves_signed_plan_and_actual(kind,planned,actual,paid):
     assert all(result[k]>=0 for k in ('valor','valor_pago','extra_valor'))
 
 
+@pytest.mark.parametrize('seed4',[False,True])
 @pytest.mark.parametrize('kind',['Entrada','Despesa'])
 @pytest.mark.parametrize('planned,actual,paid',[
     (-100,-90,1),(-100,90,1),(100,-90,1),(0,-90,1),(-100,0,0)])
-def test_upgrade_v3_with_signed_adjustment_under_not_valid_checks(kind,planned,actual,paid):
+def test_upgrade_v3_with_signed_adjustment_under_not_valid_checks(kind,planned,actual,paid,seed4):
     url=os.environ.get('TEST_DATABASE_URL')
     if not url:pytest.skip('Requires disposable PostgreSQL TEST_DATABASE_URL')
     with closing(psycopg2.connect(url)) as conn:
@@ -36,6 +37,9 @@ def test_upgrade_v3_with_signed_adjustment_under_not_valid_checks(kind,planned,a
             c.execute('DROP SCHEMA IF EXISTS tenant_signed CASCADE; CREATE SCHEMA tenant_signed; SET search_path TO tenant_signed')
             baseline(c);integrity(c);replay_protection(c)
             c.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY); INSERT INTO schema_migrations VALUES (1),(2),(3)')
+            if seed4:
+                financial_rules(c)
+                c.execute('INSERT INTO schema_migrations VALUES (4)')
             # Model the historical row that already existed when NOT VALID checks
             # were installed. Keep these checks enabled throughout the upgrade.
             c.execute('ALTER TABLE lancamentos DROP CONSTRAINT ck_lanc_valor, DROP CONSTRAINT ck_lanc_valor_pago')

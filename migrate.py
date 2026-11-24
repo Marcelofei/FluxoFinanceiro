@@ -483,6 +483,8 @@ def repair_recurrence_markers(cur):
 
 
 def independent_agenda(cur):
+    from legacy_amounts import normalize_legacy_amounts
+    normalize_legacy_amounts(cur)
     cur.execute("""
         CREATE TABLE agenda_eventos(id UUID PRIMARY KEY,titulo TEXT NOT NULL,inicio TIMESTAMPTZ NOT NULL,
             fim TIMESTAMPTZ NOT NULL,tipo TEXT NOT NULL CHECK(tipo IN ('Pessoal','Profissional','Plantão')),
