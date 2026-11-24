@@ -137,7 +137,7 @@ def test_monthly_reorganization_never_uses_other_months():
     assert len(p['contas'])==1
     assert p['contas'][0]['alocacoes'][0]['fonte_id']=='2'
     unchanged=f.coverage_month_scope(df,2026,10,{'ids':[]})
-    assert unchanged.id.tolist()==df.id.tolist()
+    assert unchanged.id.tolist()==[5]
     assert not unchanged.desconsiderar_cobertura.any()
 
 

@@ -261,3 +261,19 @@ def test_source_delete_removes_today_and_future_shifts_only(ui):
     with db,db.cursor() as cur:
         cur.execute("SELECT descricao FROM lancamentos WHERE descricao LIKE 'Plantão %%'")
         assert cur.fetchall()==[('Plantão antes corte',)]
+
+
+@pytest.mark.parametrize('page',['📈 Balanço Anual','💳 Dívidas','🔄 Recorrências',
+    '👤 Perfil e Preferências','📤 Exportar Dados','🩺 Diagnóstico','⚙️ Gerenciar Categorias',
+    '💾 Backup e Restauração','🏥 Escala de Plantões'])
+def test_secondary_pages_render_without_errors(ui,page):
+    app,_=ui
+    app.session_state['menu_atual']=page
+    app.run();healthy(app)
+
+
+def test_selected_month_never_shows_previous_pending_bill(ui):
+    app,_=ui
+    app.button(key='nav_fluxo').click().run();healthy(app)
+    assert not any('Conta antiga' in w.value for w in app.markdown)
+    assert not any('Renda futura' in w.value for w in app.markdown)

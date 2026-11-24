@@ -1,16 +1,24 @@
 """Atomic settlement services; caller owns transaction and tenant connection."""
 import uuid
 from decimal import Decimal
-from finance import money, allocate_amount
+from finance import money, allocate_amount, today_local
+
+
+def validate_payment_date(date):
+    import finance
+    if date is None or date > finance.today_local():
+        raise ValueError('Uma data futura deve ser agendada, não marcada como realizada.')
 
 
 def settle(cur, ids, total, date):
+    validate_payment_date(date)
     ids = sorted(set(int(i) for i in ids))
     if not ids: raise ValueError('Selecione um lançamento')
-    cur.execute('SELECT id,valor,pago,forma_pagamento,tipo FROM lancamentos WHERE id=ANY(%s) ORDER BY id FOR UPDATE', (ids,))
+    cur.execute('SELECT id,valor,pago,forma_pagamento,tipo,ajuste_pagamento_ids FROM lancamentos WHERE id=ANY(%s) ORDER BY id FOR UPDATE', (ids,))
     rows = cur.fetchall()
     if len(rows) != len(ids): raise ValueError('Um lançamento foi removido. Atualize a tela.')
     if any(r[2] for r in rows): raise ValueError('Um lançamento já foi pago. Atualize a tela; pagamentos anteriores foram preservados.')
+    if any(r[5] for r in rows): raise ValueError('Ajustes pertencem à baixa da fatura. Estorne a fatura completa.')
     planned = sum((money(r[1]) for r in rows), Decimal('0'))
     actual = planned if total is None else money(total)
     if actual < 0: raise ValueError('O valor realizado não pode ser negativo')
@@ -34,9 +42,12 @@ def settle(cur, ids, total, date):
 def reverse(cur, ids):
     ids=sorted(set(int(i) for i in ids))
     if not ids: raise ValueError('Selecione um lançamento')
-    cur.execute('SELECT id FROM lancamentos WHERE id=ANY(%s) ORDER BY id FOR UPDATE',(ids,))
-    if len(cur.fetchall()) != len(ids):
+    cur.execute('SELECT id,ajuste_pagamento_ids FROM lancamentos WHERE id=ANY(%s) ORDER BY id FOR UPDATE',(ids,))
+    rows = cur.fetchall()
+    if len(rows) != len(ids):
         raise ValueError('Um lançamento foi removido. Atualize a tela.')
+    if any(row[1] for row in rows):
+        raise ValueError('Este ajuste pertence à fatura. Desfaça o pagamento pela fatura completa.')
     # A fee/discount belongs to the settlement: reverse the complete settlement, never a fraction.
     cur.execute('SELECT id,ajuste_pagamento_ids FROM lancamentos WHERE ajuste_pagamento_ids && %s FOR UPDATE',(ids,))
     adjustments=cur.fetchall()

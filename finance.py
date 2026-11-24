@@ -3,6 +3,23 @@ import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 import pandas as pd
+import re
+
+
+def parse_currency(value):
+    """Accept BRL or ungrouped decimal input; never turn invalid text into zero."""
+    if isinstance(value, (int, float, Decimal)):
+        return money(value)
+    text = str(value).strip()
+    if text.startswith('R$'):
+        text = text[2:].strip()
+    if re.fullmatch(r'[+-]?\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?', text):
+        text = text.replace('.', '').replace(',', '.')
+    elif re.fullmatch(r'[+-]?\d+(?:[,.]\d{1,2})?', text):
+        text = text.replace(',', '.')
+    else:
+        raise ValueError('Valor inválido. Use, por exemplo, 1.234,56 ou 1234,56.')
+    return money(text)
 
 prioridades_map = {"Alta 🔴": 0, "Média 🟡": 1, "Baixa 🟢": 2}
 
@@ -311,10 +328,10 @@ def _fluxo2_texto_cobertura(conta):
 
     tardias = [a for a in conta.get('alocacoes', []) if a.get('tipo') == 'apos_vencimento']
     if tardias:
-        a = min(tardias, key=lambda x: x['data'])
+        a = max(tardias, key=lambda x: x['data'])
         dias = max((a['data'] - conta['vencimento']).days, 1)
         plural = "dia" if dias == 1 else "dias"
-        return "warn", f"{a['fonte']} entra em {a['data'].strftime('%d/%m')} · {dias} {plural} depois"
+        return "warn", f"Cobertura completa em {a['data'].strftime('%d/%m')} · {dias} {plural} depois · {a['fonte']}"
 
     no_prazo = [a for a in conta.get('alocacoes', []) if a.get('tipo') in ('no_prazo', 'historico')]
     if no_prazo:
@@ -369,9 +386,8 @@ def coverage_month_scope(df, year, month, state):
     """A monthly reorganization cannot consume entries from another month."""
     base = df.copy()
     if base.empty: return base
-    if state.get('ativo'):
-        dates = pd.to_datetime(base['data_vencimento'])
-        base = base[(dates.dt.year == year) & (dates.dt.month == month)].copy()
+    dates = pd.to_datetime(base['data_vencimento'])
+    base = base[(dates.dt.year == year) & (dates.dt.month == month)].copy()
     base['desconsiderar_cobertura'] = base['id'].isin(state.get('ids', []))
     return base
 
@@ -383,11 +399,17 @@ def align_shift_sources(entries, definitions):
     def norm(v): return '' if pd.isna(v) else str(v).strip().casefold()
     by_location={}
     exact=set()
+    by_id={int(r['id']):r for _,r in definitions.iterrows() if pd.notna(r.get('id'))}
     for _,source in definitions.iterrows():
         key=(norm(source.get('categoria')),norm(source.get('subgrupo')))
         exact.add(key)
         if key[1]: by_location.setdefault(key[1],[]).append(source)
     for i,row in result.iterrows():
+        if pd.notna(row.get('fonte_id')) and int(row['fonte_id']) in by_id:
+            source=by_id[int(row['fonte_id'])]
+            result.at[i,'categoria']=source['categoria']
+            result.at[i,'subgrupo']=source['subgrupo']
+            continue
         if row.get('tipo')!='Entrada' or not str(row.get('descricao','')).casefold().startswith(('plantão ','plantao ')): continue
         key=(norm(row.get('categoria')),norm(row.get('subgrupo')))
         if key in exact: continue
